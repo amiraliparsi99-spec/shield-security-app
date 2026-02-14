@@ -1,0 +1,262 @@
+{
+  "Shield": {
+    "color": {
+      "background": {
+        "value": "#0c0d10",
+        "type": "color",
+        "description": "App background"
+      },
+      "surface": {
+        "value": "rgba(255, 255, 255, 0.05)",
+        "type": "color",
+        "description": "Cards, inputs"
+      },
+      "surfaceElevated": {
+        "value": "rgba(255, 255, 255, 0.08)",
+        "type": "color",
+        "description": "Elevated cards"
+      },
+      "glass": {
+        "value": "rgba(255, 255, 255, 0.03)",
+        "type": "color",
+        "description": "Glass overlays"
+      },
+      "glassStrong": {
+        "value": "rgba(255, 255, 255, 0.06)",
+        "type": "color",
+        "description": "Stronger glass"
+      },
+      "glassBorder": {
+        "value": "rgba(255, 255, 255, 0.08)",
+        "type": "color",
+        "description": "Borders on glass"
+      },
+      "glassBorderLight": {
+        "value": "rgba(255, 255, 255, 0.12)",
+        "type": "color",
+        "description": "Lighter glass border"
+      },
+      "border": {
+        "value": "rgba(255, 255, 255, 0.08)",
+        "type": "color",
+        "description": "Default border"
+      },
+      "borderMuted": {
+        "value": "rgba(255, 255, 255, 0.06)",
+        "type": "color",
+        "description": "Muted border"
+      },
+      "text": {
+        "value": "#fafafa",
+        "type": "color",
+        "description": "Primary text"
+      },
+      "textSecondary": {
+        "value": "#a1a1aa",
+        "type": "color",
+        "description": "Secondary text"
+      },
+      "textMuted": {
+        "value": "#71717a",
+        "type": "color",
+        "description": "Muted / placeholder"
+      },
+      "accent": {
+        "value": "#2dd4bf",
+        "type": "color",
+        "description": "Primary accent (teal)"
+      },
+      "accentMuted": {
+        "value": "rgba(45, 212, 191, 0.25)",
+        "type": "color",
+        "description": "Accent at low opacity"
+      },
+      "accentSoft": {
+        "value": "rgba(45, 212, 191, 0.15)",
+        "type": "color",
+        "description": "Soft accent background"
+      },
+      "accentGlow": {
+        "value": "rgba(20, 184, 166, 0.4)",
+        "type": "color",
+        "description": "Glow effect"
+      },
+      "success": {
+        "value": "#34d399",
+        "type": "color",
+        "description": "Success states"
+      },
+      "successSoft": {
+        "value": "rgba(52, 211, 153, 0.2)",
+        "type": "color",
+        "description": "Soft success"
+      },
+      "warning": {
+        "value": "#f59e0b",
+        "type": "color",
+        "description": "Warning"
+      },
+      "warningSoft": {
+        "value": "rgba(245, 158, 11, 0.2)",
+        "type": "color",
+        "description": "Soft warning"
+      },
+      "error": {
+        "value": "#f87171",
+        "type": "color",
+        "description": "Error"
+      },
+      "errorSoft": {
+        "value": "rgba(248, 113, 113, 0.2)",
+        "type": "color",
+        "description": "Soft error"
+      },
+      "info": {
+        "value": "#60a5fa",
+        "type": "color",
+        "description": "Info (blue)"
+      },
+      "infoSoft": {
+        "value": "rgba(96, 165, 250, 0.2)",
+        "type": "color",
+        "description": "Soft info"
+      },
+      "primaryBtn": {
+        "value": "#14b8a6",
+        "type": "color",
+        "description": "Primary button"
+      },
+      "primaryBtnPressed": {
+        "value": "#0d9488",
+        "type": "color",
+        "description": "Primary button pressed"
+      },
+      "shield": {
+        "50": { "value": "#f0fdfa", "type": "color" },
+        "100": { "value": "#ccfbf1", "type": "color" },
+        "200": { "value": "#99f6e4", "type": "color" },
+        "300": { "value": "#5eead4", "type": "color" },
+        "400": { "value": "#2dd4bf", "type": "color" },
+        "500": { "value": "#14b8a6", "type": "color" },
+        "600": { "value": "#0d9488", "type": "color" },
+        "700": { "value": "#0f766e", "type": "color" },
+        "800": { "value": "#115e59", "type": "color" },
+        "900": { "value": "#134e4a", "type": "color" },
+        "950": { "value": "#042f2e", "type": "color" }
+      },
+      "ink": {
+        "950": { "value": "#0c0d10", "type": "color" },
+        "900": { "value": "#13141a", "type": "color" },
+        "800": { "value": "#1c1d26", "type": "color" },
+        "700": { "value": "#282a33", "type": "color" },
+        "600": { "value": "#3d3f4d", "type": "color" }
+      }
+    },
+    "spacing": {
+      "xs": { "value": "4px", "type": "dimension", "description": "4px" },
+      "sm": { "value": "8px", "type": "dimension", "description": "8px" },
+      "md": { "value": "12px", "type": "dimension", "description": "12px" },
+      "lg": { "value": "16px", "type": "dimension", "description": "16px" },
+      "xl": { "value": "20px", "type": "dimension", "description": "20px" },
+      "xxl": { "value": "24px", "type": "dimension", "description": "24px" }
+    },
+    "radius": {
+      "xs": { "value": "6px", "type": "borderRadius", "description": "6px" },
+      "sm": { "value": "10px", "type": "borderRadius", "description": "10px" },
+      "md": { "value": "14px", "type": "borderRadius", "description": "14px" },
+      "lg": { "value": "18px", "type": "borderRadius", "description": "18px" },
+      "xl": { "value": "24px", "type": "borderRadius", "description": "24px" },
+      "full": { "value": "999px", "type": "borderRadius", "description": "Pill shape" }
+    },
+    "typography": {
+      "display": {
+        "value": {
+          "fontSize": "26px",
+          "fontWeight": "700",
+          "lineHeight": "32px",
+          "letterSpacing": "-0.5px"
+        },
+        "type": "typography",
+        "description": "Display / Hero text"
+      },
+      "title": {
+        "value": {
+          "fontSize": "20px",
+          "fontWeight": "600",
+          "lineHeight": "26px",
+          "letterSpacing": "-0.3px"
+        },
+        "type": "typography",
+        "description": "Screen titles"
+      },
+      "titleCard": {
+        "value": {
+          "fontSize": "16px",
+          "fontWeight": "600",
+          "lineHeight": "22px"
+        },
+        "type": "typography",
+        "description": "Card titles"
+      },
+      "body": {
+        "value": {
+          "fontSize": "15px",
+          "fontWeight": "400",
+          "lineHeight": "22px"
+        },
+        "type": "typography",
+        "description": "Body text"
+      },
+      "bodySmall": {
+        "value": {
+          "fontSize": "14px",
+          "fontWeight": "400",
+          "lineHeight": "20px"
+        },
+        "type": "typography",
+        "description": "Small body"
+      },
+      "label": {
+        "value": {
+          "fontSize": "13px",
+          "fontWeight": "500"
+        },
+        "type": "typography",
+        "description": "Labels"
+      },
+      "caption": {
+        "value": {
+          "fontSize": "12px",
+          "fontWeight": "400"
+        },
+        "type": "typography",
+        "description": "Captions"
+      },
+      "captionMuted": {
+        "value": {
+          "fontSize": "11px",
+          "fontWeight": "500"
+        },
+        "type": "typography",
+        "description": "Muted captions"
+      }
+    },
+    "shadow": {
+      "glow": {
+        "value": "0 0 25px rgba(20, 184, 166, 0.4)",
+        "type": "boxShadow",
+        "description": "Teal glow"
+      },
+      "glowSm": {
+        "value": "0 0 15px rgba(20, 184, 166, 0.3)",
+        "type": "boxShadow",
+        "description": "Small glow"
+      },
+      "subtle": {
+        "value": "0 4px 8px rgba(0, 0, 0, 0.3)",
+        "type": "boxShadow",
+        "description": "Subtle shadow"
+      }
+    }
+  }
+}

@@ -1,0 +1,102 @@
+{
+  "expo": {
+    "name": "Shield",
+    "slug": "shield-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "scheme": "shield",
+    "newArchEnabled": false,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0c0d10"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.shield.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Shield needs camera access to take photos for verification documents.",
+        "NSPhotoLibraryUsageDescription": "Shield needs photo library access to upload verification documents.",
+        "NSMicrophoneUsageDescription": "Shield needs microphone access for voice calls.",
+        "NSLocationWhenInUseUsageDescription": "Shield needs location access for shift check-ins and GPS tracking.",
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSSupportsLiveActivities": true,
+        "UIApplicationShortcutItems": [
+          {
+            "UIApplicationShortcutItemIconType": "UIApplicationShortcutIconTypeSearch",
+            "UIApplicationShortcutItemTitle": "Find Shifts",
+            "UIApplicationShortcutItemSubtitle": "Browse available shifts",
+            "UIApplicationShortcutItemType": "find_shifts"
+          },
+          {
+            "UIApplicationShortcutItemIconType": "UIApplicationShortcutIconTypeLocation",
+            "UIApplicationShortcutItemTitle": "Check In",
+            "UIApplicationShortcutItemSubtitle": "Start your shift",
+            "UIApplicationShortcutItemType": "check_in"
+          },
+          {
+            "UIApplicationShortcutItemIconType": "UIApplicationShortcutIconTypeMessage",
+            "UIApplicationShortcutItemTitle": "Messages",
+            "UIApplicationShortcutItemSubtitle": "Chat with venues",
+            "UIApplicationShortcutItemType": "messages"
+          },
+          {
+            "UIApplicationShortcutItemIconType": "UIApplicationShortcutIconTypeFavorite",
+            "UIApplicationShortcutItemTitle": "My Calendar",
+            "UIApplicationShortcutItemSubtitle": "View your schedule",
+            "UIApplicationShortcutItemType": "calendar"
+          }
+        ]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0c0d10"
+      },
+      "package": "app.shield.mobile",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.VIBRATE",
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-asset",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Shield needs access to your photos to upload verification documents.",
+          "cameraPermission": "Shield needs access to your camera to take photos for verification documents."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#00D4AA"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Shield needs your location for shift check-ins."
+        }
+      ],
+      "expo-document-picker",
+      "@react-native-community/datetimepicker"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "2318a213-e992-470d-8422-8bb47959b9a0"
+      }
+    },
+    "owner": "amirceo"
+  }
+}
