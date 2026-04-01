@@ -602,10 +602,9 @@ export function EventTemplates() {
       {/* Templates Grid */}
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
         {templates.map(template => (
-          <motion.div
+          <div
             key={template.id}
             className="glass rounded-xl p-4 hover:border-shield-500/30 transition"
-            whileHover={{ scale: 1.02 }}
           >
             <div className="flex items-start justify-between mb-3">
               <div>
@@ -665,7 +664,7 @@ export function EventTemplates() {
                 </svg>
               </button>
             </div>
-          </motion.div>
+          </div>
         ))}
       </div>
     </div>

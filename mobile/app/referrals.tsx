@@ -69,6 +69,7 @@ export default function ReferralsScreen() {
   }, []);
 
   const loadData = async () => {
+    if (!supabase) return;
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
@@ -126,8 +127,8 @@ export default function ReferralsScreen() {
 
     try {
       await Share.share({
-        message: `Join Shield - the AI-powered security platform! Use my referral code ${referral.referral_code} to get £10 credit on your first booking. Download now: https://shield.app/download`,
-        title: "Join Shield",
+        message: `Join Shield HQ - the security workforce platform! Use my referral code ${referral.referral_code} to get £10 credit on your first booking. Download now: https://shield.app/download`,
+        title: "Join Shield HQ",
       });
       safeHaptic("success");
     } catch (error) {

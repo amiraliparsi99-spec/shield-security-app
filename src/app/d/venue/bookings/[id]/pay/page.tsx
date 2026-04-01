@@ -388,7 +388,7 @@ export default function PaymentPage() {
             <span className="text-white font-medium">£{(totalPence / 100).toFixed(2)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-zinc-400 text-sm">Platform fee (10%)</span>
+            <span className="text-zinc-400 text-sm">Guard fee (10% from guard&apos;s pay)</span>
             <span className="text-zinc-400 text-sm">£{(platformFee / 100).toFixed(2)}</span>
           </div>
           <div className="flex justify-between">

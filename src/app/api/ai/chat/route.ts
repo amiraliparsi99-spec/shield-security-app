@@ -5,6 +5,7 @@ import {
   buildUserContext,
   formatContextForAI,
   AIMessage,
+  type UserContext,
 } from "@/lib/ai/shield-ai";
 import { getRelevantKnowledge, KnowledgeDocument } from "@/lib/ai/knowledge-base";
 
@@ -73,9 +74,10 @@ export async function POST(request: NextRequest) {
     const session = sessionId || crypto.randomUUID();
 
     // Build user context from their data (if we have a user)
-    const userContext = userId 
-      ? await buildUserContext(userId, role || "personnel")
-      : { role: role || "personnel" };
+    const effectiveRole = (role || "personnel") as UserContext["role"];
+    const userContext: UserContext = userId
+      ? await buildUserContext(userId, effectiveRole)
+      : { role: effectiveRole };
 
     // === RAG: Get relevant knowledge ===
     const relevantKnowledge = getRelevantKnowledge(userMessage, role || "personnel", 3);
@@ -98,7 +100,10 @@ export async function POST(request: NextRequest) {
     
     const aiMessages: AIMessage[] = [
       { role: "system", content: systemMessage },
-      ...messages.slice(-10), // Keep last 10 messages for context
+      ...messages.slice(-10).map((m) => ({
+        role: m.role as AIMessage["role"],
+        content: m.content,
+      })),
     ];
 
     let aiResponse: string;
@@ -154,11 +159,15 @@ export async function POST(request: NextRequest) {
           response_time_ms: responseTime,
         });
 
-        // Track common questions
-        await supabase.rpc("track_ai_question", {
-          question_text: userMessage,
-          generated_answer: aiResponse,
-        }).catch(() => {}); // Ignore if function doesn't exist
+        // Track common questions (RPC may not exist in DB)
+        try {
+          await supabase.rpc("track_ai_question", {
+            question_text: userMessage,
+            generated_answer: aiResponse,
+          });
+        } catch {
+          /* ignore */
+        }
       } catch (e) {
         // Don't fail the request if logging fails
         console.error("Failed to log AI conversation:", e);

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import { router } from "expo-router";
 import {
   View,
   Text,
@@ -15,6 +16,11 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, typography, spacing, radius } from "../../theme";
 import { supabase } from "../../lib/supabase";
+import { getProfileIdAndRole, getVenueId } from "../../lib/auth";
+import { getPricingBreakdown } from "../../lib/pricing";
+
+let WebView: any = null;
+try { WebView = require("react-native-webview").default; } catch {}
 
 interface Wallet {
   available_balance: number;
@@ -43,7 +49,239 @@ interface PayoutRequest {
   estimated_arrival?: string;
 }
 
+interface VenuePaymentItem {
+  id: string;
+  event_name: string | null;
+  event_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  status: string;
+  estimated_total: number | null;
+  final_total: number | null;
+  staff_requirements: any;
+}
+
+function getBookingCost(item: VenuePaymentItem): { total: number; staffCount: number; hours: number; roles: { label: string; count: number; rate: number }[] } {
+  const pricing = getPricingBreakdown(item);
+  return {
+    total: pricing.totalGBP,
+    staffCount: pricing.staffCount,
+    hours: pricing.hours,
+    roles: pricing.roles.map((r) => ({ label: r.label, count: r.count, rate: r.rateGBP })),
+  };
+}
+
+function VenuePaymentsView({
+  insets, refreshing, onRefresh, payments, formatCurrency,
+}: {
+  insets: { top: number; bottom: number };
+  refreshing: boolean;
+  onRefresh: () => void;
+  payments: VenuePaymentItem[];
+  formatCurrency: (n: number) => string;
+}) {
+  const [selected, setSelected] = useState<VenuePaymentItem | null>(null);
+
+  const totalSpend = payments.reduce((sum, p) => sum + getBookingCost(p).total, 0);
+
+  return (
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
+      >
+        <Text style={styles.title}>Payments</Text>
+        <Text style={styles.subtitle}>Your booking payment history</Text>
+
+        {/* Total Spend card */}
+        <View style={vp.totalCard}>
+          <Text style={vp.totalLabel}>Total Spend</Text>
+          <Text style={vp.totalAmount}>£{totalSpend.toFixed(2)}</Text>
+          <Text style={vp.totalSub}>{payments.length} booking{payments.length !== 1 ? "s" : ""}</Text>
+        </View>
+
+        {/* Payment list */}
+        <Text style={styles.sectionTitle}>Payment history</Text>
+        {payments.length === 0 ? (
+          <Text style={styles.emptyText}>No payments yet. Once you complete a booking, it will appear here.</Text>
+        ) : (
+          payments.map((item) => {
+            const { total, staffCount, hours } = getBookingCost(item);
+            const statusLower = (item.status || "").toLowerCase();
+            const isConfirmed = statusLower === "completed" || statusLower === "confirmed";
+            return (
+              <TouchableOpacity
+                key={item.id}
+                style={vp.card}
+                onPress={() => setSelected(item)}
+                activeOpacity={0.6}
+              >
+                <View style={[vp.cardIcon, isConfirmed ? vp.cardIconPaid : vp.cardIconPending]}>
+                  <Text style={{ fontSize: 16 }}>{isConfirmed ? "🛡️" : "⏳"}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={vp.cardName}>{item.event_name || "Security Booking"}</Text>
+                  <Text style={vp.cardMeta}>
+                    {item.event_date ? new Date(item.event_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "TBC"}
+                    {hours > 0 ? ` · ${hours.toFixed(1)}h` : ""}
+                    {` · ${staffCount} staff`}
+                  </Text>
+                </View>
+                <View style={{ alignItems: "flex-end" }}>
+                  <Text style={vp.cardPrice}>£{total.toFixed(2)}</Text>
+                  <View style={[vp.statusPill, isConfirmed ? vp.statusPaid : vp.statusPending]}>
+                    <Text style={[vp.statusText, isConfirmed ? vp.statusTextPaid : vp.statusTextPending]}>
+                      {isConfirmed ? "Confirmed" : "Unconfirmed"}
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            );
+          })
+        )}
+      </ScrollView>
+
+      {/* Detail Modal */}
+      <Modal visible={!!selected} transparent animationType="slide" onRequestClose={() => setSelected(null)}>
+        <View style={vp.modalOverlay}>
+          <View style={[vp.modalContent, { paddingBottom: insets.bottom + 20 }]}>
+            {selected && <PaymentDetail item={selected} onClose={() => setSelected(null)} />}
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+function PaymentDetail({ item, onClose }: { item: VenuePaymentItem; onClose: () => void }) {
+  const { total, staffCount, hours, roles } = getBookingCost(item);
+  const platformFee = total * 0.05;
+  const grandTotal = total + platformFee;
+  const statusLower = (item.status || "").toLowerCase();
+  const isConfirmed = statusLower === "completed" || statusLower === "confirmed";
+
+  return (
+    <ScrollView showsVerticalScrollIndicator={false}>
+      <View style={vp.detailHeader}>
+        <Text style={vp.detailTitle}>{item.event_name || "Security Booking"}</Text>
+        <TouchableOpacity onPress={onClose} hitSlop={12}>
+          <Text style={{ fontSize: 20, color: colors.textMuted }}>✕</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={[vp.statusPill, isConfirmed ? vp.statusPaid : vp.statusPending, { alignSelf: "flex-start", marginBottom: spacing.lg }]}>
+        <Text style={[vp.statusText, isConfirmed ? vp.statusTextPaid : vp.statusTextPending]}>
+          {isConfirmed ? "Security Confirmed" : "Security Unconfirmed"}
+        </Text>
+      </View>
+
+      {/* Event info */}
+      <View style={vp.detailRow}>
+        <Text style={vp.detailIcon}>📅</Text>
+        <View>
+          <Text style={vp.detailLabel}>Date</Text>
+          <Text style={vp.detailValue}>
+            {item.event_date ? new Date(item.event_date).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : "TBC"}
+          </Text>
+        </View>
+      </View>
+
+      {item.start_time && item.end_time && (
+        <View style={vp.detailRow}>
+          <Text style={vp.detailIcon}>⏰</Text>
+          <View>
+            <Text style={vp.detailLabel}>Time</Text>
+            <Text style={vp.detailValue}>{item.start_time} – {item.end_time} ({hours.toFixed(1)} hours)</Text>
+          </View>
+        </View>
+      )}
+
+      <View style={vp.detailRow}>
+        <Text style={vp.detailIcon}>👥</Text>
+        <View>
+          <Text style={vp.detailLabel}>Staff</Text>
+          <Text style={vp.detailValue}>{staffCount} personnel</Text>
+        </View>
+      </View>
+
+      {/* Cost breakdown */}
+      <Text style={vp.breakdownTitle}>Cost Breakdown</Text>
+      <View style={vp.breakdownCard}>
+        {roles.length > 0 ? roles.map((r, i) => (
+          <View key={i} style={vp.breakdownRow}>
+            <Text style={vp.breakdownLabel}>{r.count}× {r.label} ({hours.toFixed(1)}h @ £{r.rate}/hr)</Text>
+            <Text style={vp.breakdownVal}>£{(r.count * r.rate * hours).toFixed(2)}</Text>
+          </View>
+        )) : (
+          <View style={vp.breakdownRow}>
+            <Text style={vp.breakdownLabel}>Security services</Text>
+            <Text style={vp.breakdownVal}>£{total.toFixed(2)}</Text>
+          </View>
+        )}
+        <View style={vp.breakdownRow}>
+          <Text style={vp.breakdownLabel}>Guard fee (deducted from earnings)</Text>
+          <Text style={vp.breakdownVal}>£{platformFee.toFixed(2)}</Text>
+        </View>
+        <View style={vp.breakdownDivider} />
+        <View style={vp.breakdownRow}>
+          <Text style={vp.breakdownTotalLabel}>Total</Text>
+          <Text style={vp.breakdownTotalVal}>£{grandTotal.toFixed(2)}</Text>
+        </View>
+      </View>
+
+      <TouchableOpacity style={vp.closeBtn} onPress={onClose} activeOpacity={0.8}>
+        <Text style={vp.closeBtnText}>Close</Text>
+      </TouchableOpacity>
+    </ScrollView>
+  );
+}
+
+const vp = StyleSheet.create({
+  totalCard: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.accent, padding: spacing.lg, marginBottom: spacing.xl, alignItems: "center" },
+  totalLabel: { ...typography.caption, color: colors.textMuted },
+  totalAmount: { ...typography.display, color: colors.accent, fontSize: 32, marginTop: 4 },
+  totalSub: { ...typography.caption, color: colors.textMuted, marginTop: 4 },
+
+  card: { flexDirection: "row", alignItems: "center", backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginBottom: spacing.sm },
+  cardIcon: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", marginRight: spacing.md },
+  cardIconPaid: { backgroundColor: "rgba(16,185,129,0.15)" },
+  cardIconPending: { backgroundColor: "rgba(245,158,11,0.15)" },
+  cardName: { ...typography.body, color: colors.text, fontWeight: "600" },
+  cardMeta: { ...typography.caption, color: colors.textMuted, marginTop: 2 },
+  cardPrice: { ...typography.body, color: colors.text, fontWeight: "700", fontSize: 16 },
+  statusPill: { paddingHorizontal: spacing.sm, paddingVertical: 2, borderRadius: radius.full, marginTop: 4 },
+  statusPaid: { backgroundColor: "rgba(16,185,129,0.15)" },
+  statusPending: { backgroundColor: "rgba(245,158,11,0.15)" },
+  statusText: { ...typography.caption, fontWeight: "600", fontSize: 10 },
+  statusTextPaid: { color: "#10B981" },
+  statusTextPending: { color: "#F59E0B" },
+
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.85)", justifyContent: "flex-end" },
+  modalContent: { backgroundColor: colors.background, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, padding: spacing.xl, maxHeight: "85%" },
+
+  detailHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.sm },
+  detailTitle: { ...typography.title, color: colors.text, fontSize: 20, flex: 1, marginRight: spacing.md },
+  detailRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: spacing.md },
+  detailIcon: { fontSize: 18, marginRight: spacing.md, marginTop: 2 },
+  detailLabel: { ...typography.caption, color: colors.textMuted },
+  detailValue: { ...typography.body, color: colors.text, fontWeight: "500" },
+
+  breakdownTitle: { ...typography.body, color: colors.text, fontWeight: "700", marginTop: spacing.md, marginBottom: spacing.sm },
+  breakdownCard: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.md, borderWidth: 1, borderColor: colors.border },
+  breakdownRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: spacing.xs },
+  breakdownLabel: { ...typography.bodySmall, color: colors.textMuted },
+  breakdownVal: { ...typography.bodySmall, color: colors.text, fontWeight: "600" },
+  breakdownDivider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.sm },
+  breakdownTotalLabel: { ...typography.body, color: colors.text, fontWeight: "700" },
+  breakdownTotalVal: { ...typography.body, color: colors.accent, fontWeight: "700" },
+
+  closeBtn: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, paddingVertical: spacing.md, alignItems: "center", marginTop: spacing.lg },
+  closeBtnText: { ...typography.body, color: colors.textMuted, fontWeight: "600" },
+});
+
+// In iOS Simulator, localhost is the simulator—use your Mac's IP (e.g. http://192.168.1.x:3000) or run on device with same network
 const API_BASE = process.env.EXPO_PUBLIC_API_URL || "http://localhost:3000";
+const API_FETCH_TIMEOUT_MS = 8000;
 
 export default function PaymentsTab() {
   const insets = useSafeAreaInsets();
@@ -54,11 +292,11 @@ export default function PaymentsTab() {
   const [pendingPayouts, setPendingPayouts] = useState<PayoutRequest[]>([]);
   const [onboardingComplete, setOnboardingComplete] = useState(false);
   const [hasStripeAccount, setHasStripeAccount] = useState(false);
-  
+  const [stripeConnectOnboardingUrl, setStripeConnectOnboardingUrl] = useState<string | null>(null);
+  const [role, setRole] = useState<string | null>(null);
+  const [venuePayments, setVenuePayments] = useState<VenuePaymentItem[]>([]);
+
   // Bank details form state
-  const [bankFullName, setBankFullName] = useState("");
-  const [bankSortCode, setBankSortCode] = useState("");
-  const [bankAccountNumber, setBankAccountNumber] = useState("");
   const [isSubmittingBank, setIsSubmittingBank] = useState(false);
   const [bankError, setBankError] = useState<string | null>(null);
 
@@ -90,9 +328,31 @@ export default function PaymentsTab() {
   }, []);
 
   const fetchData = async () => {
+    if (!supabase) return;
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
+
+      const profileData = await getProfileIdAndRole(supabase, session.user.id);
+      setRole(profileData?.role || null);
+
+      if (profileData?.role === "venue") {
+        const vid = await getVenueId(supabase, profileData.profileId);
+        if (!vid) {
+          setVenuePayments([]);
+          return;
+        }
+
+        const { data: paymentsData } = await supabase
+          .from("bookings")
+          .select("id, event_name, event_date, start_time, end_time, status, estimated_total, final_total, staff_requirements")
+          .eq("venue_id", vid)
+          .order("event_date", { ascending: false })
+          .limit(40);
+
+        setVenuePayments((paymentsData || []) as VenuePaymentItem[]);
+        return;
+      }
 
       // Fetch wallet data
       const { data: walletData } = await supabase
@@ -133,38 +393,39 @@ export default function PaymentsTab() {
       
       setPendingPayouts(payoutData || []);
 
-      // Check Stripe account status via API (gets LIVE status from Stripe)
+      // Check Stripe account status via API (with timeout so simulator doesn't hang on unreachable localhost)
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), API_FETCH_TIMEOUT_MS);
         const connectResponse = await fetch(`${API_BASE}/api/stripe/connect`, {
           method: "GET",
           headers: {
             "Authorization": `Bearer ${session.access_token}`,
           },
+          signal: controller.signal,
         });
-        
+        clearTimeout(timeoutId);
+
         if (connectResponse.ok) {
           const connectData = await connectResponse.json();
           setHasStripeAccount(connectData.has_stripe_account);
           setOnboardingComplete(connectData.onboarding_complete || false);
         } else {
-          // Fallback to local database check
           const { data: stripeAccount } = await supabase
             .from("stripe_accounts")
             .select("*")
             .eq("user_id", session.user.id)
             .single();
-
           setHasStripeAccount(!!stripeAccount);
           setOnboardingComplete(stripeAccount?.onboarding_complete || false);
         }
       } catch {
-        // Fallback to local database check if API is unreachable
+        // API unreachable (e.g. simulator can't reach localhost)—use DB fallback
         const { data: stripeAccount } = await supabase
           .from("stripe_accounts")
           .select("*")
           .eq("user_id", session.user.id)
           .single();
-
         setHasStripeAccount(!!stripeAccount);
         setOnboardingComplete(stripeAccount?.onboarding_complete || false);
       }
@@ -195,67 +456,49 @@ export default function PaymentsTab() {
     return { fee, net: amount - fee };
   };
 
-  // Format sort code as XX-XX-XX
-  const formatSortCode = (text: string) => {
-    const digits = text.replace(/\D/g, "").slice(0, 6);
-    if (digits.length <= 2) return digits;
-    if (digits.length <= 4) return `${digits.slice(0, 2)}-${digits.slice(2)}`;
-    return `${digits.slice(0, 2)}-${digits.slice(2, 4)}-${digits.slice(4)}`;
-  };
-
-  const handleSubmitBankDetails = async () => {
+  const handleStartStripeOnboarding = async () => {
     setBankError(null);
-
-    // Validate
-    if (!bankFullName.trim()) {
-      setBankError("Please enter the account holder's full name");
-      return;
-    }
-
-    const cleanSortCode = bankSortCode.replace(/[-\s]/g, "");
-    if (!/^\d{6}$/.test(cleanSortCode)) {
-      setBankError("Sort code must be 6 digits (e.g. 12-34-56)");
-      return;
-    }
-
-    const cleanAccountNumber = bankAccountNumber.replace(/\s/g, "");
-    if (!/^\d{8}$/.test(cleanAccountNumber)) {
-      setBankError("Account number must be 8 digits");
-      return;
-    }
-
     setIsSubmittingBank(true);
+    if (!supabase) return;
     try {
+      if (!WebView) {
+        setBankError("Stripe onboarding needs a development build (native in-app WebView).");
+        return;
+      }
+
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
         setBankError("Please log in first");
         return;
       }
 
-      const response = await fetch(`${API_BASE}/api/stripe/connect/bank`, {
+      const connectCompleteUrl = `${API_BASE}/api/stripe/connect/complete?source=mobile`;
+
+      const response = await fetch(`${API_BASE}/api/stripe/connect`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
-          full_name: bankFullName.trim(),
-          sort_code: cleanSortCode,
-          account_number: cleanAccountNumber,
+          return_url: connectCompleteUrl,
+          refresh_url: connectCompleteUrl,
         }),
       });
 
       const data = await response.json();
-
       if (!response.ok) {
-        setBankError(data.error || "Failed to connect bank account");
+        setBankError(data.error || "Failed to start Stripe onboarding");
         return;
       }
 
-      // Success - refresh data to show payments dashboard
-      setOnboardingComplete(true);
+      if (!data.onboarding_url) {
+        setBankError("Stripe didn't return an onboarding link");
+        return;
+      }
+
+      setStripeConnectOnboardingUrl(data.onboarding_url);
       setHasStripeAccount(true);
-      fetchData();
     } catch (err: any) {
       setBankError(err.message || "Network error. Please try again.");
     } finally {
@@ -285,6 +528,7 @@ export default function PaymentsTab() {
         {
           text: "Confirm",
           onPress: async () => {
+            if (!supabase) return;
             setIsWithdrawing(true);
             try {
               const { data: { session } } = await supabase.auth.getSession();
@@ -294,6 +538,7 @@ export default function PaymentsTab() {
               const fee = withdrawMethod === "instant" ? getInstantFee().fee : 0;
               const netAmount = amount - fee;
 
+              if (!supabase) return;
               const { data: payout, error } = await supabase
                 .from("payout_requests")
                 .insert({
@@ -339,91 +584,79 @@ export default function PaymentsTab() {
     );
   }
 
-  // Onboarding screen - native bank details form
+  if (role === "venue") {
+    return <VenuePaymentsView
+      insets={insets}
+      refreshing={refreshing}
+      onRefresh={onRefresh}
+      payments={venuePayments}
+      formatCurrency={formatCurrency}
+    />;
+  }
+
+  // Onboarding screen - Stripe Connect Express onboarding
   if (!onboardingComplete) {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        <ScrollView 
+        <ScrollView
           contentContainerStyle={styles.onboardingContent}
           keyboardShouldPersistTaps="handled"
         >
           <Text style={styles.onboardingTitle}>Set Up Payments</Text>
           <Text style={styles.onboardingDescription}>
-            Enter your bank details to receive payments from bookings.
+            Connect your bank account with Stripe so you can receive payouts.
           </Text>
 
-          <View style={styles.bankForm}>
-            {/* Full Name */}
-            <View style={styles.bankField}>
-              <Text style={styles.bankLabel}>Account Holder Name</Text>
-              <TextInput
-                style={styles.bankInput}
-                value={bankFullName}
-                onChangeText={setBankFullName}
-                placeholder="e.g. John Smith"
-                placeholderTextColor={colors.textMuted}
-                autoCapitalize="words"
-                autoCorrect={false}
-              />
+          {bankError && (
+            <View style={styles.bankErrorBox}>
+              <Text style={styles.bankErrorText}>{bankError}</Text>
             </View>
+          )}
 
-            {/* Sort Code */}
-            <View style={styles.bankField}>
-              <Text style={styles.bankLabel}>Sort Code</Text>
-              <TextInput
-                style={styles.bankInput}
-                value={bankSortCode}
-                onChangeText={(text) => setBankSortCode(formatSortCode(text))}
-                placeholder="12-34-56"
-                placeholderTextColor={colors.textMuted}
-                keyboardType="number-pad"
-                maxLength={8}
-              />
-            </View>
-
-            {/* Account Number */}
-            <View style={styles.bankField}>
-              <Text style={styles.bankLabel}>Account Number</Text>
-              <TextInput
-                style={styles.bankInput}
-                value={bankAccountNumber}
-                onChangeText={(text) => setBankAccountNumber(text.replace(/\D/g, "").slice(0, 8))}
-                placeholder="12345678"
-                placeholderTextColor={colors.textMuted}
-                keyboardType="number-pad"
-                maxLength={8}
-              />
-            </View>
-
-            {/* Error message */}
-            {bankError && (
-              <View style={styles.bankErrorBox}>
-                <Text style={styles.bankErrorText}>{bankError}</Text>
-              </View>
+          <TouchableOpacity
+            style={[styles.bankSubmitButton, isSubmittingBank && styles.bankSubmitDisabled]}
+            onPress={handleStartStripeOnboarding}
+            disabled={isSubmittingBank}
+          >
+            {isSubmittingBank ? (
+              <ActivityIndicator color={colors.text} size="small" />
+            ) : (
+              <Text style={styles.bankSubmitText}>Connect Bank Account</Text>
             )}
+          </TouchableOpacity>
 
-            {/* Submit button */}
-            <TouchableOpacity
-              style={[styles.bankSubmitButton, isSubmittingBank && styles.bankSubmitDisabled]}
-              onPress={handleSubmitBankDetails}
-              disabled={isSubmittingBank}
-            >
-              {isSubmittingBank ? (
-                <ActivityIndicator color={colors.text} size="small" />
-              ) : (
-                <Text style={styles.bankSubmitText}>Connect Bank Account</Text>
-              )}
-            </TouchableOpacity>
-
-            {/* Security info */}
-            <View style={styles.bankSecurityInfo}>
-              <Text style={styles.bankSecurityIcon}>🔒</Text>
-              <Text style={styles.bankSecurityText}>
-                Your bank details are sent directly to Stripe and are never stored on our servers. All payments are processed securely.
-              </Text>
-            </View>
+          <View style={styles.bankSecurityInfo}>
+            <Text style={styles.bankSecurityIcon}>🔒</Text>
+            <Text style={styles.bankSecurityText}>
+              You'll be guided through Stripe's secure onboarding to verify your identity and connect your bank. Your details are never stored on our servers.
+            </Text>
           </View>
         </ScrollView>
+
+        {stripeConnectOnboardingUrl && WebView && (
+          <Modal visible animationType="slide" onRequestClose={() => setStripeConnectOnboardingUrl(null)}>
+            <View style={{ flex: 1, backgroundColor: colors.background }}>
+              <View style={styles.modalContentHeader}>
+                <Text style={styles.modalTitle}>Connect to Stripe</Text>
+                <TouchableOpacity onPress={() => setStripeConnectOnboardingUrl(null)} style={styles.modalCloseBtn}>
+                  <Text style={styles.modalCloseBtnText}>Done</Text>
+                </TouchableOpacity>
+              </View>
+              <WebView
+                source={{ uri: stripeConnectOnboardingUrl }}
+                style={{ flex: 1 }}
+                javaScriptEnabled
+                onNavigationStateChange={(navState: any) => {
+                  const url = navState?.url || "";
+                  if (url.includes("shield://payments") || url.includes("/api/stripe/connect/complete")) {
+                    setStripeConnectOnboardingUrl(null);
+                    fetchData();
+                  }
+                }}
+              />
+            </View>
+          </Modal>
+        )}
       </View>
     );
   }
@@ -929,6 +1162,65 @@ const styles = StyleSheet.create({
     flex: 1,
     lineHeight: 18,
   },
+  venueBankWarning: {
+    backgroundColor: "rgba(245,158,11,0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(245,158,11,0.3)",
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.xl,
+  },
+  venueBankWarningTitle: {
+    ...typography.body,
+    color: "#F59E0B",
+    fontWeight: "700",
+    marginBottom: 4,
+  },
+  venueBankWarningText: {
+    ...typography.bodySmall,
+    color: colors.textMuted,
+    lineHeight: 20,
+  },
+  venuePaymentCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    gap: spacing.md,
+  },
+  statusPill: {
+    alignSelf: "flex-start",
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.full,
+    backgroundColor: colors.accentSoft,
+  },
+  statusPillText: {
+    ...typography.caption,
+    color: colors.accent,
+    fontWeight: "600",
+  },
+  venueAmount: {
+    ...typography.titleCard,
+    color: colors.text,
+  },
+  payNowBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  payNowBtnText: {
+    ...typography.caption,
+    color: colors.text,
+    fontWeight: "600",
+  },
 
   // Modal
   modalOverlay: {
@@ -1045,6 +1337,25 @@ const styles = StyleSheet.create({
   modalConfirmText: {
     ...typography.body,
     color: colors.text,
+    fontWeight: "600",
+  },
+  modalContentHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    paddingTop: 50,
+  },
+  modalCloseBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  modalCloseBtnText: {
+    ...typography.body,
+    color: colors.accent,
     fontWeight: "600",
   },
 });

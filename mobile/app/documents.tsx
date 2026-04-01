@@ -63,15 +63,22 @@ export default function DocumentsScreen() {
   }, []);
 
   const initializeAndLoad = async () => {
-    const { profileId } = await getProfileIdAndRole(supabase);
-    if (profileId) {
-      setUserId(profileId);
-      await loadDocuments(profileId);
+    if (!supabase) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+    const result = await getProfileIdAndRole(supabase, user.id);
+    if (result?.profileId) {
+      setUserId(result.profileId);
+      await loadDocuments(result.profileId);
     }
     setLoading(false);
   };
 
   const loadDocuments = async (uId: string) => {
+    if (!supabase) return;
     const { data } = await supabase
       .from("user_documents")
       .select("*")
@@ -110,6 +117,7 @@ export default function DocumentsScreen() {
   const handleUpload = async () => {
     if (!selectedFile || !selectedType || !title || !userId) return;
 
+    if (!supabase) return;
     setUploading(true);
     safeHaptic("medium");
 
@@ -165,6 +173,7 @@ export default function DocumentsScreen() {
         text: "Delete",
         style: "destructive",
         onPress: async () => {
+          if (!supabase) return;
           await supabase.from("user_documents").delete().eq("id", doc.id);
           if (userId) await loadDocuments(userId);
         },

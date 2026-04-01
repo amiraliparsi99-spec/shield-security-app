@@ -69,8 +69,15 @@ export default function NotificationSettingsScreen() {
   }, []);
 
   const loadPreferences = async () => {
+    if (!supabase) return;
     try {
-      const { profileId } = await getProfileIdAndRole(supabase);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+      const result = await getProfileIdAndRole(supabase, user.id);
+      const profileId = result?.profileId || null;
       setUserId(profileId);
 
       if (profileId) {
@@ -121,7 +128,7 @@ export default function NotificationSettingsScreen() {
     setPrefs(newPrefs);
 
     // Save to database
-    if (userId) {
+    if (userId && supabase) {
       setSaving(true);
       try {
         await supabase
@@ -146,7 +153,7 @@ export default function NotificationSettingsScreen() {
     const newPrefs = { ...prefs, shift_reminder_hours: hours };
     setPrefs(newPrefs);
 
-    if (userId) {
+    if (userId && supabase) {
       await supabase
         .from("notification_preferences")
         .upsert({

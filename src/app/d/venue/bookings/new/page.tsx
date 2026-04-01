@@ -10,6 +10,7 @@ import {
   checkPersonnelAvailabilityDetailed, 
   type AvailabilityCheckResult 
 } from "@/lib/db/availability";
+import { toCanonicalStaffRequirements } from "@/lib/pricing";
 import { autoAssignShifts } from "@/lib/db/assignment";
 import { createMissionControlChat } from "@/lib/db/mission-control";
 import type { Personnel } from "@/lib/database.types";
@@ -25,12 +26,9 @@ type PersonnelWithAvailability = Personnel & {
 };
 
 const roleOptions = [
-  { value: "Door Security", rate: 18 },
-  { value: "Floor Security", rate: 16 },
-  { value: "VIP Security", rate: 22 },
-  { value: "Event Security", rate: 16 },
+  { value: "Door Supervisor", rate: 18 },
+  { value: "Security Guard", rate: 16 },
   { value: "CCTV Operator", rate: 17 },
-  { value: "Supervisor", rate: 25 },
 ];
 
 export default function NewBookingPage() {
@@ -52,7 +50,7 @@ export default function NewBookingPage() {
     date: "",
     startTime: "",
     endTime: "",
-    staffRequirements: [{ role: "Door Security", quantity: 2, rate: 18 }] as StaffRequirement[],
+    staffRequirements: [{ role: "Door Supervisor", quantity: 2, rate: 18 }] as StaffRequirement[],
     briefNotes: "",
   });
 
@@ -126,7 +124,7 @@ export default function NewBookingPage() {
       ...prev,
       staffRequirements: [
         ...prev.staffRequirements,
-        { role: "Floor Security", quantity: 1, rate: 16 }
+        { role: "Security Guard", quantity: 1, rate: 16 }
       ]
     }));
   };
@@ -192,17 +190,10 @@ export default function NewBookingPage() {
 
     const hours = calculateHours();
     const estimatedTotal = calculateTotal();
-
-    console.log("Creating booking for venue:", venue.id, venue.name);
-    console.log("Booking data:", {
-      venue_id: venue.id,
-      event_name: formData.eventName,
-      event_date: formData.date,
-      start_time: formData.startTime,
-      end_time: formData.endTime,
-      staff_requirements: formData.staffRequirements,
-      estimated_total: estimatedTotal,
-    });
+    const canonicalStaffRequirements = toCanonicalStaffRequirements(formData.staffRequirements);
+    const subtotalPence = Math.round(estimatedTotal * 100);
+    const platformFeePence = Math.round(subtotalPence * 0.05);
+    const estimatedTotalPence = subtotalPence + platformFeePence;
 
     // Create the booking
     const { data: booking, error: bookingError } = await supabase
@@ -214,9 +205,10 @@ export default function NewBookingPage() {
         start_time: formData.startTime,
         end_time: formData.endTime,
         brief_notes: formData.briefNotes || null,
-        staff_requirements: formData.staffRequirements,
+        staff_requirements: canonicalStaffRequirements,
         status: 'pending',
-        estimated_total: estimatedTotal,
+        estimated_total: estimatedTotalPence,
+        platform_fee: platformFeePence,
         auto_assign: staffSelection === "auto",
       })
       .select()
@@ -257,27 +249,33 @@ export default function NewBookingPage() {
 
     if (staffSelection === "manual") {
       // Create shifts for manually selected staff
+      const roleSlots = canonicalStaffRequirements.flatMap((req) =>
+        Array.from({ length: req.count }, () => ({ role: req.role, rate: req.rate_pence / 100 }))
+      );
+      let idx = 0;
       for (const personnelId of selectedStaff) {
+        const slot = roleSlots[idx] || roleSlots[roleSlots.length - 1] || { role: "security_guard", rate: 16 };
         const person = availablePersonnel.find(p => p.id === personnelId);
         shiftsToCreate.push({
           booking_id: booking.id,
           personnel_id: personnelId,
-          role: "Security", // Could be refined based on skills
-          hourly_rate: person?.hourly_rate || 16,
+          role: slot.role,
+          hourly_rate: person?.hourly_rate || slot.rate,
           scheduled_start: scheduledStart.toISOString(),
           scheduled_end: scheduledEnd.toISOString(),
           status: 'pending',
         });
+        idx += 1;
       }
     } else {
       // For auto-assign, create shifts without personnel_id (to be assigned later)
-      for (const req of formData.staffRequirements) {
-        for (let i = 0; i < req.quantity; i++) {
+      for (const req of canonicalStaffRequirements) {
+        for (let i = 0; i < req.count; i++) {
           shiftsToCreate.push({
             booking_id: booking.id,
             personnel_id: null, // Will be assigned later
             role: req.role,
-            hourly_rate: req.rate,
+            hourly_rate: req.rate_pence / 100,
             scheduled_start: scheduledStart.toISOString(),
             scheduled_end: scheduledEnd.toISOString(),
             status: 'pending',
@@ -306,7 +304,6 @@ export default function NewBookingPage() {
       });
       const notifyData = await notifyRes.json();
       if (notifyData.success) {
-        console.log(`Smart-notified ${notifyData.guards_notified} nearby guards (${notifyData.offers_created} offers created)`);
       } else {
         console.warn('Smart notify failed, falling back to bulk:', notifyData.error);
         // Fallback: notify all guards if smart matching fails

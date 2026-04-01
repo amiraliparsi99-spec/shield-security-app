@@ -104,11 +104,32 @@ export function useRemoveStaffFromAgency() {
   );
 }
 
+// Average rating from reviews of agency staff (client satisfaction)
+export function useAgencyAvgRating() {
+  const { data: staff } = useAgencyStaff();
+
+  return useQuery<number | null>(
+    async (supabase) => {
+      if (!staff?.length) return null;
+      const ids = staff.map(s => s.id);
+      const { data } = await supabase
+        .from("reviews")
+        .select("overall_rating")
+        .in("reviewee_id", ids);
+      if (!data?.length) return null;
+      const sum = data.reduce((a, r) => a + (r.overall_rating ?? 0), 0);
+      return Math.round((sum / data.length) * 10) / 10;
+    },
+    [staff?.length, (staff ?? []).map(s => s.id).join(",")]
+  );
+}
+
 // Calculate agency stats
 export function useAgencyStats() {
   const { data: agency, loading: agencyLoading } = useAgencyProfile();
   const { data: staff, loading: staffLoading } = useAgencyStaff();
   const { data: shifts, loading: shiftsLoading } = useAgencyShifts();
+  const { data: avgRating } = useAgencyAvgRating();
 
   const loading = agencyLoading || staffLoading || shiftsLoading;
 
@@ -136,6 +157,7 @@ export function useAgencyStats() {
     upcomingShifts,
     totalRevenue,
     totalHours,
+    avgRating: avgRating ?? undefined,
     loading,
   };
 }

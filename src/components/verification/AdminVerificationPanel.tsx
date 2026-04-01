@@ -1,205 +1,86 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
-import type { Verification, VerificationDocument } from "@/types/database";
+import type { VerificationDocument } from "@/types/database";
+
+type VerificationWithDocs = {
+  id: string;
+  owner_type: string;
+  owner_id: string;
+  status: string;
+  created_at: string;
+  documents: VerificationDocument[];
+  guardName: string;
+  siaLicenseNumber: string | null;
+  siaExpiryDate: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+};
 
 export function AdminVerificationPanel() {
-  const [pendingVerifications, setPendingVerifications] = useState<
-    (Verification & { documents: VerificationDocument[] })[]
-  >([]);
+  const [verifications, setVerifications] = useState<VerificationWithDocs[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedVerification, setSelectedVerification] = useState<string | null>(null);
   const [reviewNotes, setReviewNotes] = useState("");
-  const [rejectionReason, setRejectionReason] = useState("");
+  const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
-    loadPendingVerifications();
+    loadVerifications();
   }, []);
 
-  async function loadPendingVerifications() {
+  async function loadVerifications() {
     setLoading(true);
     try {
-      const supabase = createClient();
-
-      // Load verifications that need review
-      const { data: verifications, error } = await supabase
-        .from("verifications")
-        .select("*")
-        .in("status", ["pending", "in_review"])
-        .order("created_at", { ascending: true });
-
-      if (error) throw error;
-
-      // Load documents for each verification
-      const verificationsWithDocs = await Promise.all(
-        (verifications || []).map(async (verification) => {
-          const { data: documents } = await supabase
-            .from("verification_documents")
-            .select("*")
-            .eq("owner_type", verification.owner_type)
-            .eq("owner_id", verification.owner_id);
-
-          return {
-            ...verification,
-            documents: documents || [],
-          };
-        })
-      );
-
-      setPendingVerifications(verificationsWithDocs);
-    } catch (err: any) {
+      const res = await fetch("/api/admin/verifications");
+      if (!res.ok) {
+        const text = await res.text();
+        console.error("Failed to load verifications:", res.status, text);
+        return;
+      }
+      const data = await res.json();
+      setVerifications(data);
+    } catch (err) {
       console.error("Error loading verifications:", err);
     } finally {
       setLoading(false);
     }
   }
 
-  async function approveVerification(verificationId: string) {
+  async function callAction(body: Record<string, unknown>) {
+    setActionLoading(true);
     try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
-      // Update verification status
-      const { error } = await supabase
-        .from("verifications")
-        .update({
-          status: "verified",
-          verified_at: new Date().toISOString(),
-          verified_by: user.id,
-          last_reviewed_at: new Date().toISOString(),
-          admin_notes: reviewNotes || null,
-        })
-        .eq("id", verificationId);
-
-      if (error) throw error;
-
-      // Approve all verified documents
-      const verification = pendingVerifications.find((v) => v.id === verificationId);
-      if (verification) {
-        const verifiedDocs = verification.documents.filter(
-          (doc) => doc.status === "in_review" || doc.status === "pending"
-        );
-
-        for (const doc of verifiedDocs) {
-          await supabase
-            .from("verification_documents")
-            .update({
-              status: "verified",
-              verified_at: new Date().toISOString(),
-              verified_by: user.id,
-            })
-            .eq("id", doc.id);
-        }
+      const res = await fetch("/api/admin/verifications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert("Action failed: " + (err.error || "Unknown error"));
+        return;
       }
-
-      setReviewNotes("");
-      setSelectedVerification(null);
-      loadPendingVerifications();
-    } catch (err: any) {
-      console.error("Error approving verification:", err);
-      alert("Failed to approve verification: " + err.message);
-    }
-  }
-
-  async function rejectVerification(verificationId: string) {
-    if (!rejectionReason.trim()) {
-      alert("Please provide a rejection reason");
-      return;
-    }
-
-    try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
-      const { error } = await supabase
-        .from("verifications")
-        .update({
-          status: "rejected",
-          rejection_reason: rejectionReason,
-          verified_by: user.id,
-          last_reviewed_at: new Date().toISOString(),
-          admin_notes: reviewNotes || null,
-        })
-        .eq("id", verificationId);
-
-      if (error) throw error;
-
-      setRejectionReason("");
-      setReviewNotes("");
-      setSelectedVerification(null);
-      loadPendingVerifications();
-    } catch (err: any) {
-      console.error("Error rejecting verification:", err);
-      alert("Failed to reject verification: " + err.message);
+      await loadVerifications();
+    } catch (err) {
+      console.error("Action error:", err);
+      alert("Action failed");
+    } finally {
+      setActionLoading(false);
     }
   }
 
   async function approveDocument(documentId: string) {
-    try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
-      const { error } = await supabase
-        .from("verification_documents")
-        .update({
-          status: "verified",
-          verified_at: new Date().toISOString(),
-          verified_by: user.id,
-        })
-        .eq("id", documentId);
-
-      if (error) throw error;
-
-      loadPendingVerifications();
-    } catch (err: any) {
-      console.error("Error approving document:", err);
-      alert("Failed to approve document: " + err.message);
-    }
+    const v = verifications.find((v) => v.documents.some((d) => d.id === documentId));
+    await callAction({ action: "approve_document", documentId, verificationId: v?.id });
   }
 
   async function rejectDocument(documentId: string, reason: string) {
-    if (!reason.trim()) {
-      alert("Please provide a rejection reason");
-      return;
-    }
+    await callAction({ action: "reject_document", documentId, reason });
+  }
 
-    try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
-      const { error } = await supabase
-        .from("verification_documents")
-        .update({
-          status: "rejected",
-          rejection_reason: reason,
-          verified_by: user.id,
-        })
-        .eq("id", documentId);
-
-      if (error) throw error;
-
-      loadPendingVerifications();
-    } catch (err: any) {
-      console.error("Error rejecting document:", err);
-      alert("Failed to reject document: " + err.message);
-    }
+  async function approveAll(verificationId: string) {
+    await callAction({ action: "approve_all", verificationId });
+    setSelectedVerification(null);
+    setReviewNotes("");
   }
 
   if (loading) {
@@ -210,43 +91,62 @@ export function AdminVerificationPanel() {
     );
   }
 
-  const selected = pendingVerifications.find((v) => v.id === selectedVerification);
+  const selected = verifications.find((v) => v.id === selectedVerification);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      {/* List of Pending Verifications */}
+      {/* List */}
       <div className="space-y-4">
         <h2 className="text-lg font-semibold text-white">
-          Pending Verifications ({pendingVerifications.length})
+          Verifications ({verifications.length})
         </h2>
-        {pendingVerifications.length === 0 ? (
+        {verifications.length === 0 ? (
           <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6 text-center">
-            <p className="text-zinc-400">No pending verifications</p>
+            <p className="text-zinc-400">No verifications with documents found</p>
           </div>
         ) : (
-          pendingVerifications.map((verification) => (
-            <div
-              key={verification.id}
-              className={`bg-zinc-900/50 border rounded-xl p-4 cursor-pointer transition ${
-                selectedVerification === verification.id
-                  ? "border-shield-500 bg-shield-500/10"
-                  : "border-zinc-800 hover:border-zinc-700"
-              }`}
-              onClick={() => setSelectedVerification(verification.id)}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-white capitalize">
-                  {verification.owner_type}
-                </span>
-                <span className="text-xs text-zinc-500">
-                  {verification.documents.length} document{verification.documents.length !== 1 ? "s" : ""}
-                </span>
+          verifications.map((verification) => {
+            const pendingDocs = verification.documents.filter(
+              (d) => d.status === "pending" || d.status === "in_review"
+            );
+            return (
+              <div
+                key={verification.id}
+                className={`bg-zinc-900/50 border rounded-xl p-4 cursor-pointer transition ${
+                  selectedVerification === verification.id
+                    ? "border-shield-500 bg-shield-500/10"
+                    : "border-zinc-800 hover:border-zinc-700"
+                }`}
+                onClick={() => setSelectedVerification(verification.id)}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-white">
+                    {verification.guardName}
+                  </span>
+                  <span
+                    className={`px-2 py-0.5 text-xs rounded ${
+                      verification.status === "verified"
+                        ? "bg-green-500/20 text-green-400"
+                        : "bg-yellow-500/20 text-yellow-400"
+                    }`}
+                  >
+                    {verification.status}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-zinc-500 capitalize">{verification.owner_type}</p>
+                  <span className="text-xs text-zinc-500">
+                    {verification.documents.length} doc
+                    {verification.documents.length !== 1 ? "s" : ""}
+                    {pendingDocs.length > 0 && ` · ${pendingDocs.length} to review`}
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-400 mt-1">
+                  Submitted: {new Date(verification.created_at).toLocaleDateString()}
+                </p>
               </div>
-              <p className="text-xs text-zinc-400">
-                Submitted: {new Date(verification.created_at).toLocaleDateString()}
-              </p>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
@@ -259,79 +159,139 @@ export function AdminVerificationPanel() {
                 Review {selected.owner_type} Verification
               </h3>
 
-              {/* Documents */}
-              <div className="space-y-4 mb-6">
-                {selected.documents.map((document) => (
-                  <div
-                    key={document.id}
-                    className="bg-zinc-800/50 border border-zinc-700 rounded-lg p-4"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div>
-                        <p className="text-sm font-medium text-white">{document.document_name}</p>
-                        <p className="text-xs text-zinc-500 capitalize">{document.document_type}</p>
-                      </div>
-                      <span
-                        className={`px-2 py-1 text-xs rounded ${
-                          document.status === "verified"
-                            ? "bg-green-500/20 text-green-400"
-                            : document.status === "rejected"
-                            ? "bg-red-500/20 text-red-400"
-                            : "bg-yellow-500/20 text-yellow-400"
-                        }`}
-                      >
-                        {document.status}
-                      </span>
+              {/* Guard profile */}
+              {selected.owner_type === "personnel" && (
+                <div className="flex items-center gap-4 p-4 mb-4 bg-zinc-800/50 border border-zinc-700 rounded-lg">
+                  {selected.avatarUrl ? (
+                    <img
+                      src={selected.avatarUrl}
+                      alt=""
+                      className="w-14 h-14 rounded-full object-cover border border-zinc-600"
+                    />
+                  ) : (
+                    <div className="w-14 h-14 rounded-full bg-zinc-700 flex items-center justify-center text-zinc-400 text-xl font-semibold">
+                      {selected.guardName.charAt(0).toUpperCase()}
                     </div>
-                    <div className="flex gap-2 mt-3">
-                      <button
-                        onClick={async () => {
-                          const supabase = createClient();
-                          // Extract file path from stored URL
-                          const url = new URL(document.file_url);
-                          const filePath = url.pathname.replace('/storage/v1/object/public/verification-documents/', '').replace('/storage/v1/object/sign/verification-documents/', '');
-                          
-                          // Generate signed URL for private bucket
-                          const { data, error } = await supabase.storage
-                            .from('verification-documents')
-                            .createSignedUrl(filePath, 3600);
-                          
-                          if (error) {
-                            console.error('Error generating signed URL:', error);
-                            alert('Failed to generate document URL. Please try again.');
-                          } else if (data?.signedUrl) {
-                            window.open(data.signedUrl, '_blank');
-                          }
-                        }}
-                        className="flex-1 px-3 py-2 bg-zinc-700 hover:bg-zinc-600 rounded text-sm text-center text-white transition"
-                      >
-                        View Document
-                      </button>
-                      {document.status !== "verified" && (
-                        <>
-                          <button
-                            onClick={() => approveDocument(document.id)}
-                            className="px-3 py-2 bg-green-600 hover:bg-green-700 rounded text-sm text-white transition"
-                          >
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => {
-                              const reason = prompt("Rejection reason:");
-                              if (reason) rejectDocument(document.id, reason);
-                            }}
-                            className="px-3 py-2 bg-red-600 hover:bg-red-700 rounded text-sm text-white transition"
-                          >
-                            Reject
-                          </button>
-                        </>
-                      )}
-                    </div>
-                    {document.rejection_reason && (
-                      <p className="text-xs text-red-400 mt-2">{document.rejection_reason}</p>
+                  )}
+                  <div>
+                    <p className="text-sm font-medium text-white">{selected.guardName}</p>
+                    {selected.email && (
+                      <p className="text-xs text-zinc-400">{selected.email}</p>
                     )}
                   </div>
-                ))}
+                </div>
+              )}
+
+              {/* SIA License details */}
+              {selected.owner_type === "personnel" &&
+                (selected.siaLicenseNumber || selected.siaExpiryDate) && (
+                  <div className="p-4 mb-4 bg-zinc-800/50 border border-zinc-700 rounded-lg">
+                    <h4 className="text-sm font-semibold text-white mb-3">
+                      SIA License Details
+                    </h4>
+                    <div className="grid grid-cols-2 gap-4">
+                      {selected.siaLicenseNumber && (
+                        <div>
+                          <p className="text-xs text-zinc-500 mb-1">License Number</p>
+                          <p className="text-sm font-mono text-white bg-zinc-900 rounded px-3 py-2 border border-zinc-600">
+                            {selected.siaLicenseNumber}
+                          </p>
+                        </div>
+                      )}
+                      {selected.siaExpiryDate && (
+                        <div>
+                          <p className="text-xs text-zinc-500 mb-1">Expiry Date</p>
+                          <p className="text-sm font-mono text-white bg-zinc-900 rounded px-3 py-2 border border-zinc-600">
+                            {new Date(selected.siaExpiryDate).toLocaleDateString("en-GB", {
+                              day: "2-digit",
+                              month: "long",
+                              year: "numeric",
+                            })}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+              {/* Documents */}
+              <div className="space-y-4 mb-6">
+                {selected.documents.map((document) => {
+                  const isImage =
+                    document.mime_type?.startsWith("image/") ||
+                    /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(document.file_url ?? "");
+                  return (
+                    <div
+                      key={document.id}
+                      className="bg-zinc-800/50 border border-zinc-700 rounded-lg p-4"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <p className="text-sm font-medium text-white">
+                            {document.document_name}
+                          </p>
+                          <p className="text-xs text-zinc-500 capitalize">
+                            {document.document_type}
+                          </p>
+                        </div>
+                        <span
+                          className={`px-2 py-1 text-xs rounded ${
+                            document.status === "verified"
+                              ? "bg-green-500/20 text-green-400"
+                              : document.status === "rejected"
+                              ? "bg-red-500/20 text-red-400"
+                              : "bg-yellow-500/20 text-yellow-400"
+                          }`}
+                        >
+                          {document.status}
+                        </span>
+                      </div>
+                      {isImage && document.file_url && (
+                        <div className="my-3 rounded-lg overflow-hidden border border-zinc-600 bg-zinc-900 max-h-64">
+                          <img
+                            src={document.file_url}
+                            alt={document.document_name}
+                            className="w-full h-auto object-contain max-h-64"
+                          />
+                        </div>
+                      )}
+                      <div className="flex gap-2 mt-3">
+                        <button
+                          onClick={() => window.open(document.file_url ?? "", "_blank")}
+                          className="flex-1 px-3 py-2 bg-zinc-700 hover:bg-zinc-600 rounded text-sm text-center text-white transition"
+                        >
+                          {isImage ? "Open in new tab" : "View Document"}
+                        </button>
+                        {document.status !== "verified" && (
+                          <>
+                            <button
+                              disabled={actionLoading}
+                              onClick={() => approveDocument(document.id)}
+                              className="px-3 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 rounded text-sm text-white transition"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              disabled={actionLoading}
+                              onClick={() => {
+                                const reason = prompt("Rejection reason:");
+                                if (reason) rejectDocument(document.id, reason);
+                              }}
+                              className="px-3 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded text-sm text-white transition"
+                            >
+                              Reject
+                            </button>
+                          </>
+                        )}
+                      </div>
+                      {document.rejection_reason && (
+                        <p className="text-xs text-red-400 mt-2">
+                          {document.rejection_reason}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Review Notes */}
@@ -351,22 +311,11 @@ export function AdminVerificationPanel() {
               {/* Actions */}
               <div className="flex gap-3">
                 <button
-                  onClick={() => approveVerification(selected.id)}
-                  className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-sm font-medium text-white transition"
+                  disabled={actionLoading}
+                  onClick={() => approveAll(selected.id)}
+                  className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 rounded text-sm font-medium text-white transition"
                 >
-                  Approve All
-                </button>
-                <button
-                  onClick={() => {
-                    const reason = prompt("Rejection reason (visible to user):");
-                    if (reason) {
-                      setRejectionReason(reason);
-                      rejectVerification(selected.id);
-                    }
-                  }}
-                  className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-sm font-medium text-white transition"
-                >
-                  Reject
+                  {actionLoading ? "Processing..." : "Approve All"}
                 </button>
               </div>
             </div>

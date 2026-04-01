@@ -160,10 +160,8 @@ export default function AdminErrorsPage() {
             const severity = SEVERITY_CONFIG[error.severity];
             
             return (
-              <motion.div
+              <div
                 key={error.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
                 className={`glass rounded-xl p-4 cursor-pointer transition hover:bg-white/5 ${
                   error.resolved ? 'opacity-60' : ''
                 }`}
@@ -190,7 +188,7 @@ export default function AdminErrorsPage() {
                     </p>
                   </div>
                 </div>
-              </motion.div>
+              </div>
             );
           })}
         </div>
@@ -204,10 +202,8 @@ export default function AdminErrorsPage() {
           animate={{ opacity: 1 }}
           onClick={() => setSelectedError(null)}
         >
-          <motion.div
+          <div
             className="w-full max-w-2xl glass rounded-2xl p-6 max-h-[80vh] overflow-y-auto"
-            initial={{ scale: 0.95, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between mb-4">
@@ -265,7 +261,7 @@ export default function AdminErrorsPage() {
                 </button>
               )}
             </div>
-          </motion.div>
+          </div>
         </motion.div>
       )}
     </div>

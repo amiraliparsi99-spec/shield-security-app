@@ -17,6 +17,13 @@ import { supabase } from "../lib/supabase";
 import { getProfileIdAndRole } from "../lib/auth";
 import { safeHaptic } from "../lib/haptics";
 
+interface DayAvailability {
+  day: string;
+  enabled: boolean;
+  start_time: string;
+  end_time: string;
+}
+
 interface ProfileData {
   // Personnel fields
   display_name: string;
@@ -27,6 +34,7 @@ interface ProfileData {
   sia_expiry_date: string;
   skills: string[];
   available_days: string[];
+  availability_times: DayAvailability[];
   
   // Venue fields
   venue_name: string;
@@ -53,6 +61,13 @@ const SKILL_OPTIONS = [
 ];
 
 const DAY_OPTIONS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+const DEFAULT_AVAILABILITY: DayAvailability[] = DAY_OPTIONS.map(day => ({
+  day,
+  enabled: false,
+  start_time: "09:00",
+  end_time: "17:00",
+}));
 
 const VENUE_TYPES = [
   "Nightclub",
@@ -82,6 +97,7 @@ export default function ProfileEditScreen() {
     sia_expiry_date: "",
     skills: [],
     available_days: [],
+    availability_times: DEFAULT_AVAILABILITY,
     venue_name: "",
     venue_type: "",
     capacity: "",
@@ -96,8 +112,17 @@ export default function ProfileEditScreen() {
   }, []);
 
   const loadProfile = async () => {
+    if (!supabase) return;
     try {
-      const { profileId: pid, role: userRole } = await getProfileIdAndRole(supabase);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        Alert.alert("Error", "Please log in to edit your profile");
+        router.back();
+        return;
+      }
+      const result = await getProfileIdAndRole(supabase, user.id);
+      const pid = result?.profileId;
+      const userRole = result?.role;
       if (!pid || !userRole) {
         Alert.alert("Error", "Please log in to edit your profile");
         router.back();
@@ -107,6 +132,7 @@ export default function ProfileEditScreen() {
       setProfileId(pid);
       setRole(userRole);
 
+      if (!supabase) return;
       if (userRole === "personnel") {
         const { data } = await supabase
           .from("personnel")
@@ -116,6 +142,13 @@ export default function ProfileEditScreen() {
 
         if (data) {
           setEntityId(data.id);
+          // Parse availability times from database or use defaults
+          const savedTimes = data.availability_times || [];
+          const availTimes = DEFAULT_AVAILABILITY.map(defaultDay => {
+            const saved = savedTimes.find((s: DayAvailability) => s.day === defaultDay.day);
+            return saved || defaultDay;
+          });
+          
           setProfile((prev) => ({
             ...prev,
             display_name: data.display_name || "",
@@ -126,16 +159,17 @@ export default function ProfileEditScreen() {
             sia_expiry_date: data.sia_expiry_date || "",
             skills: data.skills || [],
             available_days: data.available_days || [],
+            availability_times: availTimes,
           }));
         }
-      } else if (userRole === "venue") {
+      } else if (userRole === "venue" && supabase) {
         const { data: profileData } = await supabase
           .from("profiles")
           .select("id")
           .eq("user_id", pid)
           .single();
 
-        if (profileData) {
+        if (profileData && supabase) {
           const { data } = await supabase
             .from("venues")
             .select("*")
@@ -155,14 +189,14 @@ export default function ProfileEditScreen() {
             }));
           }
         }
-      } else if (userRole === "agency") {
+      } else if (userRole === "agency" && supabase) {
         const { data: profileData } = await supabase
           .from("profiles")
           .select("id")
           .eq("user_id", pid)
           .single();
 
-        if (profileData) {
+        if (profileData && supabase) {
           const { data } = await supabase
             .from("agencies")
             .select("*")
@@ -189,9 +223,14 @@ export default function ProfileEditScreen() {
   };
 
   const handleSave = async () => {
+    if (!supabase) return;
     setSaving(true);
     try {
       if (role === "personnel" && entityId) {
+        // Filter availability times to only include enabled days
+        const enabledAvailability = profile.availability_times.filter(a => a.enabled);
+        const availableDays = enabledAvailability.map(a => a.day);
+        
         const { error } = await supabase
           .from("personnel")
           .update({
@@ -202,12 +241,13 @@ export default function ProfileEditScreen() {
             sia_license_number: profile.sia_license_number,
             sia_expiry_date: profile.sia_expiry_date || null,
             skills: profile.skills,
-            available_days: profile.available_days,
+            available_days: availableDays,
+            availability_times: profile.availability_times,
           })
           .eq("id", entityId);
 
         if (error) throw error;
-      } else if (role === "venue" && entityId) {
+      } else if (role === "venue" && entityId && supabase) {
         const { error } = await supabase
           .from("venues")
           .update({
@@ -221,7 +261,7 @@ export default function ProfileEditScreen() {
           .eq("id", entityId);
 
         if (error) throw error;
-      } else if (role === "agency" && entityId) {
+      } else if (role === "agency" && entityId && supabase) {
         const { error } = await supabase
           .from("agencies")
           .update({
@@ -261,11 +301,27 @@ export default function ProfileEditScreen() {
     safeHaptic("selection");
     setProfile((prev) => ({
       ...prev,
-      available_days: prev.available_days.includes(day)
-        ? prev.available_days.filter((d) => d !== day)
-        : [...prev.available_days, day],
+      availability_times: prev.availability_times.map(a => 
+        a.day === day ? { ...a, enabled: !a.enabled } : a
+      ),
     }));
   };
+
+  const updateDayTime = (day: string, field: 'start_time' | 'end_time', value: string) => {
+    setProfile((prev) => ({
+      ...prev,
+      availability_times: prev.availability_times.map(a => 
+        a.day === day ? { ...a, [field]: value } : a
+      ),
+    }));
+  };
+
+  const TIME_OPTIONS = [
+    "00:00", "01:00", "02:00", "03:00", "04:00", "05:00",
+    "06:00", "07:00", "08:00", "09:00", "10:00", "11:00",
+    "12:00", "13:00", "14:00", "15:00", "16:00", "17:00",
+    "18:00", "19:00", "20:00", "21:00", "22:00", "23:00",
+  ];
 
   if (loading) {
     return (
@@ -402,27 +458,90 @@ export default function ProfileEditScreen() {
 
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Availability</Text>
-              <View style={styles.daysContainer}>
-                {DAY_OPTIONS.map((day) => (
+              <Text style={styles.sectionSubtitle}>Select the days and times you're available to work</Text>
+              
+              {profile.availability_times.map((dayAvail) => (
+                <View key={dayAvail.day} style={styles.availabilityRow}>
                   <TouchableOpacity
-                    key={day}
                     style={[
-                      styles.dayChip,
-                      profile.available_days.includes(day) && styles.dayChipSelected,
+                      styles.dayToggle,
+                      dayAvail.enabled && styles.dayToggleEnabled,
                     ]}
-                    onPress={() => toggleDay(day)}
+                    onPress={() => toggleDay(dayAvail.day)}
                   >
                     <Text
                       style={[
-                        styles.dayText,
-                        profile.available_days.includes(day) && styles.dayTextSelected,
+                        styles.dayToggleText,
+                        dayAvail.enabled && styles.dayToggleTextEnabled,
                       ]}
                     >
-                      {day}
+                      {dayAvail.day}
                     </Text>
                   </TouchableOpacity>
-                ))}
-              </View>
+                  
+                  {dayAvail.enabled && (
+                    <View style={styles.timePickerRow}>
+                      <View style={styles.timePicker}>
+                        <Text style={styles.timeLabel}>From</Text>
+                        <ScrollView 
+                          horizontal 
+                          showsHorizontalScrollIndicator={false}
+                          style={styles.timeScroll}
+                        >
+                          {TIME_OPTIONS.map((time) => (
+                            <TouchableOpacity
+                              key={time}
+                              style={[
+                                styles.timeChip,
+                                dayAvail.start_time === time && styles.timeChipSelected,
+                              ]}
+                              onPress={() => updateDayTime(dayAvail.day, 'start_time', time)}
+                            >
+                              <Text
+                                style={[
+                                  styles.timeChipText,
+                                  dayAvail.start_time === time && styles.timeChipTextSelected,
+                                ]}
+                              >
+                                {time}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </ScrollView>
+                      </View>
+                      
+                      <View style={styles.timePicker}>
+                        <Text style={styles.timeLabel}>To</Text>
+                        <ScrollView 
+                          horizontal 
+                          showsHorizontalScrollIndicator={false}
+                          style={styles.timeScroll}
+                        >
+                          {TIME_OPTIONS.map((time) => (
+                            <TouchableOpacity
+                              key={time}
+                              style={[
+                                styles.timeChip,
+                                dayAvail.end_time === time && styles.timeChipSelected,
+                              ]}
+                              onPress={() => updateDayTime(dayAvail.day, 'end_time', time)}
+                            >
+                              <Text
+                                style={[
+                                  styles.timeChipText,
+                                  dayAvail.end_time === time && styles.timeChipTextSelected,
+                                ]}
+                              >
+                                {time}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </ScrollView>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              ))}
             </View>
           </>
         )}
@@ -715,5 +834,75 @@ const styles = StyleSheet.create({
   },
   dayTextSelected: {
     color: colors.text,
+  },
+  sectionSubtitle: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginBottom: spacing.md,
+  },
+  availabilityRow: {
+    marginBottom: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  dayToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
+    alignSelf: "flex-start",
+  },
+  dayToggleEnabled: {
+    backgroundColor: colors.accent,
+  },
+  dayToggleText: {
+    ...typography.body,
+    color: colors.textMuted,
+    fontWeight: "600",
+  },
+  dayToggleTextEnabled: {
+    color: colors.text,
+  },
+  timePickerRow: {
+    marginTop: spacing.md,
+    gap: spacing.sm,
+  },
+  timePicker: {
+    marginBottom: spacing.xs,
+  },
+  timeLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginBottom: spacing.xs,
+  },
+  timeScroll: {
+    flexGrow: 0,
+  },
+  timeChip: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.background,
+    borderRadius: radius.sm,
+    marginRight: spacing.xs,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  timeChipSelected: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  timeChipText: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontSize: 12,
+  },
+  timeChipTextSelected: {
+    color: colors.text,
+    fontWeight: "600",
   },
 });

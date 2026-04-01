@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { motion } from "framer-motion";
 
-type UserType = "venue" | "security" | "agency";
+type UserType = "venue" | "security";
 
 const benefits = {
   venue: {
@@ -13,7 +13,7 @@ const benefits = {
     icon: "🏢",
     title: "For Venues",
     subtitle: "Find Verified Security Staff in Minutes",
-    description: "Shield connects your venue with SIA-licensed security professionals instantly. No more phone tag with agencies, no more last-minute scrambles.",
+    description: "Shield HQ connects your venue with SIA-licensed security professionals instantly. No more phone tag with agencies, no more last-minute scrambles.",
     problems: [
       "Door staff calls in sick 2 hours before doors open",
       "Spending hours calling agencies to fill weekend shifts",
@@ -23,7 +23,7 @@ const benefits = {
     solutions: [
       { icon: "⚡", title: "Instant Booking", desc: "Post a shift, get matched with available staff in minutes" },
       { icon: "✅", title: "Verified Staff", desc: "Every professional has verified SIA license on file" },
-      { icon: "💰", title: "Transparent Pricing", desc: "See rates upfront. 10% platform fee only when you book" },
+      { icon: "💰", title: "Free for Venues", desc: "No fees for venues — the 10% platform fee comes from the guard's earnings" },
       { icon: "⭐", title: "Reviews & Ratings", desc: "Book with confidence based on real venue feedback" },
     ],
     howItWorks: [
@@ -40,7 +40,7 @@ const benefits = {
     icon: "🛡️",
     title: "For Security Personnel",
     subtitle: "Get More Shifts. Get Paid Faster. Work on Your Terms.",
-    description: "Shield connects SIA-licensed security professionals directly with Birmingham venues. No middleman fees eating your pay. Set your own rates. Choose your own shifts.",
+    description: "Shield HQ connects SIA-licensed security professionals directly with Birmingham venues. No middleman fees eating your pay. Set your own rates. Choose your own shifts.",
     problems: [
       "Agencies taking 30-40% of what venues pay for you",
       "Waiting weeks to get paid for shifts you've already worked",
@@ -48,7 +48,7 @@ const benefits = {
       "No control over where or when you work",
     ],
     solutions: [
-      { icon: "💰", title: "Keep More Money", desc: "Venues pay you directly. Only 10% platform fee vs 30-40% agency cut" },
+      { icon: "💰", title: "Keep More Money", desc: "Only a 10% fee from your earnings — far less than the 30-40% agencies take" },
       { icon: "⚡", title: "Get Paid Fast", desc: "Instant payouts available. Money in your account within minutes" },
       { icon: "📅", title: "You Choose", desc: "Set your availability. Accept only shifts that work for you" },
       { icon: "⭐", title: "Build Your Rep", desc: "Good reviews = more bookings. Your reputation works for you" },
@@ -65,34 +65,6 @@ const benefits = {
     },
     cta: { text: "Join as security", href: "/signup/personnel" },
     pdfLink: "/pitch/security",
-  },
-  agency: {
-    color: "blue",
-    gradient: "from-blue-600 to-blue-500",
-    icon: "👥",
-    title: "For Security Agencies",
-    subtitle: "We're Not Your Competition. We're Your Sales Team.",
-    description: "Shield brings you extra bookings from venues you've never worked with — without any marketing spend. Keep your existing clients. Keep your staff. Just add extra revenue.",
-    problems: [],
-    solutions: [
-      { icon: "📈", title: "Extra Revenue", desc: "New clients find you through Shield. Zero marketing cost." },
-      { icon: "⚡", title: "Fast Payment", desc: "Get paid in 2-3 days, guaranteed. No more chasing invoices." },
-      { icon: "🛠️", title: "Free Tools", desc: "Staff management, compliance tracking, analytics — free." },
-    ],
-    keepControl: [
-      { title: "Your Existing Clients", desc: "Shield only brings new business" },
-      { title: "Your Staff", desc: "They work for you, not us" },
-      { title: "Your Rates", desc: "You set the price, we don't interfere" },
-      { title: "Your Brand", desc: "Venues see your agency name" },
-    ],
-    howItWorks: [
-      { step: 1, title: "Sign Up Free", desc: "Create your agency profile, add your staff" },
-      { step: 2, title: "Get Matched", desc: "Venues post shifts, you get notified" },
-      { step: 3, title: "Accept & Deliver", desc: "Send your staff, get paid fast" },
-    ],
-    revenue: { shifts: 10, avgValue: 120, monthly: 1080, yearly: 12960 },
-    cta: { text: "Partner as an agency", href: "/signup/agency" },
-    pdfLink: "/pitch/agency",
   },
 };
 
@@ -143,7 +115,7 @@ export default function WhyShieldPage() {
           </Link>
           
           <h1 className="text-4xl sm:text-5xl font-bold text-white mb-4">
-            Why <span className="bg-gradient-to-r from-teal-400 to-emerald-400 bg-clip-text text-transparent">Shield</span>?
+            Why <span className="bg-gradient-to-r from-teal-400 to-emerald-400 bg-clip-text text-transparent">Shield HQ</span>?
           </h1>
           <p className="text-xl text-zinc-400 max-w-2xl">
             The first platform built specifically for the security industry. 
@@ -157,9 +129,6 @@ export default function WhyShieldPage() {
             </Link>
             <Link href="/pitch/security" className="inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-4 py-2 rounded-lg text-sm hover:bg-emerald-500/20 transition">
               <span>📄</span> Security One-Pager
-            </Link>
-            <Link href="/pitch/agency" className="inline-flex items-center gap-2 bg-blue-500/10 border border-blue-500/30 text-blue-400 px-4 py-2 rounded-lg text-sm hover:bg-blue-500/20 transition">
-              <span>📄</span> Agency One-Pager
             </Link>
           </div>
         </div>
@@ -224,7 +193,7 @@ export default function WhyShieldPage() {
           {/* Solutions Grid */}
           <div className="mb-12">
             <h3 className="text-lg font-semibold text-white mb-6 flex items-center gap-2">
-              <span>✨</span> How Shield Solves This
+              <span>✨</span> How Shield HQ Solves This
             </h3>
             <div className="grid sm:grid-cols-2 gap-4">
               {data.solutions.map((solution, i) => (
@@ -247,7 +216,7 @@ export default function WhyShieldPage() {
                     <tr>
                       <th className="px-4 py-3 text-left text-sm font-semibold text-zinc-400">Scenario</th>
                       <th className="px-4 py-3 text-center text-sm font-semibold text-zinc-400">Agency</th>
-                      <th className="px-4 py-3 text-center text-sm font-semibold text-emerald-400">Shield</th>
+                      <th className="px-4 py-3 text-center text-sm font-semibold text-emerald-400">Shield HQ</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
@@ -280,51 +249,6 @@ export default function WhyShieldPage() {
             </div>
           )}
 
-          {/* Keep Control (Agency Only) */}
-          {activeTab === "agency" && benefits.agency.keepControl && (
-            <div className="mb-12">
-              <h3 className="text-lg font-semibold text-white mb-6">✅ What You Keep Control Of</h3>
-              <div className="grid sm:grid-cols-2 gap-4">
-                {benefits.agency.keepControl.map((item, i) => (
-                  <div key={i} className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-xl p-4">
-                    <span className="text-green-500 text-xl">✓</span>
-                    <div>
-                      <div className="font-medium text-white">{item.title}</div>
-                      <div className="text-sm text-zinc-400">{item.desc}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Revenue Calculator (Agency Only) */}
-          {activeTab === "agency" && benefits.agency.revenue && (
-            <div className="mb-12 bg-gradient-to-r from-blue-500/10 to-blue-600/5 border border-blue-500/20 rounded-2xl p-6 sm:p-8">
-              <h3 className="text-lg font-semibold text-white mb-4">💰 Potential Extra Revenue</h3>
-              <div className="grid grid-cols-4 gap-4 text-center">
-                <div>
-                  <div className="text-3xl font-bold text-white">{benefits.agency.revenue.shifts}</div>
-                  <div className="text-sm text-blue-300">Extra shifts/mo</div>
-                </div>
-                <div className="flex items-center justify-center">
-                  <span className="text-2xl text-zinc-500">×</span>
-                </div>
-                <div>
-                  <div className="text-3xl font-bold text-white">£{benefits.agency.revenue.avgValue}</div>
-                  <div className="text-sm text-blue-300">Avg shift value</div>
-                </div>
-                <div className="flex items-center justify-center">
-                  <span className="text-2xl text-zinc-500">=</span>
-                </div>
-              </div>
-              <div className="mt-6 text-center border-t border-blue-500/20 pt-6">
-                <div className="text-4xl font-bold text-white">£{benefits.agency.revenue.monthly.toLocaleString()}/month</div>
-                <div className="text-blue-300">Extra revenue (you keep 90%)</div>
-                <div className="mt-2 text-sm text-blue-400">That's £{benefits.agency.revenue.yearly.toLocaleString()}/year with zero marketing spend</div>
-              </div>
-            </div>
-          )}
 
           {/* How It Works */}
           <div className="mb-12">
@@ -412,7 +336,7 @@ export default function WhyShieldPage() {
             Join the Future of Security Staffing
           </h2>
           <p className="text-zinc-400 mb-8 max-w-xl mx-auto">
-            Whether you're a venue, security professional, or agency — Shield has the tools you need.
+            Whether you're a venue or security professional — Shield HQ has the tools you need.
           </p>
           <div className="flex flex-wrap justify-center gap-4">
             <Link href="/signup/venue" className="bg-teal-500 hover:bg-teal-600 text-white px-6 py-3 rounded-xl font-medium transition">
@@ -420,9 +344,6 @@ export default function WhyShieldPage() {
             </Link>
             <Link href="/signup/personnel" className="bg-emerald-500 hover:bg-emerald-600 text-white px-6 py-3 rounded-xl font-medium transition">
               🛡️ I'm Security
-            </Link>
-            <Link href="/signup/agency" className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-xl font-medium transition">
-              👥 I'm an Agency
             </Link>
           </div>
         </div>

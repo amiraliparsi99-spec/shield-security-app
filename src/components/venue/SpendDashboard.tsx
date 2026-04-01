@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { createClient } from "@/lib/supabase/client";
+import { StatsSkeleton, ListSkeleton } from "@/components/ui/LoadingStates";
 
 type SpendEntry = {
   id: string;
@@ -20,33 +22,125 @@ type MonthlySpend = {
   avgPerEvent: number;
 };
 
-const mockSpendHistory: SpendEntry[] = [
-  { id: "1", date: "2026-01-26", eventName: "Friday Night", staffCount: 6, hours: 8, totalCost: 864, status: "pending" },
-  { id: "2", date: "2026-01-25", eventName: "Thursday Event", staffCount: 4, hours: 6, totalCost: 432, status: "paid" },
-  { id: "3", date: "2026-01-24", eventName: "VIP Night", staffCount: 8, hours: 8, totalCost: 1280, status: "paid" },
-  { id: "4", date: "2026-01-19", eventName: "Friday Night", staffCount: 6, hours: 8, totalCost: 864, status: "paid" },
-  { id: "5", date: "2026-01-18", eventName: "Saturday Special", staffCount: 10, hours: 10, totalCost: 1800, status: "paid" },
-  { id: "6", date: "2026-01-12", eventName: "Friday Night", staffCount: 6, hours: 8, totalCost: 864, status: "overdue" },
-];
-
-const mockMonthlyData: MonthlySpend[] = [
-  { month: "Jan 2026", total: 6104, events: 6, avgPerEvent: 1017 },
-  { month: "Dec 2025", total: 8450, events: 8, avgPerEvent: 1056 },
-  { month: "Nov 2025", total: 7200, events: 7, avgPerEvent: 1029 },
-  { month: "Oct 2025", total: 6800, events: 6, avgPerEvent: 1133 },
-];
-
 export function SpendDashboard() {
-  const [spendHistory] = useState<SpendEntry[]>(mockSpendHistory);
-  const [monthlyData] = useState<MonthlySpend[]>(mockMonthlyData);
+  const [spendHistory, setSpendHistory] = useState<SpendEntry[]>([]);
+  const [monthlyData, setMonthlyData] = useState<MonthlySpend[]>([]);
+  const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<"week" | "month" | "quarter" | "year">("month");
   const [budget, setBudget] = useState<number>(8000);
   const [showBudgetEdit, setShowBudgetEdit] = useState(false);
+
+  useEffect(() => {
+    const fetchSpend = async () => {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+      const { data: venue } = await supabase
+        .from("venues")
+        .select("id")
+        .eq("user_id", user.id)
+        .single();
+      if (!venue) {
+        setLoading(false);
+        return;
+      }
+      const { data: payments } = await supabase
+        .from("shift_payments")
+        .select("id, created_at, gross_amount, status, booking_id")
+        .eq("venue_id", venue.id)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      const { data: bookingsData } = await supabase
+        .from("bookings")
+        .select("id, event_name, event_date, estimated_total")
+        .eq("venue_id", venue.id)
+        .in("status", ["confirmed", "completed", "in_progress"])
+        .order("event_date", { ascending: false })
+        .limit(30);
+      const entries: SpendEntry[] = [];
+      const byMonth: Record<string, { total: number; events: number }> = {};
+      const bookingIds = [...new Set((payments || []).map((p: any) => p.booking_id).filter(Boolean))];
+      const bookingMap: Record<string, { event_name?: string; event_date?: string }> = {};
+      if (bookingIds.length > 0) {
+        const { data: bks } = await supabase.from("bookings").select("id, event_name, event_date").in("id", bookingIds);
+        (bks || []).forEach((b: any) => { bookingMap[b.id] = { event_name: b.event_name, event_date: b.event_date }; });
+      }
+      (payments || []).forEach((p: any) => {
+        const amount = (p.gross_amount || 0) / 100;
+        const status = p.status === "succeeded" ? "paid" : p.status === "failed" ? "overdue" : "pending";
+        const b = bookingMap[p.booking_id] || {};
+        const eventName = b.event_name || "Event";
+        const date = b.event_date || p.created_at?.slice(0, 10) || "";
+        entries.push({
+          id: p.id,
+          date,
+          eventName,
+          staffCount: 1,
+          hours: 0,
+          totalCost: amount,
+          status,
+        });
+        const monthKey = date.slice(0, 7);
+        if (!byMonth[monthKey]) byMonth[monthKey] = { total: 0, events: 0 };
+        byMonth[monthKey].total += amount;
+        byMonth[monthKey].events += 1;
+      });
+      if (entries.length === 0 && bookingsData?.length) {
+        bookingsData.forEach((b: any) => {
+          const total = b.estimated_total || 0;
+          const shiftCount = 0;
+          entries.push({
+            id: b.id,
+            date: b.event_date || "",
+            eventName: b.event_name || "Event",
+            staffCount: shiftCount,
+            hours: 0,
+            totalCost: total,
+            status: "pending",
+          });
+          const monthKey = (b.event_date || "").slice(0, 7);
+          if (monthKey && monthKey.length === 7) {
+            if (!byMonth[monthKey]) byMonth[monthKey] = { total: 0, events: 0 };
+            byMonth[monthKey].total += total;
+            byMonth[monthKey].events += 1;
+          }
+        });
+      }
+      setSpendHistory(entries);
+      const months = Object.entries(byMonth)
+        .sort(([a], [b]) => b.localeCompare(a))
+        .slice(0, 12)
+        .map(([monthKey, v]) => ({
+          month: new Date(monthKey + "-01").toLocaleDateString("en-GB", { month: "short", year: "numeric" }),
+          total: Math.round(v.total),
+          events: v.events,
+          avgPerEvent: v.events ? Math.round(v.total / v.events) : 0,
+        }));
+      setMonthlyData(months);
+      setLoading(false);
+    };
+    fetchSpend();
+  }, []);
 
   const currentMonthSpend = monthlyData[0]?.total || 0;
   const budgetUsed = Math.round((currentMonthSpend / budget) * 100);
   const pendingAmount = spendHistory.filter(s => s.status === "pending").reduce((sum, s) => sum + s.totalCost, 0);
   const overdueAmount = spendHistory.filter(s => s.status === "overdue").reduce((sum, s) => sum + s.totalCost, 0);
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <StatsSkeleton />
+        <div className="glass rounded-xl p-6">
+          <div className="h-5 w-32 shimmer rounded mb-4" />
+          <ListSkeleton count={5} />
+        </div>
+      </div>
+    );
+  }
 
   const getStatusBadge = (status: SpendEntry["status"]) => {
     switch (status) {
@@ -238,27 +332,24 @@ export function SpendDashboard() {
 
       {/* Export Options */}
       <div className="flex flex-wrap gap-3">
-        <motion.button
-          className="glass rounded-lg px-4 py-2 text-sm text-white hover:bg-white/10 transition"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
+        <button
+          type="button"
+          className="glass rounded-lg px-4 py-2 text-sm text-white hover:bg-white/10 transition active:scale-[0.98]"
         >
           📊 Export Report
-        </motion.button>
-        <motion.button
-          className="glass rounded-lg px-4 py-2 text-sm text-white hover:bg-white/10 transition"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
+        </button>
+        <button
+          type="button"
+          className="glass rounded-lg px-4 py-2 text-sm text-white hover:bg-white/10 transition active:scale-[0.98]"
         >
           📧 Email Summary
-        </motion.button>
-        <motion.button
-          className="glass rounded-lg px-4 py-2 text-sm text-white hover:bg-white/10 transition"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
+        </button>
+        <button
+          type="button"
+          className="glass rounded-lg px-4 py-2 text-sm text-white hover:bg-white/10 transition active:scale-[0.98]"
         >
           📥 Download Invoices
-        </motion.button>
+        </button>
       </div>
     </div>
   );

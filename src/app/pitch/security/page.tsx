@@ -27,7 +27,7 @@ export default function SecurityPitchPage() {
         <div className="max-w-4xl mx-auto">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold print:text-2xl">Shield</h1>
+              <h1 className="text-3xl font-bold print:text-2xl">Shield HQ</h1>
               <p className="text-emerald-100 mt-1">For Security Professionals</p>
             </div>
             <div className="text-right">
@@ -46,7 +46,7 @@ export default function SecurityPitchPage() {
             Get More Shifts. Get Paid Faster. Work on Your Terms.
           </h2>
           <p className="text-lg text-gray-600 leading-relaxed print:text-base">
-            Shield connects SIA-licensed security professionals directly with Birmingham venues. 
+            Shield HQ connects SIA-licensed security professionals directly with Birmingham venues. 
             No middleman fees eating your pay. Set your own rates. Choose your own shifts.
           </p>
         </section>
@@ -79,13 +79,13 @@ export default function SecurityPitchPage() {
         {/* The Solution */}
         <section className="mb-10 bg-emerald-50 rounded-xl p-6 border border-emerald-100 print:bg-emerald-50">
           <h3 className="text-lg font-semibold text-emerald-800 mb-3 flex items-center gap-2">
-            <span className="text-xl">✨</span> How Shield Is Different
+            <span className="text-xl">✨</span> How Shield HQ Is Different
           </h3>
           <div className="grid md:grid-cols-2 gap-4">
             <div className="bg-white rounded-lg p-4 shadow-sm">
               <div className="text-2xl mb-2">💰</div>
               <h4 className="font-semibold text-gray-900">Keep More Money</h4>
-              <p className="text-sm text-gray-600">Venues pay you directly. Only 10% platform fee vs 30-40% agency cut</p>
+              <p className="text-sm text-gray-600">Just a 10% fee from your earnings — far less than the 30-40% agencies take</p>
             </div>
             <div className="bg-white rounded-lg p-4 shadow-sm">
               <div className="text-2xl mb-2">⚡</div>
@@ -114,7 +114,7 @@ export default function SecurityPitchPage() {
                 <tr>
                   <th className="px-4 py-3 text-left text-sm font-semibold text-gray-900">Scenario</th>
                   <th className="px-4 py-3 text-center text-sm font-semibold text-gray-900">Agency</th>
-                  <th className="px-4 py-3 text-center text-sm font-semibold text-emerald-600">Shield</th>
+                  <th className="px-4 py-3 text-center text-sm font-semibold text-emerald-600">Shield HQ</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
@@ -182,7 +182,7 @@ export default function SecurityPitchPage() {
             </div>
             <div className="flex items-center gap-3">
               <span className="text-emerald-500 text-lg">✓</span>
-              <span className="text-gray-700">Smartphone with the Shield app</span>
+              <span className="text-gray-700">Smartphone with the Shield HQ app</span>
             </div>
             <div className="flex items-center gap-3">
               <span className="text-emerald-500 text-lg">✓</span>
@@ -194,10 +194,10 @@ export default function SecurityPitchPage() {
         {/* Early Adopter Offer */}
         <section className="mb-10 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white rounded-xl p-6">
           <h3 className="text-lg font-semibold mb-2">🎁 Early Adopter Bonus</h3>
-          <p className="mb-4">Join Shield this month and get:</p>
+          <p className="mb-4">Join Shield HQ this month and get:</p>
           <ul className="space-y-2">
             <li className="flex items-center gap-2">
-              <span>✓</span> First 5 shifts with 0% platform fee (you keep 100%)
+              <span>✓</span> First 5 shifts with 0% fee — you keep 100% of your earnings
             </li>
             <li className="flex items-center gap-2">
               <span>✓</span> Priority listing in venue searches
@@ -214,7 +214,7 @@ export default function SecurityPitchPage() {
           <p className="text-gray-600 mb-4">Free to join. Takes 5 minutes.</p>
           <div className="space-y-2">
             <p className="text-lg font-semibold text-emerald-600">shieldapp.co.uk/signup/personnel</p>
-            <p className="text-gray-500">or download the Shield app</p>
+            <p className="text-gray-500">or download the Shield HQ app</p>
           </div>
         </section>
 
@@ -237,7 +237,7 @@ export default function SecurityPitchPage() {
           href="/why-shield"
           className="bg-gray-100 text-gray-700 px-6 py-3 rounded-lg shadow-lg hover:bg-gray-200 transition font-medium"
         >
-          Why Shield
+          Why Shield HQ
         </a>
         <a
           href="/"

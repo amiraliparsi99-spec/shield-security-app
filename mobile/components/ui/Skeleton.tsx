@@ -10,8 +10,10 @@ import { colors, radius, spacing } from "../../theme";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
+import type { DimensionValue } from "react-native";
+
 interface SkeletonProps {
-  width?: number | string;
+  width?: DimensionValue;
   height?: number;
   borderRadius?: number;
   style?: ViewStyle;
@@ -81,11 +83,11 @@ export function Skeleton({
 export function SkeletonText({
   lines = 1,
   spacing: lineSpacing = spacing.xs,
-  lastLineWidth = "60%",
+  lastLineWidth = "60%" as DimensionValue,
 }: {
   lines?: number;
   spacing?: number;
-  lastLineWidth?: string | number;
+  lastLineWidth?: DimensionValue;
 }) {
   return (
     <View style={styles.textContainer}>

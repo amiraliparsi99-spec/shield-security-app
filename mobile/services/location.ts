@@ -194,7 +194,7 @@ async function handleLocationUpdate(location: Location.LocationObject): Promise<
 }
 
 async function uploadLocation(location: Location.LocationObject): Promise<void> {
-  if (!locationState.agencyStaffId) return;
+  if (!locationState.agencyStaffId || !supabase) return;
 
   const { latitude, longitude, accuracy, altitude, heading, speed } = location.coords;
 
@@ -270,7 +270,7 @@ async function handleGeofenceEvent(
 ): Promise<void> {
   console.log(`[Geofence] ${eventType} event for geofence ${geofence.id}`);
 
-  if (!locationState.currentAssignmentId) return;
+  if (!locationState.currentAssignmentId || !supabase) return;
 
   // Record the event
   const { error: eventError } = await supabase.from("geofence_events").insert({
@@ -296,7 +296,7 @@ async function handleGeofenceEvent(
 }
 
 async function autoCheckIn(lat: number, lng: number): Promise<void> {
-  if (!locationState.currentAssignmentId) return;
+  if (!locationState.currentAssignmentId || !supabase) return;
 
   const { error } = await supabase
     .from("booking_assignments")
@@ -317,7 +317,7 @@ async function autoCheckIn(lat: number, lng: number): Promise<void> {
 }
 
 async function autoCheckOut(lat: number, lng: number): Promise<void> {
-  if (!locationState.currentAssignmentId) return;
+  if (!locationState.currentAssignmentId || !supabase) return;
 
   const { error } = await supabase
     .from("booking_assignments")

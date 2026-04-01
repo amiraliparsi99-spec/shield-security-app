@@ -265,27 +265,24 @@ export function EarningsDashboard() {
 
       {/* Export Options */}
       <div className="flex flex-wrap gap-3">
-        <motion.button
-          className="glass rounded-lg px-4 py-2 text-sm text-white hover:bg-white/10 transition"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
+        <button
+          type="button"
+          className="glass rounded-lg px-4 py-2 text-sm text-white hover:bg-white/10 transition active:scale-[0.98]"
         >
           📊 Export for Accountant
-        </motion.button>
-        <motion.button
-          className="glass rounded-lg px-4 py-2 text-sm text-white hover:bg-white/10 transition"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
+        </button>
+        <button
+          type="button"
+          className="glass rounded-lg px-4 py-2 text-sm text-white hover:bg-white/10 transition active:scale-[0.98]"
         >
           📥 Download CSV
-        </motion.button>
-        <motion.button
-          className="glass rounded-lg px-4 py-2 text-sm text-white hover:bg-white/10 transition"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
+        </button>
+        <button
+          type="button"
+          className="glass rounded-lg px-4 py-2 text-sm text-white hover:bg-white/10 transition active:scale-[0.98]"
         >
           🧾 Generate Invoice
-        </motion.button>
+        </button>
       </div>
     </div>
   );

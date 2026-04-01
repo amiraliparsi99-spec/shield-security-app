@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { createClient } from "@/lib/supabase/client";
 
 type StaffMember = {
   id: string;
@@ -15,63 +16,103 @@ type StaffMember = {
   notes?: string;
 };
 
-const mockStaff: StaffMember[] = [
-  {
-    id: "1",
-    name: "Marcus Johnson",
-    rating: 4.9,
-    shiftsWithYou: 48,
-    lastWorked: "2026-01-26",
-    skills: ["Door", "VIP", "Event"],
-    status: "preferred",
-    notes: "Excellent with difficult customers. Always professional.",
-  },
-  {
-    id: "2",
-    name: "Sarah Williams",
-    rating: 4.8,
-    shiftsWithYou: 32,
-    lastWorked: "2026-01-25",
-    skills: ["Floor", "CCTV"],
-    status: "preferred",
-    notes: "Great attention to detail. Reliable.",
-  },
-  {
-    id: "3",
-    name: "David Chen",
-    rating: 4.7,
-    shiftsWithYou: 24,
-    lastWorked: "2026-01-24",
-    skills: ["Door", "Event"],
-    status: "neutral",
-  },
-  {
-    id: "4",
-    name: "Emma Thompson",
-    rating: 4.9,
-    shiftsWithYou: 56,
-    lastWorked: "2026-01-26",
-    skills: ["VIP", "Corporate"],
-    status: "preferred",
-    notes: "Our go-to for VIP events.",
-  },
-  {
-    id: "5",
-    name: "James Wilson",
-    rating: 3.2,
-    shiftsWithYou: 8,
-    lastWorked: "2026-01-10",
-    skills: ["Door"],
-    status: "blocked",
-    notes: "Late twice, unprofessional behavior.",
-  },
-];
-
 export function PreferredStaff() {
-  const [staff, setStaff] = useState<StaffMember[]>(mockStaff);
+  const [staff, setStaff] = useState<StaffMember[]>([]);
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "preferred" | "blocked">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [editingStaff, setEditingStaff] = useState<StaffMember | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+      const { data: venue } = await supabase.from("venues").select("id").eq("user_id", user.id).single();
+      if (!venue) {
+        setLoading(false);
+        return;
+      }
+      const { data: bookings } = await supabase.from("bookings").select("id").eq("venue_id", venue.id);
+      const bookingIds = (bookings || []).map((b: { id: string }) => b.id);
+      const preferredMap: Record<string, { note: string | null }> = {};
+      const blockedMap: Record<string, { reason: string | null }> = {};
+      const [prefRes, blockRes] = await Promise.all([
+        supabase.from("preferred_staff").select("personnel_id, note").eq("venue_id", venue.id),
+        supabase.from("blocked_staff").select("personnel_id, reason").eq("venue_id", venue.id),
+      ]);
+      (prefRes.data || []).forEach((p: { personnel_id: string; note: string | null }) => {
+        preferredMap[p.personnel_id] = { note: p.note };
+      });
+      (blockRes.data || []).forEach((b: { personnel_id: string; reason: string | null }) => {
+        blockedMap[b.personnel_id] = { reason: b.reason };
+      });
+      const shiftCount: Record<string, number> = {};
+      const lastWorked: Record<string, string> = {};
+      if (bookingIds.length > 0) {
+        const { data: shiftsData } = await supabase
+          .from("shifts")
+          .select("personnel_id, scheduled_start")
+          .in("booking_id", bookingIds)
+          .not("personnel_id", "is", null);
+        (shiftsData || []).forEach((s: { personnel_id: string; scheduled_start: string }) => {
+          if (!s.personnel_id) return;
+          shiftCount[s.personnel_id] = (shiftCount[s.personnel_id] || 0) + 1;
+          if (!lastWorked[s.personnel_id] || s.scheduled_start > lastWorked[s.personnel_id]) {
+            lastWorked[s.personnel_id] = s.scheduled_start;
+          }
+        });
+      }
+      const allPersonnelIds = new Set<string>([
+        ...Object.keys(preferredMap),
+        ...Object.keys(blockedMap),
+        ...Object.keys(shiftCount),
+      ]);
+      if (allPersonnelIds.size === 0) {
+        setStaff([]);
+        setLoading(false);
+        return;
+      }
+      const { data: personnelRows } = await supabase
+        .from("personnel")
+        .select("id, display_name")
+        .in("id", Array.from(allPersonnelIds));
+      const { data: reviewRows } = await supabase
+        .from("reviews")
+        .select("reviewee_id, overall_rating")
+        .in("reviewee_id", Array.from(allPersonnelIds));
+      const avgByPerson: Record<string, { sum: number; n: number }> = {};
+      (reviewRows || []).forEach((r: { reviewee_id: string; overall_rating: number }) => {
+        if (!avgByPerson[r.reviewee_id]) avgByPerson[r.reviewee_id] = { sum: 0, n: 0 };
+        avgByPerson[r.reviewee_id].sum += r.overall_rating;
+        avgByPerson[r.reviewee_id].n += 1;
+      });
+      const list: StaffMember[] = Array.from(allPersonnelIds).map(pid => {
+        const p = (personnelRows || []).find((x: { id: string }) => x.id === pid);
+        const name = (p as { display_name?: string } | undefined)?.display_name || "Staff";
+        const status: StaffMember["status"] = blockedMap[pid] ? "blocked" : preferredMap[pid] ? "preferred" : "neutral";
+        const notes = preferredMap[pid]?.note ?? blockedMap[pid]?.reason ?? undefined;
+        const avg = avgByPerson[pid];
+        const rating = avg && avg.n > 0 ? Math.round((avg.sum / avg.n) * 10) / 10 : 0;
+        return {
+          id: pid,
+          name,
+          rating,
+          shiftsWithYou: shiftCount[pid] || 0,
+          lastWorked: lastWorked[pid]?.slice(0, 10),
+          skills: ["Security"],
+          status,
+          notes: notes || undefined,
+        };
+      });
+      setStaff(list);
+      setLoading(false);
+    };
+    load();
+  }, []);
 
   const filteredStaff = staff.filter(s => {
     const matchesFilter = filter === "all" || s.status === filter;
@@ -82,15 +123,41 @@ export function PreferredStaff() {
   const preferredCount = staff.filter(s => s.status === "preferred").length;
   const blockedCount = staff.filter(s => s.status === "blocked").length;
 
-  const updateStatus = (staffId: string, newStatus: StaffMember["status"]) => {
+  const updateStatus = async (staffId: string, newStatus: StaffMember["status"]) => {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data: venue } = await supabase.from("venues").select("id").eq("user_id", user.id).single();
+    if (!venue) return;
+    if (newStatus === "preferred") {
+      await supabase.from("blocked_staff").delete().eq("venue_id", venue.id).eq("personnel_id", staffId);
+      await supabase.from("preferred_staff").upsert({ venue_id: venue.id, personnel_id: staffId, note: null }, { onConflict: "venue_id,personnel_id" });
+    } else if (newStatus === "blocked") {
+      await supabase.from("preferred_staff").delete().eq("venue_id", venue.id).eq("personnel_id", staffId);
+      await supabase.from("blocked_staff").upsert({ venue_id: venue.id, personnel_id: staffId, reason: null }, { onConflict: "venue_id,personnel_id" });
+    } else {
+      await supabase.from("preferred_staff").delete().eq("venue_id", venue.id).eq("personnel_id", staffId);
+      await supabase.from("blocked_staff").delete().eq("venue_id", venue.id).eq("personnel_id", staffId);
+    }
     setStaff(prev => prev.map(s =>
       s.id === staffId ? { ...s, status: newStatus } : s
     ));
   };
 
-  const updateNotes = (staffId: string, notes: string) => {
+  const updateNotes = async (staffId: string, notes: string) => {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data: venue } = await supabase.from("venues").select("id").eq("user_id", user.id).single();
+    if (!venue) return;
+    const member = staff.find(s => s.id === staffId);
+    if (member?.status === "preferred") {
+      await supabase.from("preferred_staff").update({ note: notes || null }).eq("venue_id", venue.id).eq("personnel_id", staffId);
+    } else if (member?.status === "blocked") {
+      await supabase.from("blocked_staff").update({ reason: notes || null }).eq("venue_id", venue.id).eq("personnel_id", staffId);
+    }
     setStaff(prev => prev.map(s =>
-      s.id === staffId ? { ...s, notes } : s
+      s.id === staffId ? { ...s, notes: notes || undefined } : s
     ));
     setEditingStaff(null);
   };
@@ -105,6 +172,14 @@ export function PreferredStaff() {
         return null;
     }
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-shield-500 border-t-transparent" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

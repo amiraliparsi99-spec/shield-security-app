@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { useSupabase, useUser } from "@/hooks";
+import { EmptyState, EmptyStateCTA } from "@/components/ui/LoadingStates";
+import { getPricingBreakdown } from "@/lib/pricing";
 
 type Guard = {
   id: string;
@@ -31,12 +33,16 @@ type Booking = {
   paidAt: string | null;
 };
 
+function getBookingTotalGBP(booking: Booking): number {
+  return getPricingBreakdown(booking).totalGBP;
+}
+
 export default function BookingsPage() {
   const supabase = useSupabase();
   const { user, loading: userLoading } = useUser();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<"all" | "pending" | "confirmed" | "paid">("all");
+  const [filter, setFilter] = useState<"all" | "pending" | "confirmed" | "completed" | "paid">("all");
 
   // Fetch bookings with guard details
   useEffect(() => {
@@ -50,12 +56,14 @@ export default function BookingsPage() {
       // Get venue - try multiple ways to find it
       let venue = null;
       
+      
       // First try by user_id directly
-      const { data: venueByUser } = await supabase
+      const { data: venueByUser, error: venueError } = await supabase
         .from('venues')
         .select('id')
         .eq('user_id', user.id)
         .single();
+      
       
       if (venueByUser) {
         venue = venueByUser;
@@ -85,12 +93,14 @@ export default function BookingsPage() {
         return;
       }
 
+
       // Get bookings
       const { data: bookingsData, error: bookingsError } = await supabase
         .from('bookings')
         .select('*')
         .eq('venue_id', venue.id)
         .order('event_date', { ascending: false });
+      
 
       if (!bookingsData || bookingsData.length === 0) {
         setBookings([]);
@@ -202,8 +212,9 @@ export default function BookingsPage() {
 
   const filteredBookings = bookings.filter(b => {
     if (filter === "all") return true;
-    if (filter === "confirmed") return b.claimedShifts > 0 && !b.isPaid;
+    if (filter === "confirmed") return b.claimedShifts > 0 && !b.isPaid && b.status !== "completed";
     if (filter === "pending") return b.claimedShifts === 0;
+    if (filter === "completed") return b.status === "completed";
     if (filter === "paid") return b.isPaid;
     return true;
   });
@@ -244,58 +255,65 @@ export default function BookingsPage() {
       </div>
 
       {/* Quick Stats */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-5 gap-3 mb-6">
         <button
           onClick={() => setFilter("all")}
-          className={`p-4 rounded-xl transition ${filter === "all" ? "bg-white/10 border border-white/20" : "bg-white/5"}`}
+          className={`p-3 rounded-xl transition ${filter === "all" ? "bg-white/10 border border-white/20" : "bg-white/5"}`}
         >
-          <p className="text-2xl font-bold text-white">{bookings.length}</p>
-          <p className="text-sm text-zinc-400">Total Jobs</p>
+          <p className="text-xl font-bold text-white">{bookings.length}</p>
+          <p className="text-xs text-zinc-400">All Jobs</p>
         </button>
         <button
           onClick={() => setFilter("confirmed")}
-          className={`p-4 rounded-xl transition ${filter === "confirmed" ? "bg-emerald-500/20 border border-emerald-500/30" : "bg-white/5"}`}
+          className={`p-3 rounded-xl transition ${filter === "confirmed" ? "bg-emerald-500/20 border border-emerald-500/30" : "bg-white/5"}`}
         >
-          <p className="text-2xl font-bold text-emerald-400">
-            {bookings.filter(b => b.claimedShifts > 0 && !b.isPaid).length}
+          <p className="text-xl font-bold text-emerald-400">
+            {bookings.filter(b => b.claimedShifts > 0 && !b.isPaid && b.status !== "completed").length}
           </p>
-          <p className="text-sm text-zinc-400">Confirmed</p>
+          <p className="text-xs text-zinc-400">Confirmed</p>
         </button>
         <button
           onClick={() => setFilter("pending")}
-          className={`p-4 rounded-xl transition ${filter === "pending" ? "bg-amber-500/20 border border-amber-500/30" : "bg-white/5"}`}
+          className={`p-3 rounded-xl transition ${filter === "pending" ? "bg-amber-500/20 border border-amber-500/30" : "bg-white/5"}`}
         >
-          <p className="text-2xl font-bold text-amber-400">
+          <p className="text-xl font-bold text-amber-400">
             {bookings.filter(b => b.claimedShifts === 0).length}
           </p>
-          <p className="text-sm text-zinc-400">Awaiting</p>
+          <p className="text-xs text-zinc-400">Awaiting</p>
+        </button>
+        <button
+          onClick={() => setFilter("completed")}
+          className={`p-3 rounded-xl transition ${filter === "completed" ? "bg-purple-500/20 border border-purple-500/30" : "bg-white/5"}`}
+        >
+          <p className="text-xl font-bold text-purple-400">
+            {bookings.filter(b => b.status === "completed").length}
+          </p>
+          <p className="text-xs text-zinc-400">Completed</p>
         </button>
         <button
           onClick={() => setFilter("paid")}
-          className={`p-4 rounded-xl transition ${filter === "paid" ? "bg-blue-500/20 border border-blue-500/30" : "bg-white/5"}`}
+          className={`p-3 rounded-xl transition ${filter === "paid" ? "bg-blue-500/20 border border-blue-500/30" : "bg-white/5"}`}
         >
-          <p className="text-2xl font-bold text-blue-400">
+          <p className="text-xl font-bold text-blue-400">
             {bookings.filter(b => b.isPaid).length}
           </p>
-          <p className="text-sm text-zinc-400">Paid</p>
+          <p className="text-xs text-zinc-400">Paid</p>
         </button>
       </div>
 
       {/* Bookings List */}
       <div className="space-y-4">
         {filteredBookings.length === 0 ? (
-          <div className="bg-white/5 rounded-2xl p-8 text-center">
-            <div className="text-5xl mb-4">📋</div>
-            <p className="text-lg font-medium text-white mb-2">No jobs yet</p>
-            <p className="text-zinc-400 mb-4">Post your first job to get started</p>
-            <Link href="/d/venue/bookings/new">
-              <button className="bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-6 py-3 rounded-xl">
-                Post a Job
-              </button>
-            </Link>
-          </div>
+          <EmptyState
+            icon="📋"
+            title="No jobs yet"
+            description="Post your first job to find security staff for your venue."
+            action={<EmptyStateCTA href="/d/venue/bookings/new">Post a Job</EmptyStateCTA>}
+          />
         ) : (
-          filteredBookings.map(booking => (
+          filteredBookings.map(booking => {
+            const displayTotal = getBookingTotalGBP(booking);
+            return (
             <motion.div
               key={booking.id}
               className="bg-white/5 rounded-2xl overflow-hidden"
@@ -303,38 +321,52 @@ export default function BookingsPage() {
               animate={{ opacity: 1, y: 0 }}
             >
               {/* Booking Header */}
-              <div className="p-4 border-b border-white/10">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <div className="flex items-center gap-3 mb-1">
-                      <h3 className="text-lg font-bold text-white">{booking.event_name}</h3>
-                      {booking.isPaid ? (
-                        <span className="bg-blue-500 text-white text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
-                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                          PAID
-                        </span>
-                      ) : booking.claimedShifts > 0 ? (
-                        <span className="bg-emerald-500 text-black text-xs font-bold px-2.5 py-1 rounded-full">
-                          CONFIRMED
-                        </span>
-                      ) : (
-                        <span className="bg-amber-500/20 text-amber-400 text-xs font-medium px-2.5 py-1 rounded-full">
-                          Awaiting Claims
-                        </span>
-                      )}
+              <Link href={`/d/venue/bookings/${booking.id}`}>
+                <div className="p-4 border-b border-white/10 hover:bg-white/5 transition cursor-pointer">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <div className="flex items-center gap-3 mb-1">
+                        <h3 className="text-lg font-bold text-white">{booking.event_name}</h3>
+                        {booking.status === "completed" ? (
+                          <span className="bg-emerald-500/20 text-emerald-400 text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
+                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                            COMPLETED
+                          </span>
+                        ) : booking.isPaid ? (
+                          <span className="bg-blue-500 text-white text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
+                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                            PAID
+                          </span>
+                        ) : booking.claimedShifts > 0 ? (
+                          <span className="bg-emerald-500 text-black text-xs font-bold px-2.5 py-1 rounded-full">
+                            CONFIRMED
+                          </span>
+                        ) : (
+                          <span className="bg-amber-500/20 text-amber-400 text-xs font-medium px-2.5 py-1 rounded-full">
+                            Awaiting Claims
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-zinc-400">
+                        {formatDate(booking.event_date)} • {booking.start_time} - {booking.end_time}
+                      </p>
                     </div>
-                    <p className="text-zinc-400">
-                      {formatDate(booking.event_date)} • {booking.start_time} - {booking.end_time}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xl font-bold text-white">£{booking.estimated_total.toFixed(0)}</p>
-                    <p className="text-xs text-zinc-500">{booking.totalShifts} shift{booking.totalShifts !== 1 ? 's' : ''}</p>
+                    <div className="text-right flex items-center gap-3">
+                      <div>
+                        <p className="text-xl font-bold text-white">£{displayTotal.toFixed(0)}</p>
+                        <p className="text-xs text-zinc-500">{booking.totalShifts} shift{booking.totalShifts !== 1 ? 's' : ''}</p>
+                      </div>
+                      <svg className="w-5 h-5 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </Link>
 
               {/* Guards Section */}
               {booking.guards.length > 0 ? (
@@ -408,7 +440,7 @@ export default function BookingsPage() {
                             </p>
                           </div>
                         </div>
-                        <p className="text-lg font-bold text-white">£{booking.estimated_total.toFixed(0)}</p>
+                        <p className="text-lg font-bold text-white">£{displayTotal.toFixed(0)}</p>
                       </div>
                     ) : (
                       <Link href={`/d/venue/bookings/${booking.id}/pay`}>
@@ -420,7 +452,7 @@ export default function BookingsPage() {
                           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                           </svg>
-                          Pay Now - £{booking.estimated_total.toFixed(0)}
+                          Pay Now - £{displayTotal.toFixed(0)}
                         </motion.button>
                       </Link>
                     )}
@@ -436,7 +468,7 @@ export default function BookingsPage() {
                 </div>
               )}
             </motion.div>
-          ))
+          )})
         )}
       </div>
     </div>

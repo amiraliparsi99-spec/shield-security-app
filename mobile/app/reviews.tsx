@@ -65,13 +65,18 @@ export default function ReviewsScreen() {
   }, [userId]);
 
   const loadData = async () => {
+    if (!supabase) return;
     setLoading(true);
     try {
-      const { profileId, role } = await getProfileIdAndRole(supabase);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const result = await getProfileIdAndRole(supabase, user.id);
+      const profileId = result?.profileId || null;
       setCurrentUserId(profileId);
       
       // Load reviews for the user
       const targetId = userId || profileId;
+      if (!targetId) return;
       
       const { data: reviewsData } = await supabase
         .from("reviews")
@@ -115,7 +120,7 @@ export default function ReviewsScreen() {
   }, [userId]);
 
   const handleSubmitReview = async () => {
-    if (!currentUserId || !userId) return;
+    if (!currentUserId || !userId || !supabase) return;
     
     try {
       const { error } = await supabase.from("reviews").insert({

@@ -37,6 +37,8 @@ export interface GroupChatMessage {
   metadata: Record<string, any>;
   is_pinned: boolean;
   created_at: string;
+  delivered_at?: string;
+  read_by?: string[];
   sender?: {
     display_name: string;
     role: string;
@@ -162,7 +164,7 @@ export async function sendGroupMessage(
   supabase: TypedSupabaseClient,
   chatId: string,
   content: string,
-  messageType: 'text' | 'location' | 'image' | 'checkin' = 'text',
+  messageType: 'text' | 'location' | 'image' | 'checkin' | 'system' = 'text',
   metadata: Record<string, any> = {}
 ): Promise<{ success: boolean; error: string | null }> {
   const { data: { user } } = await supabase.auth.getUser();
@@ -250,11 +252,18 @@ export async function markMessagesAsRead(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return;
 
+  // Update last_read_at in group_chat_members
   await supabase
     .from('group_chat_members')
     .update({ last_read_at: new Date().toISOString() })
     .eq('group_chat_id', chatId)
     .eq('user_id', user.id);
+  
+  // Also mark individual messages as read using the new read receipts system
+  await supabase.rpc('mark_chat_messages_read', {
+    p_chat_id: chatId,
+    p_user_id: user.id,
+  });
 }
 
 /**
@@ -284,7 +293,8 @@ export async function getMissionControlForBooking(
 export function subscribeToGroupChat(
   supabase: TypedSupabaseClient,
   chatId: string,
-  onMessage: (message: GroupChatMessage) => void
+  onMessage: (message: GroupChatMessage) => void,
+  onMessageUpdate?: (message: GroupChatMessage) => void
 ) {
   const channel = supabase
     .channel(`group_chat:${chatId}`)
@@ -298,6 +308,20 @@ export function subscribeToGroupChat(
       },
       (payload) => {
         onMessage(payload.new as GroupChatMessage);
+      }
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'group_chat_messages',
+        filter: `group_chat_id=eq.${chatId}`
+      },
+      (payload) => {
+        if (onMessageUpdate) {
+          onMessageUpdate(payload.new as GroupChatMessage);
+        }
       }
     )
     .subscribe();

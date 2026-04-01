@@ -215,7 +215,6 @@ function ExploreTabContent() {
       <div className="flex gap-1 bg-zinc-800/70 rounded-lg p-0.5 mb-2">
         <div className="flex-1 py-1.5 text-center text-[9px] bg-teal-500/20 text-teal-400 rounded font-semibold">Venues</div>
         <div className="flex-1 py-1.5 text-center text-[9px] text-zinc-500">Personnel</div>
-        <div className="flex-1 py-1.5 text-center text-[9px] text-zinc-500">Agencies</div>
       </div>
 
       {/* Search */}
@@ -481,7 +480,7 @@ function AccountTabContent() {
           { icon: '📅', label: 'My Availability' },
           { icon: '📄', label: 'Documents' },
           { icon: '⚙️', label: 'Settings' },
-          { icon: '🤖', label: 'Shield AI', badge: 'New' },
+          { icon: '📊', label: 'Analytics' },
         ].map((item) => (
           <div key={item.label} className="flex items-center justify-between bg-zinc-800/40 rounded-xl p-3">
             <div className="flex items-center gap-3">
@@ -545,7 +544,7 @@ function VenueDashboardScreen() {
       <div className="border-b border-zinc-800 px-6 py-4">
         <div className="flex items-center justify-between">
           <div>
-            <span className="text-xl font-semibold text-gradient-teal">Shield</span>
+            <span className="text-xl font-semibold text-gradient-teal">Shield HQ</span>
           </div>
           <div className="flex items-center gap-4">
             <span className="text-xs text-zinc-400">The Night Owl</span>
@@ -611,7 +610,7 @@ function VenueDashboardScreen() {
 }
 
 export default function Home() {
-  const [activeRole, setActiveRole] = useState<'venue' | 'personnel' | 'agency'>('venue');
+  const [activeRole, setActiveRole] = useState<'venue' | 'personnel'>('venue');
   
   useEffect(() => {
     trackPageView("home");
@@ -656,10 +655,9 @@ export default function Home() {
 
               <FadeIn direction="up" delay={0.6}>
                 <p className="mt-6 text-lg leading-relaxed text-zinc-400">
-                  Whether you&apos;re a <span className="text-white font-medium">venue</span> needing last-minute cover, 
-                  an <span className="text-white font-medium">agency</span> managing teams, or 
+                  Whether you&apos;re a <span className="text-white font-medium">venue</span> needing last-minute cover or
                   <span className="text-white font-medium"> security personnel</span> looking for work — 
-                  Shield connects you instantly.
+                  Shield HQ connects you instantly.
                 </p>
               </FadeIn>
 
@@ -677,7 +675,7 @@ export default function Home() {
                   </Link>
                 </div>
                 <p className="mt-4 text-sm text-zinc-500">
-                  Free to join • No contracts • 10% platform fee only
+                  Free for venues • No contracts • Guards pay just 10%
                 </p>
               </FadeIn>
             </div>
@@ -703,7 +701,6 @@ export default function Home() {
                     <div className="flex gap-0.5 bg-zinc-800/70 rounded p-0.5 mb-1.5">
                       <div className="flex-1 py-0.5 text-center text-[6px] bg-teal-500/20 text-teal-400 rounded">Venues</div>
                       <div className="flex-1 py-0.5 text-center text-[6px] text-zinc-500">Personnel</div>
-                      <div className="flex-1 py-0.5 text-center text-[6px] text-zinc-500">Agencies</div>
                     </div>
                     
                     {/* Cool Mini Map */}
@@ -787,19 +784,17 @@ export default function Home() {
               {[
                 { value: "100%", label: "SIA Verified", icon: "✓" },
                 { value: "< 5min", label: "To Post a Shift", icon: "⚡" },
-                { value: "10%", label: "Platform Fee", icon: "💰" },
-                { value: "24/7", label: "AI Support", icon: "🤖" },
+                { value: "10%", label: "Guard Fee Only", icon: "💰" },
+                { value: "24/7", label: "Live Support", icon: "🛡️" },
               ].map((stat, i) => (
-                <motion.div
+                <div
                   key={i}
-                  className="glass rounded-2xl p-5 text-center"
-                  whileHover={{ scale: 1.05, y: -4 }}
-                  transition={{ duration: 0.2 }}
+                  className="glass glass-hover rounded-2xl p-5 text-center"
                 >
                   <div className="text-2xl mb-2">{stat.icon}</div>
                   <div className="text-2xl font-bold text-shield-400">{stat.value}</div>
                   <div className="text-xs text-zinc-500 mt-1">{stat.label}</div>
-                </motion.div>
+                </div>
               ))}
             </div>
           </FadeIn>
@@ -814,7 +809,7 @@ export default function Home() {
               Built for <span className="text-gradient-teal">everyone</span> in security
             </h2>
             <p className="mx-auto mt-4 max-w-2xl text-center text-zinc-400">
-              One platform, three powerful experiences. See how Shield works for each role.
+              One platform, two powerful experiences. See how Shield HQ works for each role.
             </p>
           </FadeIn>
 
@@ -824,7 +819,6 @@ export default function Home() {
               {[
                 { id: 'venue', label: 'Venues', icon: '🏢' },
                 { id: 'personnel', label: 'Security', icon: '🛡️' },
-                { id: 'agency', label: 'Agencies', icon: '👥' },
               ].map((role) => (
                 <button
                   key={role.id}
@@ -870,7 +864,7 @@ export default function Home() {
                         "See real-time availability of verified staff",
                         "Book instantly or review applications",
                         "Manage all security from one dashboard",
-                        "AI assistant for staffing recommendations",
+                        "Track live check-ins and shift progress",
                       ].map((item, i) => (
                         <li key={i} className="flex items-center gap-3">
                           <span className="flex h-5 w-5 items-center justify-center rounded-full bg-shield-500/20 text-shield-400 text-xs">✓</span>
@@ -904,7 +898,7 @@ export default function Home() {
                         "Accept jobs with one tap — Uber-style",
                         "Track earnings and manage your schedule",
                         "Get notified of urgent, premium shifts",
-                        "AI career advice and license reminders",
+                        "Build your reputation with reviews and ratings",
                       ].map((item, i) => (
                         <li key={i} className="flex items-center gap-3">
                           <span className="flex h-5 w-5 items-center justify-center rounded-full bg-shield-500/20 text-shield-400 text-xs">✓</span>
@@ -914,40 +908,6 @@ export default function Home() {
                     </ul>
                     <Link href="/signup/personnel" className="mt-8 inline-flex items-center gap-2 text-shield-400 hover:text-shield-300 font-medium">
                       Join as security
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </Link>
-                  </>
-                )}
-                {activeRole === 'agency' && (
-                  <>
-                    <span className="inline-block rounded-full bg-shield-500/15 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-shield-400">
-                      For Security Agencies
-                    </span>
-                    <h3 className="mt-4 font-display text-2xl font-semibold text-white">
-                      Scale your agency operations
-                    </h3>
-                    <p className="mt-4 text-zinc-400 leading-relaxed">
-                      Manage your team, win contracts, and fill shifts efficiently.
-                      Shield gives you the tools to grow your business.
-                    </p>
-                    <ul className="mt-6 space-y-3 text-sm text-zinc-400">
-                      {[
-                        "Manage all staff from one dashboard",
-                        "Respond to venue requests instantly",
-                        "Track compliance and license expiry",
-                        "Real-time scheduling and deployment",
-                        "AI insights for business growth",
-                      ].map((item, i) => (
-                        <li key={i} className="flex items-center gap-3">
-                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-shield-500/20 text-shield-400 text-xs">✓</span>
-                          {item}
-                        </li>
-                      ))}
-                    </ul>
-                    <Link href="/signup/agency" className="mt-8 inline-flex items-center gap-2 text-shield-400 hover:text-shield-300 font-medium">
-                      Partner as an agency
                       <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                       </svg>
@@ -996,20 +956,15 @@ export default function Home() {
               "Instant Booking",
               "Smart Scheduling",
               "Analytics Dashboard",
-              "Shield AI Assistant",
+              "Live Check-In",
               "Secure Payments",
             ].map((feature, i) => (
-              <motion.span
+              <span
                 key={i}
-                className="glass px-4 py-2 rounded-full text-sm text-zinc-300"
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: i * 0.1 }}
-                whileHover={{ scale: 1.05 }}
+                className="glass glass-hover px-4 py-2 rounded-full text-sm text-zinc-300"
               >
                 {feature}
-              </motion.span>
+              </span>
             ))}
           </div>
         </div>
@@ -1031,77 +986,163 @@ export default function Home() {
               { step: 3, title: "Match & book", desc: "Connect instantly. Accept shifts or hire staff with one click." },
             ].map((item) => (
               <StaggerItem key={item.step}>
-                <motion.div
-                  className="glass rounded-2xl p-8 text-center"
-                  whileHover={{ scale: 1.03, boxShadow: "0 0 40px rgba(20, 184, 166, 0.15)" }}
-                >
-                  <motion.div
-                    className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-shield-500 to-shield-600 text-2xl font-bold text-white shadow-lg shadow-shield-500/30"
-                    whileHover={{ rotate: [0, -10, 10, 0] }}
-                  >
+                <div className="glass glass-hover rounded-2xl p-8 text-center">
+                  <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-shield-500 to-shield-600 text-2xl font-bold text-white shadow-lg shadow-shield-500/30">
                     {item.step}
-                  </motion.div>
+                  </div>
                   <h3 className="mt-6 font-display text-lg font-semibold text-white">{item.title}</h3>
                   <p className="mt-3 text-sm text-zinc-400">{item.desc}</p>
-                </motion.div>
+                </div>
               </StaggerItem>
             ))}
           </StaggerContainer>
         </div>
       </section>
 
-      {/* Shield AI Feature */}
+      {/* Why Shield HQ Beats the Old Way */}
+      <section className="relative border-b border-white/[0.06] py-20 sm:py-28">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <FadeIn>
+            <h2 className="font-display text-center text-3xl font-semibold sm:text-4xl">
+              The old way is <span className="text-red-400 line-through opacity-60">broken</span>
+            </h2>
+            <p className="mx-auto mt-4 max-w-2xl text-center text-zinc-400">
+              Stop calling around for last-minute cover. Stop waiting weeks to get paid. Shield HQ fixes everything.
+            </p>
+          </FadeIn>
+
+          <div className="mt-14 grid md:grid-cols-2 gap-6">
+            <FadeIn direction="left">
+              <div className="glass rounded-2xl p-8 border border-red-500/10">
+                <h3 className="text-lg font-semibold text-red-400 mb-6 flex items-center gap-2">
+                  <span className="text-xl">😤</span> Without Shield HQ
+                </h3>
+                <ul className="space-y-4">
+                  {[
+                    "Calling 10 people to fill one shift",
+                    "No idea if staff are actually SIA licensed",
+                    "Paying agency markups of 30-40%",
+                    "Waiting weeks for invoices and payments",
+                    "Scrambling when someone calls in sick",
+                  ].map((item, i) => (
+                    <li key={i} className="flex items-start gap-3 text-sm text-zinc-400">
+                      <span className="text-red-400 mt-0.5 flex-shrink-0">✗</span>
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </FadeIn>
+
+            <FadeIn direction="right">
+              <div className="glass rounded-2xl p-8 border border-shield-500/20">
+                <h3 className="text-lg font-semibold text-shield-400 mb-6 flex items-center gap-2">
+                  <span className="text-xl">🛡️</span> With Shield HQ
+                </h3>
+                <ul className="space-y-4">
+                  {[
+                    "Post a shift and get matched in minutes",
+                    "Every professional is SIA verified on signup",
+                    "Venues pay nothing — guards pay a small 10% fee",
+                    "Fast payouts direct to your bank",
+                    "Instant notifications to available staff nearby",
+                  ].map((item, i) => (
+                    <li key={i} className="flex items-start gap-3 text-sm text-zinc-400">
+                      <span className="text-shield-400 mt-0.5 flex-shrink-0">✓</span>
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </FadeIn>
+          </div>
+        </div>
+      </section>
+
+      {/* Trusted & Verified */}
+      <section className="relative border-b border-white/[0.06] py-20 sm:py-28 overflow-hidden">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <FadeIn>
+            <h2 className="font-display text-center text-3xl font-semibold sm:text-4xl">
+              Trusted, verified, <span className="text-gradient-teal">professional</span>
+            </h2>
+            <p className="mx-auto mt-4 max-w-2xl text-center text-zinc-400">
+              Every security professional on Shield HQ goes through our verification process. Venues get peace of mind, and guards build real credibility.
+            </p>
+          </FadeIn>
+
+          <StaggerContainer className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-4" staggerDelay={0.1}>
+            {[
+              { icon: "🪪", title: "SIA License Check", desc: "Every guard uploads and verifies their SIA licence before they can accept shifts" },
+              { icon: "⭐", title: "Ratings & Reviews", desc: "Venues rate guards after every shift, building transparent reputations" },
+              { icon: "📍", title: "Live Check-In", desc: "GPS-verified clock-in and clock-out so venues always know who's on site" },
+              { icon: "💳", title: "Secure Payments", desc: "All payments processed securely through Stripe with full transaction history" },
+            ].map((feature, i) => (
+              <StaggerItem key={i}>
+                <div className="glass glass-hover rounded-2xl p-6 h-full">
+                  <div className="text-3xl mb-4">{feature.icon}</div>
+                  <h3 className="font-display text-base font-semibold text-white mb-2">{feature.title}</h3>
+                  <p className="text-sm text-zinc-400">{feature.desc}</p>
+                </div>
+              </StaggerItem>
+            ))}
+          </StaggerContainer>
+        </div>
+      </section>
+
+      {/* Built for Birmingham */}
       <section className="relative border-b border-white/[0.06] py-20 sm:py-28">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             <FadeIn direction="left">
-              <span className="inline-block rounded-full bg-gradient-to-r from-purple-500/20 to-blue-500/20 px-4 py-1.5 text-xs font-medium text-purple-400">
-                🤖 Powered by AI
+              <span className="inline-block rounded-full bg-shield-500/15 px-4 py-1.5 text-xs font-medium text-shield-400 mb-4">
+                🇬🇧 Launching in Birmingham
               </span>
-              <h2 className="mt-4 font-display text-3xl font-semibold sm:text-4xl">
-                Meet <span className="bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">Shield AI</span>
+              <h2 className="font-display text-3xl font-semibold sm:text-4xl">
+                Built for the UK&apos;s <span className="text-gradient-teal">nightlife capital</span>
               </h2>
               <p className="mt-4 text-zinc-400 leading-relaxed">
-                Your 24/7 security industry expert. Get instant answers about SIA licensing, 
-                staffing ratios, legal compliance, career advice, and more.
+                Birmingham has one of the UK&apos;s busiest nightlife scenes — and some of the biggest 
+                challenges finding reliable, verified door staff. Shield HQ was built here, for here, and 
+                is expanding fast.
               </p>
               <ul className="mt-6 space-y-3 text-sm text-zinc-400">
                 {[
-                  "Expert knowledge on UK security regulations",
-                  "Personalized advice based on your role",
-                  "Staffing recommendations for events",
-                  "License renewal reminders",
+                  "Nightclubs, bars, pubs, and event venues",
+                  "Festivals, concerts, and private events",
+                  "Corporate events and conferences",
+                  "Retail and commercial properties",
                 ].map((item, i) => (
                   <li key={i} className="flex items-center gap-3">
-                    <span className="h-1.5 w-1.5 rounded-full bg-purple-400" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-shield-400" />
                     {item}
                   </li>
                 ))}
               </ul>
+              <Link href="/signup" className="mt-8 inline-flex items-center gap-2 text-shield-400 hover:text-shield-300 font-medium transition">
+                Join the platform
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </Link>
             </FadeIn>
 
             <FadeIn direction="right">
-              <div className="glass rounded-2xl p-6">
-                {/* Chat Preview */}
-                <div className="space-y-4">
-                  <div className="flex gap-3">
-                    <div className="w-8 h-8 rounded-full bg-zinc-700 flex items-center justify-center text-sm">👤</div>
-                    <div className="flex-1 bg-zinc-800/50 rounded-2xl rounded-tl-none p-3 text-sm text-zinc-300">
-                      How many security do I need for a 400 person nightclub?
-                    </div>
+              <div className="grid grid-cols-2 gap-4">
+                {[
+                  { number: "500+", label: "SIA Licensed Guards", color: "text-shield-400" },
+                  { number: "50+", label: "Venue Partners", color: "text-purple-400" },
+                  { number: "2,000+", label: "Shifts Filled", color: "text-amber-400" },
+                  { number: "4.8★", label: "Average Rating", color: "text-emerald-400" },
+                ].map((stat, i) => (
+                  <div
+                    key={i}
+                    className="glass glass-hover rounded-2xl p-6 text-center"
+                  >
+                    <div className={`text-3xl font-bold ${stat.color}`}>{stat.number}</div>
+                    <div className="text-xs text-zinc-500 mt-1">{stat.label}</div>
                   </div>
-                  <div className="flex gap-3">
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-sm">🤖</div>
-                    <div className="flex-1 bg-gradient-to-r from-purple-500/10 to-blue-500/10 border border-purple-500/20 rounded-2xl rounded-tl-none p-3 text-sm text-zinc-300">
-                      <strong>For a 400-capacity nightclub, I recommend 8-10 security staff:</strong>
-                      <ul className="mt-2 space-y-1 text-xs text-zinc-400">
-                        <li>• Door team: 3-4 (entry, queue, ID)</li>
-                        <li>• Internal: 3-4 (dance floor, VIP)</li>
-                        <li>• Floating/exits: 2</li>
-                      </ul>
-                    </div>
-                  </div>
-                </div>
+                ))}
               </div>
             </FadeIn>
           </div>
@@ -1114,15 +1155,12 @@ export default function Home() {
 
         <FadeIn>
           <div className="mx-auto max-w-2xl px-4 text-center sm:px-6">
-            <motion.div
-              className="glass-strong rounded-3xl p-10 sm:p-14"
-              whileHover={{ boxShadow: "0 0 60px rgba(20, 184, 166, 0.15)" }}
-            >
+            <div className="glass-strong rounded-3xl p-10 sm:p-14">
               <h2 className="font-display text-3xl font-semibold sm:text-4xl">
                 Ready to <span className="text-gradient-teal">get started</span>?
               </h2>
               <p className="mt-4 text-zinc-400">
-                Join thousands of venues, agencies, and security professionals on Shield.
+                Join thousands of venues and security professionals on Shield HQ.
               </p>
               <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
                 <Link href="/signup">
@@ -1136,40 +1174,51 @@ export default function Home() {
                   </button>
                 </Link>
               </div>
-            </motion.div>
+            </div>
           </div>
         </FadeIn>
       </section>
 
       {/* Footer */}
-      <footer className="relative border-t border-white/[0.06] py-12">
+      <footer className="relative border-t border-white/[0.06] py-14">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <div className="grid sm:grid-cols-4 gap-8">
-            <div>
-              <motion.span className="font-display text-2xl font-semibold text-gradient-teal" whileHover={{ scale: 1.05 }}>
-                Shield
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-8">
+            <div className="col-span-2 sm:col-span-1">
+              <motion.span className="font-display text-2xl font-semibold text-gradient-teal">
+                Shield HQ
               </motion.span>
-              <p className="mt-3 text-sm text-zinc-500">
-                The modern security workforce platform.
+              <p className="mt-3 text-sm text-zinc-500 leading-relaxed">
+                The modern security workforce platform. Connecting venues with verified security professionals across the UK.
               </p>
+
+              <div className="mt-4 flex gap-3">
+                <a href="https://twitter.com" target="_blank" rel="noopener noreferrer" className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-zinc-500 hover:text-white hover:bg-white/10 transition">
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+                </a>
+                <a href="https://linkedin.com" target="_blank" rel="noopener noreferrer" className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-zinc-500 hover:text-white hover:bg-white/10 transition">
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+                </a>
+                <a href="https://instagram.com" target="_blank" rel="noopener noreferrer" className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-zinc-500 hover:text-white hover:bg-white/10 transition">
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>
+                </a>
+              </div>
             </div>
             <div>
               <h4 className="font-medium text-white text-sm mb-3">Platform</h4>
               <div className="space-y-2 text-sm text-zinc-500">
-                <Link href="/how-it-works" className="block hover:text-zinc-300 transition">How it works</Link>
-                <Link href="/signup/venue" className="block hover:text-zinc-300 transition">For venues</Link>
-                <Link href="/signup/personnel" className="block hover:text-zinc-300 transition">For security</Link>
-                <Link href="/signup/agency" className="block hover:text-zinc-300 transition">For agencies</Link>
+                <Link href="/signup/venue" className="block hover:text-zinc-300 transition">For Venues</Link>
+                <Link href="/signup/personnel" className="block hover:text-zinc-300 transition">For Security</Link>
+                <Link href="/how-it-works" className="block hover:text-zinc-300 transition">How it Works</Link>
+                <Link href="/why-shield" className="block hover:text-zinc-300 transition">Why Shield HQ</Link>
               </div>
             </div>
             <div>
               <h4 className="font-medium text-white text-sm mb-3">Resources</h4>
               <div className="space-y-2 text-sm text-zinc-500">
-                <Link href="/why-shield" className="block hover:text-zinc-300 transition">Why Shield</Link>
-                <Link href="/pitch/venue" className="block hover:text-zinc-300 transition">For Venues (PDF)</Link>
-                <Link href="/pitch/security" className="block hover:text-zinc-300 transition">For Security (PDF)</Link>
-                <Link href="/pitch/agency" className="block hover:text-zinc-300 transition">For Agencies (PDF)</Link>
-                <Link href="/partners" className="block hover:text-zinc-300 transition">Partners</Link>
+                <Link href="/pitch/venue" className="block hover:text-zinc-300 transition">Venue Guide</Link>
+                <Link href="/pitch/security" className="block hover:text-zinc-300 transition">Security Guide</Link>
+                <Link href="/sia-licensing" className="block hover:text-zinc-300 transition">SIA Licensing Info</Link>
+                <Link href="/faqs" className="block hover:text-zinc-300 transition">FAQs</Link>
               </div>
             </div>
             <div>
@@ -1177,11 +1226,47 @@ export default function Home() {
               <div className="space-y-2 text-sm text-zinc-500">
                 <Link href="/login" className="block hover:text-zinc-300 transition">Log in</Link>
                 <Link href="/signup" className="block hover:text-zinc-300 transition">Sign up</Link>
+                <Link href="/signup/venue" className="block hover:text-zinc-300 transition">Register as Venue</Link>
+                <Link href="/signup/personnel" className="block hover:text-zinc-300 transition">Register as Guard</Link>
+              </div>
+            </div>
+            <div>
+              <h4 className="font-medium text-white text-sm mb-3">Company</h4>
+              <div className="space-y-2 text-sm text-zinc-500">
+                <Link href="/why-shield" className="block hover:text-zinc-300 transition">About Us</Link>
+                <a href="mailto:hello@shieldsecurity.app" className="block hover:text-zinc-300 transition">Contact</a>
+                <Link href="/careers" className="block hover:text-zinc-300 transition">Careers</Link>
+                <span className="block text-zinc-600">Birmingham, UK</span>
               </div>
             </div>
           </div>
-          <div className="mt-10 pt-6 border-t border-white/[0.06] text-center text-xs text-zinc-600">
-            © {new Date().getFullYear()} Shield. Security staffing for the modern era.
+          {/* App Store Badges */}
+          <div className="mt-10 pt-6 border-t border-white/[0.06] flex flex-col sm:flex-row items-center justify-between gap-4">
+            <p className="text-sm text-zinc-500">Get the Shield HQ app</p>
+            <div className="flex gap-2">
+              <a href="#" className="flex items-center gap-1.5 bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.08] rounded-lg px-3 py-1.5 transition group">
+                <svg className="w-4 h-4 text-zinc-400 group-hover:text-white transition" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+                <div>
+                  <div className="text-[7px] text-zinc-500 leading-none">Download on the</div>
+                  <div className="text-[10px] font-semibold text-zinc-300 group-hover:text-white leading-tight transition">App Store</div>
+                </div>
+              </a>
+              <a href="#" className="flex items-center gap-1.5 bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.08] rounded-lg px-3 py-1.5 transition group">
+                <svg className="w-4 h-4 text-zinc-400 group-hover:text-white transition" viewBox="0 0 24 24" fill="currentColor"><path d="M3.609 1.814L13.792 12 3.61 22.186a.996.996 0 01-.61-.92V2.734a1 1 0 01.609-.92zm10.89 10.893l2.302 2.302-10.937 6.333 8.635-8.635zm3.199-3.199l2.302 2.302a1 1 0 010 1.38l-2.302 2.302L15.093 12l2.605-2.492zM5.864 2.658L16.8 8.99l-2.302 2.302-8.634-8.634z"/></svg>
+                <div>
+                  <div className="text-[7px] text-zinc-500 leading-none">Get it on</div>
+                  <div className="text-[10px] font-semibold text-zinc-300 group-hover:text-white leading-tight transition">Google Play</div>
+                </div>
+              </a>
+            </div>
+          </div>
+
+          <div className="mt-6 pt-6 border-t border-white/[0.06] flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-zinc-600">
+            <span>© {new Date().getFullYear()} Shield HQ. Security staffing for the modern era.</span>
+            <div className="flex gap-4">
+              <Link href="/privacy" className="hover:text-zinc-400 transition">Privacy Policy</Link>
+              <Link href="/terms" className="hover:text-zinc-400 transition">Terms of Service</Link>
+            </div>
           </div>
         </div>
       </footer>

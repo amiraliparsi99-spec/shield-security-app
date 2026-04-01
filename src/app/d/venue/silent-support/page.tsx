@@ -1,7 +1,7 @@
 import { SilentSupportDashboard } from "@/components/venue/SilentSupport";
 
 export const metadata = {
-  title: "Silent Support | Shield",
+  title: "Silent Support | Shield HQ",
   description: "Discreet guest safety system",
 };
 

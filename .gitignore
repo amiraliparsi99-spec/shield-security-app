@@ -39,3 +39,7 @@ Thumbs.db
 
 # TypeScript
 next-env.d.ts
+*.tsbuildinfo
+
+# Supabase CLI cache
+supabase/.temp/

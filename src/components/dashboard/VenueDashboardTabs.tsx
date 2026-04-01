@@ -141,18 +141,17 @@ export function VenueDashboardTabs({
         )}
 
         {tab === "agencies" && (
-          <div className="space-y-6 p-4 sm:p-6">
-            <div>
-              <h2 className="text-sm font-medium text-zinc-500">Security agencies</h2>
-              <p className="mt-1 text-xs text-zinc-600">
-                Browse agencies. Tap for details.
-              </p>
+          <div className="flex flex-col items-center justify-center p-8 sm:p-12 text-center">
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-500/10 text-3xl mb-4">
+              🏛️
             </div>
-            {filteredAgencies.length === 0 ? (
-              <p className="py-6 text-sm text-zinc-500">No agencies match your search.</p>
-            ) : (
-              <AgenciesList agencies={filteredAgencies} />
-            )}
+            <h2 className="font-display text-xl font-semibold text-white">Agencies Coming Soon</h2>
+            <p className="mt-2 max-w-sm text-sm text-zinc-400">
+              We&apos;re building agency partnerships so you can book entire teams. Stay tuned for updates.
+            </p>
+            <span className="mt-4 inline-flex items-center rounded-full bg-blue-500/10 border border-blue-500/20 px-4 py-1.5 text-xs font-medium text-blue-400">
+              Coming Soon
+            </span>
           </div>
         )}
 

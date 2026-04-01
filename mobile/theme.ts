@@ -1,56 +1,123 @@
 /**
  * Shield mobile — design tokens with glassmorphism support
+ * Enhanced with vibrant gradients and modern styling
  */
 
 export const colors = {
-  // Base
-  background: "#0c0d10",
-  surface: "rgba(255,255,255,0.05)",
-  surfaceElevated: "rgba(255,255,255,0.08)",
+  // Base - deeper, richer dark
+  background: "#080a0f",
+  backgroundAlt: "#0d1117",
+  surface: "rgba(255,255,255,0.04)",
+  surfaceElevated: "rgba(255,255,255,0.07)",
+  surfaceHover: "rgba(255,255,255,0.10)",
   
-  // Glass effects
+  // Glass effects - enhanced
   glass: "rgba(255,255,255,0.03)",
   glassStrong: "rgba(255,255,255,0.06)",
   glassBorder: "rgba(255,255,255,0.08)",
   glassBorderLight: "rgba(255,255,255,0.12)",
+  glassBorderAccent: "rgba(45,212,191,0.2)",
   
   // Borders
   border: "rgba(255,255,255,0.08)",
-  borderMuted: "rgba(255,255,255,0.06)",
+  borderMuted: "rgba(255,255,255,0.05)",
+  borderActive: "rgba(45,212,191,0.4)",
   
-  // Text
-  text: "#fafafa",
-  textSecondary: "#a1a1aa",
-  textMuted: "#71717a",
+  // Text - improved contrast
+  text: "#ffffff",
+  textSecondary: "#b4b4b4",
+  textMuted: "#6b7280",
+  textInverse: "#0c0d10",
   
-  // Accent (teal)
-  accent: "#2dd4bf",
-  accentMuted: "rgba(45,212,191,0.25)",
-  accentSoft: "rgba(45,212,191,0.15)",
-  accentGlow: "rgba(20,184,166,0.4)",
+  // Primary accent (vibrant teal/cyan)
+  accent: "#00d4aa",
+  accentLight: "#5eead4",
+  accentDark: "#0d9488",
+  accentMuted: "rgba(0,212,170,0.25)",
+  accentSoft: "rgba(0,212,170,0.12)",
+  accentGlow: "rgba(0,212,170,0.5)",
   
-  // Status colors
-  success: "#34d399",
-  successSoft: "rgba(52,211,153,0.2)",
+  // Secondary accent (purple/violet)
+  secondary: "#a78bfa",
+  secondaryLight: "#c4b5fd",
+  secondaryDark: "#7c3aed",
+  secondarySoft: "rgba(167,139,250,0.15)",
+  
+  // Status colors - more vibrant
+  success: "#22c55e",
+  successLight: "#4ade80",
+  successSoft: "rgba(34,197,94,0.15)",
+  successGlow: "rgba(34,197,94,0.4)",
+  
   warning: "#f59e0b",
-  warningSoft: "rgba(245,158,11,0.2)",
-  error: "#f87171",
-  errorSoft: "rgba(248,113,113,0.2)",
-  info: "#60a5fa",
-  infoSoft: "rgba(96,165,250,0.2)",
+  warningLight: "#fbbf24",
+  warningSoft: "rgba(245,158,11,0.15)",
+  warningGlow: "rgba(245,158,11,0.4)",
+  
+  error: "#ef4444",
+  errorLight: "#f87171",
+  errorSoft: "rgba(239,68,68,0.15)",
+  errorGlow: "rgba(239,68,68,0.4)",
+  
+  info: "#3b82f6",
+  infoLight: "#60a5fa",
+  infoSoft: "rgba(59,130,246,0.15)",
+  
+  // Live/Active indicator
+  live: "#22c55e",
+  liveGlow: "rgba(34,197,94,0.6)",
   
   // Buttons
-  primaryBtn: "#14b8a6",
-  primaryBtnPressed: "#0d9488",
+  primaryBtn: "#00d4aa",
+  primaryBtnPressed: "#00b894",
+  primaryBtnGlow: "rgba(0,212,170,0.3)",
   
   // Gradient colors
-  gradientStart: "#0c0d10",
-  gradientMid: "#0f1419",
-  gradientEnd: "#0c0d10",
+  gradientStart: "#080a0f",
+  gradientMid: "#0d1117",
+  gradientEnd: "#080a0f",
   
-  // Orb colors for background
-  orbTeal: "rgba(20,184,166,0.15)",
-  orbCyan: "rgba(6,182,212,0.12)",
+  // Card gradients
+  cardGradientStart: "rgba(255,255,255,0.03)",
+  cardGradientEnd: "rgba(255,255,255,0.01)",
+  
+  // Orb colors for animated background
+  orbTeal: "rgba(0,212,170,0.12)",
+  orbCyan: "rgba(6,182,212,0.10)",
+  orbPurple: "rgba(139,92,246,0.08)",
+  orbBlue: "rgba(59,130,246,0.08)",
+} as const;
+
+// Gradient presets for LinearGradient
+export const gradients = {
+  // Card backgrounds
+  card: ["rgba(255,255,255,0.04)", "rgba(255,255,255,0.01)"] as [string, string],
+  cardHover: ["rgba(255,255,255,0.08)", "rgba(255,255,255,0.03)"] as [string, string],
+  
+  // Accent gradients
+  accent: ["#00d4aa", "#0d9488"] as [string, string],
+  accentSoft: ["rgba(0,212,170,0.2)", "rgba(0,212,170,0.05)"] as [string, string],
+  
+  // Status gradients
+  success: ["#22c55e", "#16a34a"] as [string, string],
+  successSoft: ["rgba(34,197,94,0.2)", "rgba(34,197,94,0.05)"] as [string, string],
+  
+  warning: ["#f59e0b", "#d97706"] as [string, string],
+  warningSoft: ["rgba(245,158,11,0.2)", "rgba(245,158,11,0.05)"] as [string, string],
+  
+  error: ["#ef4444", "#dc2626"] as [string, string],
+  
+  // Premium/special gradients
+  premium: ["#a78bfa", "#7c3aed"] as [string, string],
+  gold: ["#fbbf24", "#f59e0b"] as [string, string],
+  
+  // Background orbs
+  orbTeal: ["rgba(0,212,170,0.15)", "rgba(0,212,170,0)"] as [string, string],
+  orbPurple: ["rgba(139,92,246,0.12)", "rgba(139,92,246,0)"] as [string, string],
+  
+  // Dark cards
+  darkCard: ["#12151c", "#0d1017"] as [string, string],
+  darkCardAlt: ["#151a24", "#0f1318"] as [string, string],
 } as const;
 
 export const typography = {

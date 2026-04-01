@@ -1,6 +1,7 @@
 /**
  * Premium Floating Tab Bar
  * A beautiful, animated tab bar with blur background
+ * Supports hiding/showing via TabBarContext
  */
 
 import React, { useRef, useEffect } from "react";
@@ -18,6 +19,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import * as Haptics from "expo-haptics";
 import { colors, typography, spacing, radius } from "../../theme";
+import { useTabBar } from "../../contexts/TabBarContext";
+import { useUnreadMessages } from "../../contexts/UnreadMessagesContext";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const TAB_BAR_WIDTH = SCREEN_WIDTH - 32;
@@ -128,7 +131,19 @@ const TAB_CONFIG: Record<string, { icon: string; label: string }> = {
 
 export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
+  const { isVisible } = useTabBar();
+  const { unreadCount } = useUnreadMessages();
   const translateY = useRef(new Animated.Value(0)).current;
+
+  // Animate tab bar visibility
+  useEffect(() => {
+    Animated.spring(translateY, {
+      toValue: isVisible ? 0 : 150,
+      tension: 100,
+      friction: 15,
+      useNativeDriver: true,
+    }).start();
+  }, [isVisible]);
 
   // Filter out hidden tabs (like index)
   const visibleRoutes = state.routes.filter((route) => {
@@ -145,6 +160,7 @@ export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarPr
           transform: [{ translateY }],
         },
       ]}
+      pointerEvents={isVisible ? "auto" : "none"}
     >
       <BlurView intensity={80} tint="dark" style={styles.blurContainer}>
         <View style={styles.tabsContainer}>
@@ -177,8 +193,8 @@ export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarPr
               });
             };
 
-            // Get badge count from options if available
-            const badge = (options as any).tabBarBadge;
+            // Get badge count - use unread messages count for messages tab
+            const badge = route.name === "messages" ? unreadCount : (options as any).tabBarBadge;
 
             return (
               <TabItem

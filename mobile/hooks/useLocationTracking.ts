@@ -154,6 +154,7 @@ export function useLocationTracking(): UseLocationTrackingReturn {
   }, []);
 
   const loadGeofencesForBooking = useCallback(async (bookingId: string): Promise<void> => {
+    if (!supabase) return;
     try {
       // Get booking to find venue
       const { data: booking, error: bookingError } = await supabase
@@ -168,6 +169,7 @@ export function useLocationTracking(): UseLocationTrackingReturn {
       }
 
       // Get geofences for venue
+      if (!supabase) return;
       const { data: geofences, error: geofenceError } = await supabase
         .from("geofences")
         .select("*")

@@ -1,11 +1,12 @@
 import type { Metadata, Viewport } from "next";
 import { Plus_Jakarta_Sans, Space_Grotesk } from "next/font/google";
+import dynamic from "next/dynamic";
 import "./globals.css";
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#0c0d10",
+  themeColor: "#080a0f",
 };
 
 const spaceGrotesk = Space_Grotesk({
@@ -21,23 +22,26 @@ const plusJakarta = Plus_Jakarta_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Shield — Venue & Security Marketplace",
+  title: "Shield HQ — Venue & Security Marketplace",
   description:
     "Connect venues with verified security personnel and agencies. Post needs, set availability, book with confidence.",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Shield",
+    title: "Shield HQ",
   },
   formatDetection: { telephone: false, email: false },
 };
 
 import { AuthProvider } from "@/components/auth/AuthProvider";
 import { AppNav } from "@/components/auth/AppNav";
-import { CallProvider } from "@/contexts/CallContext";
 import { NotificationProvider } from "@/contexts/NotificationContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
-import { IncomingCallModal, ActiveCallOverlay, DemoCallButton } from "@/components/calling";
+import { ToastProvider } from "@/components/ui/Toast";
+
+const CallShell = dynamic(
+  () => import("@/components/calling/CallShell").then((m) => m.CallShell)
+);
 
 export default function RootLayout({
   children,
@@ -48,19 +52,16 @@ export default function RootLayout({
     <html lang="en" className={`${spaceGrotesk.variable} ${plusJakarta.variable}`}>
       <body className="min-h-screen font-sans">
         <ThemeProvider>
-          <AuthProvider>
-            <NotificationProvider>
-              <CallProvider>
-                <AppNav />
-                <main className="pt-16">{children}</main>
-                {/* Global call overlays */}
-                <IncomingCallModal />
-                <ActiveCallOverlay />
-                {/* Demo call button for testing */}
-                <DemoCallButton />
-              </CallProvider>
-            </NotificationProvider>
-          </AuthProvider>
+          <ToastProvider>
+            <AuthProvider>
+              <NotificationProvider>
+                <CallShell>
+                  <AppNav />
+                  <main className="pt-16">{children}</main>
+                </CallShell>
+              </NotificationProvider>
+            </AuthProvider>
+          </ToastProvider>
         </ThemeProvider>
       </body>
     </html>

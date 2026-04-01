@@ -139,8 +139,8 @@ export const BottomSheet = forwardRef<BottomSheetRef, BottomSheetProps>(
         return true;
       };
 
-      BackHandler.addEventListener("hardwareBackPress", handleBackPress);
-      return () => BackHandler.removeEventListener("hardwareBackPress", handleBackPress);
+      const subscription = BackHandler.addEventListener("hardwareBackPress", handleBackPress);
+      return () => subscription.remove();
     }, [isVisible, close]);
 
     // Pan responder for drag gesture

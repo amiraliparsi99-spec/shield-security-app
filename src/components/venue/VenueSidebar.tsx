@@ -17,6 +17,7 @@ interface NavGroup {
   icon: React.ReactNode;
   items: NavItem[];
   defaultOpen?: boolean;
+  comingSoon?: boolean;
 }
 
 // Icons for reuse
@@ -139,6 +140,7 @@ const navGroups: NavGroup[] = [
     label: "Agencies",
     icon: icons.building,
     defaultOpen: false,
+    comingSoon: true,
     items: [
       { href: "/d/venue/agencies", label: "Browse Agencies", icon: icons.building },
       { href: "/d/venue/partnerships", label: "Partnerships", icon: icons.users },
@@ -213,6 +215,18 @@ function NavGroupSection({
   // Check if any item in the group is active
   const hasActiveItem = group.items.some(item => isActive(item.href));
   const [isOpen, setIsOpen] = useState(group.defaultOpen || hasActiveItem);
+
+  if (group.comingSoon) {
+    return (
+      <div className="mb-1">
+        <div className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium text-zinc-600 cursor-not-allowed opacity-50">
+          <span>{group.icon}</span>
+          <span className="flex-1 text-left">{group.label}</span>
+          <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-medium text-zinc-500">Soon</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mb-1">

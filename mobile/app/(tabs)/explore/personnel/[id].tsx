@@ -114,7 +114,6 @@ export default function PersonnelProfile() {
     </GradientBackground>
   );
 }
-
 const styles = StyleSheet.create({
   scroll: { flex: 1 },
   content: { padding: spacing.lg, paddingBottom: 100 },
@@ -184,3 +183,4 @@ const styles = StyleSheet.create({
   ratingStars: { fontSize: 16, color: colors.warning },
   reviewCount: { ...typography.label, color: colors.textMuted },
 });
+

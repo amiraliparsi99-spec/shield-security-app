@@ -8,6 +8,11 @@ import {
   type CallData,
   formatCallDuration 
 } from '../lib/calling';
+import { 
+  agoraService, 
+  generateAgoraUid, 
+  generateChannelName 
+} from '../lib/agora';
 
 interface CallContextValue {
   // State
@@ -15,8 +20,10 @@ interface CallContextValue {
   currentCall: CallData | null;
   remoteParticipant: CallParticipant | null;
   isMuted: boolean;
+  isSpeakerOn: boolean;
   isIncomingCall: boolean;
   callDuration: number;
+  isAgoraConnected: boolean;
   
   // Actions
   initiateCall: (participant: CallParticipant, context?: { bookingId?: string; shiftId?: string }) => Promise<void>;
@@ -24,6 +31,7 @@ interface CallContextValue {
   rejectCall: () => Promise<void>;
   endCall: () => Promise<void>;
   toggleMute: () => void;
+  toggleSpeaker: () => void;
 }
 
 const CallContext = createContext<CallContextValue | null>(null);
@@ -33,16 +41,122 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const [currentCall, setCurrentCall] = useState<CallData | null>(null);
   const [remoteParticipant, setRemoteParticipant] = useState<CallParticipant | null>(null);
   const [isMuted, setIsMuted] = useState(false);
+  const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [isIncomingCall, setIsIncomingCall] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
   const [userId, setUserId] = useState<string | null>(null);
+  const [isAgoraConnected, setIsAgoraConnected] = useState(false);
   
   const durationIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Fetch Agora token from server
+  const fetchAgoraToken = async (channelName: string, uid: number): Promise<string | null> => {
+    try {
+      const apiUrl = process.env.EXPO_PUBLIC_API_URL || '';
+      const response = await fetch(`${apiUrl}/api/agora/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelName, uid }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch Agora token');
+      }
+      
+      const data = await response.json();
+      return data.token;
+    } catch (error) {
+      console.error('Error fetching Agora token:', error);
+      return null;
+    }
+  };
+
+  // Join Agora voice channel
+  const joinAgoraChannel = async (callId: string): Promise<boolean> => {
+    if (!userId) return false;
+
+    try {
+      // Initialize Agora if needed
+      const initialized = await agoraService.initialize();
+      if (!initialized) {
+        console.error('Failed to initialize Agora');
+        return false;
+      }
+
+      // Set up Agora callbacks
+      agoraService.setCallbacks({
+        onJoinSuccess: (channel, uid) => {
+          console.log('Agora: Joined channel successfully', channel, uid);
+          setIsAgoraConnected(true);
+        },
+        onUserJoined: (uid) => {
+          console.log('Agora: Remote user joined', uid);
+          // Other user has joined - call is now truly connected
+          setIsAgoraConnected(true);
+        },
+        onUserOffline: (uid) => {
+          console.log('Agora: Remote user offline', uid);
+          // Other user left - end the call
+          endCall();
+        },
+        onError: (error) => {
+          console.error('Agora error:', error);
+          Alert.alert('Call Error', 'Voice connection failed');
+        },
+      });
+
+      const channelName = generateChannelName(callId);
+      const agoraUid = generateAgoraUid(userId);
+
+      // Get token from server
+      const token = await fetchAgoraToken(channelName, agoraUid);
+      if (!token) {
+        console.error('Failed to get Agora token');
+        return false;
+      }
+
+      // Join the channel
+      const joined = await agoraService.joinChannel(channelName, token, agoraUid);
+      return joined;
+    } catch (error) {
+      console.error('Error joining Agora channel:', error);
+      return false;
+    }
+  };
+
+  // Leave Agora channel
+  const leaveAgoraChannel = async () => {
+    try {
+      await agoraService.leaveChannel();
+      setIsAgoraConnected(false);
+    } catch (error) {
+      console.error('Error leaving Agora channel:', error);
+    }
+  };
+
   // Initialize signaling service
   useEffect(() => {
+    if (!supabase) return;
+    
     const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      // Try to get user, with retry for auth state
+      let user = null;
+      if (!supabase) return;
+      const { data } = await supabase.auth.getUser();
+      user = data?.user;
+      
+      // If no user, listen for auth state changes
+      if (!user) {
+        if (!supabase) return;
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+          if (session?.user && !userId) {
+            setUserId(session.user.id);
+            await signalingService.initialize(session.user.id);
+          }
+        });
+        return () => subscription.unsubscribe();
+      }
+      
       if (user) {
         setUserId(user.id);
         await signalingService.initialize(user.id);
@@ -55,6 +169,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           }
 
           // Get caller profile
+          if (!supabase) return;
           const { data: profile } = await supabase
             .from('profiles')
             .select('display_name, avatar_url, role')
@@ -72,12 +187,24 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           setCallState('ringing');
         };
 
-        signalingService.onCallAnswered = () => {
-          setCallState('connected');
-          // Start duration timer
-          durationIntervalRef.current = setInterval(() => {
-            setCallDuration(prev => prev + 1);
-          }, 1000);
+        signalingService.onCallAnswered = async () => {
+          setCallState('connecting');
+          
+          // Join Agora channel for voice
+          const callId = signalingService.getCurrentCallId();
+          if (callId) {
+            const joined = await joinAgoraChannel(callId);
+            if (joined) {
+              setCallState('connected');
+              // Start duration timer
+              durationIntervalRef.current = setInterval(() => {
+                setCallDuration(prev => prev + 1);
+              }, 1000);
+            } else {
+              Alert.alert('Error', 'Failed to establish voice connection');
+              cleanup();
+            }
+          }
         };
 
         signalingService.onCallEnded = (reason) => {
@@ -95,15 +222,19 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       signalingService.cleanup();
+      agoraService.destroy();
       cleanup();
     };
   }, []);
 
-  const cleanup = useCallback(() => {
+  const cleanup = useCallback(async () => {
     // Stop vibration
     if (Platform.OS !== 'web') {
       Vibration.cancel();
     }
+
+    // Leave Agora channel
+    await agoraService.leaveChannel();
 
     setCallState('idle');
     setCurrentCall(null);
@@ -111,6 +242,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     setIsIncomingCall(false);
     setCallDuration(0);
     setIsMuted(false);
+    setIsSpeakerOn(false);
+    setIsAgoraConnected(false);
 
     if (durationIntervalRef.current) {
       clearInterval(durationIntervalRef.current);
@@ -133,6 +266,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       setCallState('calling');
 
       // Get caller's role
+      if (!supabase) return;
       const { data: profile } = await supabase
         .from('profiles')
         .select('role')
@@ -150,6 +284,12 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
       if (call) {
         setCurrentCall(call);
+        
+        // Pre-join Agora channel (caller joins first)
+        const joined = await joinAgoraChannel(call.id);
+        if (!joined) {
+          console.warn('Failed to pre-join Agora channel');
+        }
         
         // Set timeout for unanswered calls
         setTimeout(() => {
@@ -180,6 +320,14 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
       setIsIncomingCall(false);
       setCallState('connecting');
+
+      // Join Agora channel for voice
+      const joined = await joinAgoraChannel(currentCall.id);
+      if (!joined) {
+        Alert.alert('Error', 'Failed to establish voice connection');
+        cleanup();
+        return;
+      }
 
       await signalingService.answerCall(currentCall.id);
       setCallState('connected');
@@ -217,22 +365,34 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }, [cleanup]);
 
   const toggleMute = useCallback(() => {
-    setIsMuted(prev => !prev);
-    // Note: Actual audio muting requires WebRTC integration
-  }, []);
+    const newMuted = !isMuted;
+    setIsMuted(newMuted);
+    // Actually mute/unmute the audio via Agora
+    agoraService.setMuted(newMuted);
+  }, [isMuted]);
+
+  const toggleSpeaker = useCallback(() => {
+    const newSpeaker = !isSpeakerOn;
+    setIsSpeakerOn(newSpeaker);
+    // Toggle speakerphone via Agora
+    agoraService.setSpeakerphone(newSpeaker);
+  }, [isSpeakerOn]);
 
   const value: CallContextValue = {
     callState,
     currentCall,
     remoteParticipant,
     isMuted,
+    isSpeakerOn,
     isIncomingCall,
     callDuration,
+    isAgoraConnected,
     initiateCall,
     answerCall,
     rejectCall,
     endCall,
     toggleMute,
+    toggleSpeaker,
   };
 
   return (

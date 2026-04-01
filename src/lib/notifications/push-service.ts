@@ -36,7 +36,9 @@ export type NotificationType =
   | "new_review"
   | "license_expiry"
   | "referral_reward"
-  | "marketing";
+  | "marketing"
+  | "incoming_call"
+  | "missed_call";
 
 // Expo push notification endpoint
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
@@ -205,5 +207,19 @@ export const NotificationTemplates = {
     type: "referral_reward" as NotificationType,
     title: "Referral Bonus! 🎁",
     body: `You earned £${(amount / 100).toFixed(0)} from a successful referral`,
+  }),
+
+  incomingCall: (callerName: string, callId: string) => ({
+    type: "incoming_call" as NotificationType,
+    title: "Incoming Call 📞",
+    body: `${callerName} is calling you`,
+    data: { call_id: callId },
+  }),
+
+  missedCall: (callerName: string, callId: string) => ({
+    type: "missed_call" as NotificationType,
+    title: "Missed Call 📵",
+    body: `You missed a call from ${callerName}`,
+    data: { call_id: callId },
   }),
 };

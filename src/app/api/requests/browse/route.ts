@@ -88,7 +88,11 @@ export async function GET(request: NextRequest) {
 
     let list = requests || [];
     if (city) {
-      list = list.filter((r: { venues?: { city?: string } }) => r.venues?.city?.toLowerCase().includes(city.toLowerCase()));
+      const cityLower = city.toLowerCase();
+      list = list.filter((r) => {
+        const v = Array.isArray(r.venues) ? r.venues[0] : r.venues;
+        return Boolean(v && typeof v === "object" && "city" in v && String((v as { city?: string }).city ?? "").toLowerCase().includes(cityLower));
+      });
     }
 
     return NextResponse.json({ requests: list });

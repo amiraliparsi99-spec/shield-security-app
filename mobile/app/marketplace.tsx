@@ -60,16 +60,30 @@ export default function MarketplaceScreen() {
   }, []);
 
   const initializeAndLoad = async () => {
-    const { profileId } = await getProfileIdAndRole(supabase);
-    if (profileId) {
-      const pId = await getPersonnelId(supabase, profileId);
-      setPersonnelId(pId);
-      await loadShifts(pId);
+    if (!supabase) return;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user?.id) {
+        const result = await getProfileIdAndRole(supabase, user.id);
+        if (result?.profileId) {
+          const pId = await getPersonnelId(supabase, result.profileId);
+          setPersonnelId(pId);
+          await loadShifts(pId);
+        } else {
+          await loadShifts(null);
+        }
+      } else {
+        await loadShifts(null);
+      }
+    } catch (err) {
+      console.error("Error initializing marketplace:", err);
+      await loadShifts(null);
     }
     setLoading(false);
   };
 
   const loadShifts = async (pId: string | null) => {
+    if (!supabase) return;
     const { data } = await supabase
       .from("shift_posts")
       .select(`
@@ -108,10 +122,11 @@ export default function MarketplaceScreen() {
     Alert.alert("Withdraw Application", "Are you sure?", [
       { text: "Cancel", style: "cancel" },
       {
-        text: "Withdraw",
-        style: "destructive",
-        onPress: async () => {
-          await supabase
+          text: "Withdraw",
+          style: "destructive",
+          onPress: async () => {
+            if (!supabase) return;
+            await supabase
             .from("shift_applications")
             .update({ status: "withdrawn" })
             .eq("id", applicationId);

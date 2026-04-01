@@ -67,12 +67,23 @@ export async function POST(request: NextRequest) {
     // Verify this offer belongs to the requesting user
     const { data: personnel } = await supabase
       .from("personnel")
-      .select("id, display_name")
+      .select("id, display_name, verification_status, sia_verified")
       .eq("user_id", user.id)
       .single();
 
     if (!personnel || personnel.id !== offer.personnel_id) {
       return NextResponse.json({ error: "This offer does not belong to you" }, { status: 403 });
+    }
+
+    if (
+      response === "accepted" &&
+      personnel.verification_status !== "verified" &&
+      personnel.sia_verified !== true
+    ) {
+      return NextResponse.json(
+        { error: "You must complete verification before accepting shifts." },
+        { status: 403 }
+      );
     }
 
     // Check offer hasn't expired or already been responded to

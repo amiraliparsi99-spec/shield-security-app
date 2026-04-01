@@ -39,7 +39,7 @@ export default async function AdminVerificationsPage() {
             </Link>
             <h1 className="text-2xl font-bold text-white mb-2">Verification Review</h1>
             <p className="text-zinc-400">
-              Review and verify documents submitted by personnel and agencies.
+              View documents submitted by security guards and personnel. Approve or reject each document; when all are approved, their account is marked verified and they can request jobs.
             </p>
           </div>
           <AdminVerificationPanel />

@@ -46,15 +46,31 @@ export async function getBookingWithShifts(
     return null;
   }
 
-  const { data: shifts } = await supabase
+  const { data: shifts, error: shiftsError } = await supabase
     .from('shifts')
-    .select('*')
+    .select(`
+      *,
+      personnel:personnel(id, user_id, display_name, phone, shield_score)
+    `)
     .eq('booking_id', bookingId);
+
+  console.log('Fetching shifts for booking:', bookingId);
+  console.log('Shifts result:', shifts);
+  console.log('Shifts error:', shiftsError);
+
+  // Flatten personnel data into shift for easier access
+  const shiftsWithPersonnel = (shifts || []).map(shift => ({
+    ...shift,
+    personnel_user_id: shift.personnel?.user_id,
+    personnel_name: shift.personnel?.display_name,
+    personnel_phone: shift.personnel?.phone,
+    personnel_shield_score: shift.personnel?.shield_score,
+  }));
 
   return {
     ...booking,
     venue: booking.venue as any,
-    shifts: shifts || [],
+    shifts: shiftsWithPersonnel,
   };
 }
 

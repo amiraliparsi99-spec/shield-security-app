@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { motion } from "framer-motion";
 
 interface Review {
   id: string;
@@ -78,11 +77,7 @@ export function ReviewCard({ review, variant = "full" }: ReviewCardProps) {
   }
 
   return (
-    <motion.div
-      className="glass rounded-xl p-4"
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-    >
+    <div className="glass rounded-xl p-4">
       <div className="flex items-start gap-4">
         <div className="w-10 h-10 rounded-full bg-shield-500/20 flex items-center justify-center shrink-0">
           <span className="text-lg text-shield-400 font-medium">
@@ -115,7 +110,7 @@ export function ReviewCard({ review, variant = "full" }: ReviewCardProps) {
           )}
         </div>
       </div>
-    </motion.div>
+    </div>
   );
 }
 

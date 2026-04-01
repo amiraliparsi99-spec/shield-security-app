@@ -48,6 +48,7 @@ class MobileSignalingService {
   public onCallRejected?: () => void;
 
   async initialize(userId: string) {
+    if (!supabase) return;
     this.userId = userId;
 
     // Subscribe to call signals for this user
@@ -69,19 +70,21 @@ class MobileSignalingService {
   }
 
   async cleanup() {
-    if (this.channel) {
+    if (this.channel && supabase) {
       await supabase.removeChannel(this.channel);
       this.channel = null;
     }
   }
 
   private async handleSignal(signal: any) {
+    if (!supabase) return;
     // Mark signal as processed
     await supabase
       .from('call_signals')
       .update({ processed: true })
       .eq('id', signal.id);
 
+    if (!supabase) return;
     switch (signal.signal_type) {
       case 'offer':
         // Incoming call
@@ -124,7 +127,7 @@ class MobileSignalingService {
     receiverRole: string,
     context?: { bookingId?: string; shiftId?: string }
   ): Promise<CallData | null> {
-    if (!this.userId) return null;
+    if (!this.userId || !supabase) return null;
 
     try {
       // Create call record
@@ -163,6 +166,7 @@ class MobileSignalingService {
   }
 
   async answerCall(callId: string): Promise<void> {
+    if (!supabase) return;
     try {
       const { data: call } = await supabase
         .from('calls')
@@ -193,6 +197,7 @@ class MobileSignalingService {
   }
 
   async rejectCall(callId: string): Promise<void> {
+    if (!supabase) return;
     try {
       const { data: call } = await supabase
         .from('calls')
@@ -218,7 +223,7 @@ class MobileSignalingService {
   }
 
   async endCall(reason: string = 'completed'): Promise<void> {
-    if (!this.currentCallId) return;
+    if (!this.currentCallId || !supabase) return;
 
     try {
       const { data: call } = await supabase
@@ -262,7 +267,7 @@ class MobileSignalingService {
     signalType: string,
     signalData: any
   ): Promise<void> {
-    if (!this.userId) return;
+    if (!this.userId || !supabase) return;
 
     await supabase.from('call_signals').insert({
       call_id: callId,

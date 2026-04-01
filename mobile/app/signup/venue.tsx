@@ -119,6 +119,7 @@ export default function VenueSignUp() {
 
     setIsLoading(true);
 
+    if (!supabase) return;
     try {
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.contactEmail,
@@ -135,8 +136,10 @@ export default function VenueSignUp() {
       if (!authData.user) throw new Error("Failed to create account");
 
       // IMPORTANT: Create profile FIRST (venues may have foreign key to profiles)
+      if (!supabase) return;
       const { error: profileError } = await supabase.from("profiles").upsert({
         id: authData.user.id,
+        user_id: authData.user.id,
         role: "venue",
         display_name: formData.contactName,
         email: formData.contactEmail,
@@ -147,18 +150,19 @@ export default function VenueSignUp() {
       }
 
       // Now create venue record
+      if (!supabase) return;
       const { error: venueError } = await supabase.from("venues").insert({
-        owner_id: authData.user.id,
+        user_id: authData.user.id,
         name: formData.businessName,
-        companies_house_number: formData.companiesHouseNumber || null,
-        address: `${formData.addressLine1}${formData.addressLine2 ? ", " + formData.addressLine2 : ""}, ${formData.city}, ${formData.postcode}`,
-        city: formData.city,
+        address_line1: formData.addressLine1,
+        address_line2: formData.addressLine2 || null,
+        city: formData.city || "Birmingham",
         postcode: formData.postcode,
-        venue_type: formData.venueType || null,
+        type: formData.venueType || null,
         capacity: formData.capacity ? parseInt(formData.capacity) : null,
-        contact_name: formData.contactName,
-        contact_email: formData.contactEmail,
-        contact_phone: formData.contactPhone || null,
+        phone: formData.contactPhone || null,
+        email: formData.contactEmail,
+        is_active: true,
       });
 
       if (venueError) {

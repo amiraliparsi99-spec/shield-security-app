@@ -142,6 +142,7 @@ export default function AgencySignUp() {
 
     setIsLoading(true);
 
+    if (!supabase) return;
     try {
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.contactEmail,
@@ -158,8 +159,10 @@ export default function AgencySignUp() {
       if (!authData.user) throw new Error("Failed to create account");
 
       // IMPORTANT: Create profile FIRST (agencies may have foreign key to profiles)
+      if (!supabase) return;
       const { error: profileError } = await supabase.from("profiles").upsert({
         id: authData.user.id,
+        user_id: authData.user.id,
         role: "agency",
         display_name: formData.contactName,
         email: formData.contactEmail,
@@ -170,6 +173,7 @@ export default function AgencySignUp() {
       }
 
       // Now create agency record
+      if (!supabase) return;
       const { error: agencyError } = await supabase.from("agencies").insert({
         owner_id: authData.user.id,
         name: formData.businessName,

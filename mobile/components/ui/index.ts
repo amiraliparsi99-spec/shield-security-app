@@ -15,3 +15,9 @@ export {
   SkeletonStats,
   SkeletonShiftCard,
 } from "./Skeleton";
+
+// New animated components
+export { AnimatedCard } from "./AnimatedCard";
+export { AnimatedBackground } from "./AnimatedBackground";
+export { GlowingButton } from "./GlowingButton";
+export { LiveIndicator } from "./LiveIndicator";

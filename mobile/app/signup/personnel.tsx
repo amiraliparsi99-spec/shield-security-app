@@ -136,6 +136,7 @@ export default function PersonnelSignUp() {
 
     setIsLoading(true);
 
+    if (!supabase) return;
     try {
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email,
@@ -152,8 +153,10 @@ export default function PersonnelSignUp() {
       if (!authData.user) throw new Error("Failed to create account");
 
       // IMPORTANT: Create profile FIRST (personnel has foreign key to profiles)
+      if (!supabase) return;
       const { error: profileError } = await supabase.from("profiles").upsert({
         id: authData.user.id,
+        user_id: authData.user.id,
         email: formData.email,
         role: "personnel",
         display_name: formData.fullName,
@@ -166,6 +169,7 @@ export default function PersonnelSignUp() {
       }
 
       // Now create personnel record (profile exists, foreign key will work)
+      if (!supabase) return;
       const { error: personnelError } = await supabase.from("personnel").insert({
         user_id: authData.user.id,
         display_name: formData.fullName,

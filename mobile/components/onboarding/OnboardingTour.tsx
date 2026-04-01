@@ -26,7 +26,7 @@ const SLIDES: OnboardingSlide[] = [
   {
     id: '1',
     icon: '🛡️',
-    title: 'Welcome to Shield',
+    title: 'Welcome to Shield HQ',
     description: 'The secure platform connecting security professionals with venues and agencies.',
     color: colors.accent,
   },
@@ -55,7 +55,7 @@ const SLIDES: OnboardingSlide[] = [
     id: '5',
     icon: '✨',
     title: 'You\'re All Set!',
-    description: 'Start exploring opportunities and building your security career with Shield.',
+    description: 'Start exploring opportunities and building your security career with Shield HQ.',
     color: colors.accent,
   },
 ];

@@ -2,10 +2,10 @@
 
 import { motion } from "framer-motion";
 
-// Skeleton loader
+// Skeleton loader with shimmer
 export function Skeleton({ className = "" }: { className?: string }) {
   return (
-    <div className={`animate-pulse bg-zinc-800 rounded ${className}`} />
+    <div className={`shimmer min-h-[0.25rem] ${className}`} role="presentation" aria-hidden />
   );
 }
 
@@ -103,22 +103,50 @@ export function ButtonLoader({ size = "sm" }: { size?: "sm" | "md" | "lg" }) {
   );
 }
 
-// Empty state
+// Empty state - attractive, on-brand
 interface EmptyStateProps {
   icon?: string;
   title: string;
   description?: string;
   action?: React.ReactNode;
+  className?: string;
 }
 
-export function EmptyState({ icon = "📭", title, description, action }: EmptyStateProps) {
+export function EmptyState({ icon = "📭", title, description, action, className = "" }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-      <span className="text-5xl mb-4">{icon}</span>
+    <div className={`empty-state-wrap ${className}`}>
+      <div className="empty-state-icon-wrap" aria-hidden>{icon}</div>
       <h3 className="text-lg font-semibold text-white mb-2">{title}</h3>
-      {description && <p className="text-zinc-400 text-sm mb-6 max-w-sm">{description}</p>}
-      {action}
+      {description && <p className="text-zinc-400 text-sm mb-6 max-w-sm mx-auto leading-relaxed">{description}</p>}
+      {action && <div className="flex justify-center">{action}</div>}
     </div>
+  );
+}
+
+/** Primary CTA for empty states - use with EmptyState action prop */
+export function EmptyStateCTA({
+  children,
+  onClick,
+  href,
+  className = "",
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  href?: string;
+  className?: string;
+}) {
+  const base = "btn-primary " + className;
+  if (href) {
+    return (
+      <a href={href} className={base}>
+        {children}
+      </a>
+    );
+  }
+  return (
+    <button type="button" onClick={onClick} className={base}>
+      {children}
+    </button>
   );
 }
 

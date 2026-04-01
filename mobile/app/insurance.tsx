@@ -65,8 +65,15 @@ export default function InsuranceScreen() {
   }, []);
 
   const loadRecords = async () => {
+    if (!supabase) return;
     try {
-      const { profileId } = await getProfileIdAndRole(supabase);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+      const result = await getProfileIdAndRole(supabase, user.id);
+      const profileId = result?.profileId || null;
       setUserId(profileId);
 
       if (profileId) {
@@ -116,6 +123,7 @@ export default function InsuranceScreen() {
       return;
     }
 
+    if (!supabase) return;
     setUploading(true);
     try {
       let documentUrl = null;
@@ -189,6 +197,7 @@ export default function InsuranceScreen() {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
+            if (!supabase) return;
             try {
               await supabase.from("insurance_records").delete().eq("id", record.id);
               safeHaptic("success");

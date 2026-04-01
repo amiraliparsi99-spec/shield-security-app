@@ -1,13 +1,13 @@
 {
   "expo": {
-    "name": "Shield",
+    "name": "Shield HQ",
     "slug": "shield-mobile",
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "scheme": "shield",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -17,10 +17,10 @@
       "supportsTablet": true,
       "bundleIdentifier": "app.shield.mobile",
       "infoPlist": {
-        "NSCameraUsageDescription": "Shield needs camera access to take photos for verification documents.",
-        "NSPhotoLibraryUsageDescription": "Shield needs photo library access to upload verification documents.",
-        "NSMicrophoneUsageDescription": "Shield needs microphone access for voice calls.",
-        "NSLocationWhenInUseUsageDescription": "Shield needs location access for shift check-ins and GPS tracking.",
+        "NSCameraUsageDescription": "Shield HQ needs camera access to take photos for verification documents.",
+        "NSPhotoLibraryUsageDescription": "Shield HQ needs photo library access to upload verification documents.",
+        "NSMicrophoneUsageDescription": "Shield HQ needs microphone access for voice calls.",
+        "NSLocationWhenInUseUsageDescription": "Shield HQ needs location access for shift check-ins and GPS tracking.",
         "ITSAppUsesNonExemptEncryption": false,
         "NSSupportsLiveActivities": true,
         "UIApplicationShortcutItems": [
@@ -72,8 +72,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Shield needs access to your photos to upload verification documents.",
-          "cameraPermission": "Shield needs access to your camera to take photos for verification documents."
+          "photosPermission": "Shield HQ needs access to your photos to upload verification documents.",
+          "cameraPermission": "Shield HQ needs access to your camera to take photos for verification documents."
         }
       ],
       [
@@ -85,11 +85,13 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Shield needs your location for shift check-ins."
+          "locationWhenInUsePermission": "Shield HQ needs your location for shift check-ins."
         }
       ],
       "expo-document-picker",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "./plugins/withAgora.js",
+      "expo-web-browser"
     ],
     "extra": {
       "router": {},

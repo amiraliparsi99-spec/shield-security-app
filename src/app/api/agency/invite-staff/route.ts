@@ -103,11 +103,16 @@ export async function POST(request: NextRequest) {
         .eq("user_id", personnel.user_id);
 
       if (pushTokens && pushTokens.length > 0) {
-        await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/notifications/send`, {
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+        await fetch(`${baseUrl}/api/notifications/send`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "x-service-key": process.env.SUPABASE_SERVICE_ROLE_KEY || "",
+          },
           body: JSON.stringify({
-            tokens: pushTokens.map((t) => t.token),
+            userId: personnel.user_id,
+            type: "agency_invitation",
             title: "Agency Invitation",
             body: `${agency.name} has invited you to join their team`,
             data: {

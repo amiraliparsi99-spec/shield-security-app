@@ -1,10 +1,9 @@
-import type { Personnel } from "@/types/database";
-
 /**
  * Display location for a personnel profile.
  * Uses location_name if set, otherwise builds from city, region, country.
  */
-export function formatLocation(p: Personnel): string {
+export function formatLocation(p: any): string {
+  if (!p) return "—";
   if (p.location_name && p.location_name.trim()) return p.location_name;
   const parts = [p.city, p.region].filter(Boolean);
   if (parts.length) return `${parts.join(", ")}${p.country ? `, ${p.country}` : ""}`;
@@ -13,9 +12,9 @@ export function formatLocation(p: Personnel): string {
 
 /**
  * How long they have been in security.
- * e.g. "5 years in security" or "In security since 2019" or both.
  */
-export function formatExperience(p: Personnel): string {
+export function formatExperience(p: any): string {
+  if (!p) return "—";
   const years = p.experience_years ?? null;
   const since = p.experience_since_year ?? null;
 

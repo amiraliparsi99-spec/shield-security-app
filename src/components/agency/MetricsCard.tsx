@@ -22,7 +22,6 @@ export function MetricsCard({ title, value, subtitle, icon, trend, onClick }: Me
       className={`glass group rounded-2xl p-6 text-left transition-all ${
         onClick ? "cursor-pointer hover:shadow-glow-sm" : ""
       }`}
-      whileHover={onClick ? { scale: 1.02 } : undefined}
       whileTap={onClick ? { scale: 0.98 } : undefined}
       onClick={onClick}
     >

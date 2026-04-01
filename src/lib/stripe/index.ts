@@ -18,7 +18,7 @@ export async function getStripe(): Promise<Stripe> {
     // Dynamic import to avoid loading Stripe on client side
     const { default: StripeLib } = await import("stripe");
     _stripe = new StripeLib(key, {
-      apiVersion: "2024-12-18.acacia",
+      apiVersion: "2026-01-28.clover",
       typescript: true,
     });
   }
@@ -50,9 +50,13 @@ export const PLATFORM_CONFIG = {
   connectAccountType: "express" as const, // or "standard" for more control
   
   // URLs
-  connectReturnUrl: process.env.NEXT_PUBLIC_APP_URL + "/d/payments/setup/complete",
-  connectRefreshUrl: process.env.NEXT_PUBLIC_APP_URL + "/d/payments/setup/refresh",
+  connectReturnUrl: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/d/personnel/payments?success=true`,
+  connectRefreshUrl: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/d/personnel/payments?refresh=true`,
 };
+
+export function calculatePlatformFee(amountInPence: number): number {
+  return Math.round(amountInPence * PLATFORM_CONFIG.platformFeePercent);
+}
 
 // Calculate fees for a booking payment
 export function calculatePaymentFees(grossAmount: number) {

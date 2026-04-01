@@ -5,13 +5,7 @@
  * Finds all confirmed shifts that are about to start (or recently started)
  * where the guard hasn't checked in, and runs the dispatcher.
  *
- * Vercel cron config (vercel.json):
- * {
- *   "crons": [{
- *     "path": "/api/cron/check-attendance",
- *     "schedule": "*/5 * * * *"
- *   }]
- * }
+ * Vercel cron config lives in vercel.json (path: /api/cron/check-attendance, every 5 minutes).
  */
 
 import { NextRequest, NextResponse } from "next/server";

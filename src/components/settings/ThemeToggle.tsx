@@ -62,7 +62,7 @@ export function ThemeToggle({ variant = 'default' }: { variant?: 'default' | 'co
         <div className="flex-1">
           <h3 className="text-white font-medium">Appearance</h3>
           <p className="text-sm text-zinc-400 mt-1">
-            Choose how Shield looks to you
+            Choose how Shield HQ looks to you
           </p>
           
           <div className="grid grid-cols-3 gap-3 mt-4">

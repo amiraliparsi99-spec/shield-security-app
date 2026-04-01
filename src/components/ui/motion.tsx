@@ -157,29 +157,21 @@ export function StaggerItem({ children, className = "", ...props }: StaggerItemP
   );
 }
 
-// GlowCard - Glass card with hover glow effect
-interface GlowCardProps extends HTMLMotionProps<"div"> {
+// GlowCard - Glass card with CSS-only hover (no framer-motion to avoid backdrop-filter flicker)
+interface GlowCardProps {
   children: ReactNode;
   className?: string;
-  glowColor?: string;
 }
 
 export const GlowCard = forwardRef<HTMLDivElement, GlowCardProps>(
-  ({ children, className = "", glowColor = "rgba(20, 184, 166, 0.15)", ...props }, ref) => {
+  ({ children, className = "" }, ref) => {
     return (
-      <motion.div
+      <div
         ref={ref}
-        className={`glass rounded-2xl p-8 transition-all duration-300 ${className}`}
-        whileHover={{
-          scale: 1.02,
-          boxShadow: `0 0 40px ${glowColor}`,
-          borderColor: "rgba(20, 184, 166, 0.3)",
-        }}
-        transition={{ duration: 0.3, ease: "easeOut" }}
-        {...props}
+        className={`glass glass-hover rounded-2xl p-8 ${className}`}
       >
         {children}
-      </motion.div>
+      </div>
     );
   }
 );
@@ -261,25 +253,14 @@ export function FloatingOrb({
   };
 
   return (
-    <motion.div
-      className={`orb pointer-events-none ${className}`}
+    <div
+      className={`orb pointer-events-none orb-float ${className}`}
       style={{
         width: size,
         height: size,
         background: colors[color],
         filter: "blur(80px)",
-      }}
-      animate={{
-        y: [0, -30, 0],
-        x: [0, 15, 0],
-        scale: [1, 1.1, 1],
-      }}
-      transition={{
-        duration: 8,
-        repeat: Infinity,
-        repeatType: "reverse",
-        ease: "easeInOut",
-        delay,
+        animationDelay: `${delay}s`,
       }}
     />
   );
@@ -300,29 +281,16 @@ export function PulseButton({
 }: PulseButtonProps) {
   const baseStyles =
     variant === "primary"
-      ? "bg-shield-500 text-white shadow-lg shadow-shield-500/20"
-      : "border border-white/15 bg-white/[0.06] text-white";
+      ? "bg-shield-500 text-white shadow-lg shadow-shield-500/20 hover:shadow-[0_0_30px_rgba(20,184,166,0.4)]"
+      : "border border-white/15 bg-white/[0.06] text-white hover:bg-white/[0.1]";
 
   return (
     <motion.button
-      className={`relative overflow-hidden rounded-xl px-8 py-4 font-semibold transition-colors ${baseStyles} ${className}`}
-      whileHover={{
-        scale: 1.02,
-        boxShadow:
-          variant === "primary"
-            ? "0 0 40px rgba(20, 184, 166, 0.5)"
-            : "0 0 30px rgba(255, 255, 255, 0.1)",
-      }}
+      className={`relative overflow-hidden rounded-xl px-8 py-4 font-semibold transition-all duration-300 ${baseStyles} ${className}`}
       whileTap={{ scale: 0.98 }}
-      transition={{ duration: 0.2 }}
+      transition={{ duration: 0.15 }}
       {...props}
     >
-      <motion.span
-        className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent"
-        initial={{ x: "-100%" }}
-        whileHover={{ x: "100%" }}
-        transition={{ duration: 0.5, ease: "easeInOut" }}
-      />
       <span className="relative z-10">{children}</span>
     </motion.button>
   );

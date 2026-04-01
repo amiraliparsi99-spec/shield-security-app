@@ -23,7 +23,7 @@ import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
 import { colors, typography, spacing, radius } from "../theme";
 import { supabase } from "../lib/supabase";
-import { getProfileIdAndRole, getPersonnelId } from "../lib/auth";
+import { useAuthStore, useShiftStore } from "../stores";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
@@ -241,11 +241,9 @@ function QuickActions({
 
 export default function ShiftTrackerScreen() {
   const insets = useSafeAreaInsets();
-  const [activeShift, setActiveShift] = useState<ShiftCheckin | null>(null);
-  const [todaysShifts, setTodaysShifts] = useState<ShiftCheckin[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { personnelId } = useAuthStore();
+  const { todaysShifts, activeShift, loading, loadShifts } = useShiftStore();
   const [processing, setProcessing] = useState(false);
-  const [personnelId, setPersonnelId] = useState<string | null>(null);
   const [currentLocation, setCurrentLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [isOnBreak, setIsOnBreak] = useState(false);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
@@ -253,7 +251,7 @@ export default function ShiftTrackerScreen() {
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
 
   useEffect(() => {
-    initializeAndLoad();
+    loadShifts();
   }, []);
 
   useEffect(() => {
@@ -267,76 +265,23 @@ export default function ShiftTrackerScreen() {
     }
   }, [loading]);
 
-  const initializeAndLoad = async () => {
-    try {
-      const result = await getProfileIdAndRole(supabase);
-      if (result?.profileId) {
-        const pId = await getPersonnelId(supabase, result.profileId);
-        setPersonnelId(pId);
-        if (pId) {
-          await loadShifts(pId);
-        }
-      }
-    } catch (e) {
-      console.error("Failed to initialize:", e);
-    }
-    setLoading(false);
-  };
-
-  const loadShifts = async (pId: string) => {
-    const today = new Date().toISOString().split("T")[0];
-
-    const { data: bookings } = await supabase
-      .from("bookings")
-      .select(`
-        id, event_name, event_date, start_time, end_time,
-        venue:venues(name, address),
-        agency:agencies(name)
-      `)
-      .eq("event_date", today)
-      .or(`provider_id.eq.${pId},assigned_personnel.cs.{${pId}}`);
-
-    const { data: checkins } = await supabase
-      .from("shift_checkins")
-      .select("*")
-      .eq("personnel_id", pId)
-      .gte("created_at", `${today}T00:00:00`)
-      .lte("created_at", `${today}T23:59:59`);
-
-    const shifts: ShiftCheckin[] = (bookings || []).map((booking: any) => {
-      const checkin = checkins?.find((c) => c.booking_id === booking.id);
-      return {
-        id: checkin?.id || "",
-        booking_id: booking.id,
-        check_in_time: checkin?.check_in_time || null,
-        check_in_address: checkin?.check_in_address || null,
-        check_out_time: checkin?.check_out_time || null,
-        check_out_address: checkin?.check_out_address || null,
-        total_hours: checkin?.total_hours || null,
-        status: checkin?.status || "pending",
-        booking,
-      };
-    });
-
-    setTodaysShifts(shifts);
-    const active = shifts.find((s) => s.status === "checked_in");
-    setActiveShift(active || null);
-
-    // Build timeline
-    if (active) {
+  useEffect(() => {
+    if (activeShift) {
       const events: TimelineEvent[] = [];
-      if (active.check_in_time) {
+      if (activeShift.check_in_time) {
         events.push({
           id: "checkin",
-          time: new Date(active.check_in_time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
+          time: new Date(activeShift.check_in_time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
           type: "check_in",
           title: "Checked In",
-          description: active.check_in_address || "Location recorded",
+          description: activeShift.check_in_address || "Location recorded",
         });
       }
       setTimeline(events);
+    } else {
+      setTimeline([]);
     }
-  };
+  }, [activeShift]);
 
   const getCurrentLocation = async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
@@ -378,6 +323,7 @@ export default function ShiftTrackerScreen() {
     try {
       const location = await getCurrentLocation();
 
+      if (!supabase) return;
       const { error } = await supabase.from("shift_checkins").insert({
         booking_id: shift.booking_id,
         personnel_id: personnelId,
@@ -391,7 +337,7 @@ export default function ShiftTrackerScreen() {
       if (error) throw error;
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      await loadShifts(personnelId);
+      await loadShifts();
     } catch (error: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert("Check-in Failed", error.message || "Failed to check in");
@@ -420,6 +366,7 @@ export default function ShiftTrackerScreen() {
               const checkInTime = new Date(activeShift.check_in_time!).getTime();
               const totalHours = (Date.now() - checkInTime) / (1000 * 60 * 60);
 
+              if (!supabase) return;
               const { error } = await supabase
                 .from("shift_checkins")
                 .update({
@@ -434,8 +381,58 @@ export default function ShiftTrackerScreen() {
 
               if (error) throw error;
 
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-              await loadShifts(personnelId);
+              // Also update the shifts table status
+              const { data: shiftData } = await supabase
+                .from("shifts")
+                .select("id, incident_report_requested, booking_id, venue:venues(name)")
+                .eq("booking_id", activeShift.booking_id)
+                .eq("personnel_id", personnelId)
+                .single();
+
+              if (shiftData?.id) {
+                // Update shift status to checked_out
+                await supabase
+                  .from("shifts")
+                  .update({
+                    status: "checked_out",
+                    actual_end: new Date().toISOString(),
+                    hours_worked: parseFloat(totalHours.toFixed(2)),
+                  })
+                  .eq("id", shiftData.id);
+
+                // Check if all shifts for this booking are completed
+                const { data: allShifts } = await supabase
+                  .from("shifts")
+                  .select("id, status")
+                  .eq("booking_id", shiftData.booking_id);
+
+                if (allShifts) {
+                  const allCompleted = allShifts.every(
+                    (s) => s.status === "checked_out" || s.status === "cancelled" || s.status === "no_show"
+                  );
+                  const hasCompletedShift = allShifts.some((s) => s.status === "checked_out");
+
+                  if (allCompleted && hasCompletedShift) {
+                    // Mark booking as completed
+                    await supabase
+                      .from("bookings")
+                      .update({
+                        status: "completed",
+                        completed_at: new Date().toISOString(),
+                      })
+                      .eq("id", shiftData.booking_id);
+                  }
+                }
+              }
+
+              await loadShifts();
+
+              Alert.alert(
+                "Shift Complete",
+                "Great work! Your shift has been logged. If the venue requests an incident report, you'll see it in Mission Control.",
+                [{ text: "OK" }]
+              );
+              
             } catch (error: any) {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
               Alert.alert("Check-out Failed", error.message || "Failed to check out");

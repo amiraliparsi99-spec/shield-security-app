@@ -18,8 +18,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { colors, typography, spacing, radius } from "../theme";
 import { supabase } from "../lib/supabase";
-import { getProfileIdAndRole, getPersonnelId } from "../lib/auth";
+import { getProfileIdAndRole, getPersonnelId, isPersonnelVerified, isPersonnelBankConnected } from "../lib/auth";
 import { safeHaptic } from "../lib/haptics";
+import { getApiBaseUrl } from "../lib/api";
 
 interface Shift {
   id: string;
@@ -41,6 +42,8 @@ export default function JobsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [claiming, setClaiming] = useState<string | null>(null);
   const [personnel, setPersonnel] = useState<any>(null);
+  const [isVerified, setIsVerified] = useState(false);
+  const [hasBankAccount, setHasBankAccount] = useState(false);
   const [tab, setTab] = useState<"available" | "my-shifts">("available");
 
   const loadData = useCallback(async () => {
@@ -89,6 +92,12 @@ export default function JobsScreen() {
 
       if (personnelData) {
         setPersonnel(personnelData);
+        const v = await isPersonnelVerified(supabase, personnelId);
+        setIsVerified(v);
+        if (v) {
+          const b = await isPersonnelBankConnected(supabase, personnelId);
+          setHasBankAccount(b);
+        }
       }
 
       // Fetch available shifts (unclaimed)
@@ -143,6 +152,35 @@ export default function JobsScreen() {
               venue: venuesMap[b.venue_id] || { name: "Venue", city: "" },
             };
           });
+        }
+
+        // Fallback: fetch metadata via API for bookings RLS blocked
+        const missingIds = bookingIds.filter((id) => !bookingsMap[id]);
+        if (missingIds.length > 0) {
+          try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 4000);
+            const metaRes = await fetch(`${getApiBaseUrl()}/api/shifts/metadata`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ booking_ids: missingIds }),
+              signal: controller.signal,
+            });
+            clearTimeout(timeout);
+            if (metaRes.ok) {
+              const { data: metaData } = await metaRes.json();
+              if (metaData) {
+                for (const [id, meta] of Object.entries(metaData) as [string, any][]) {
+                  bookingsMap[id] = {
+                    event_name: meta.event_name,
+                    venue: { name: meta.venue_name, city: meta.venue_city },
+                  };
+                }
+              }
+            }
+          } catch {
+            // API unreachable — names will fall back to defaults
+          }
         }
       }
 
@@ -212,6 +250,37 @@ export default function JobsScreen() {
   const claimShift = async (shift: Shift) => {
     if (!personnel || !supabase) return;
 
+    const verified = await isPersonnelVerified(supabase, personnel.id);
+    if (!verified) {
+      Alert.alert(
+        "Verification Required",
+        "You need to complete your ID and SIA licence verification before you can accept jobs.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Verify Now",
+            onPress: () => router.push("/verification"),
+          },
+        ]
+      );
+      return;
+    }
+    const bankConnected = await isPersonnelBankConnected(supabase, personnel.id);
+    if (!bankConnected) {
+      Alert.alert(
+        "Connect Bank Account",
+        "Your identity is verified! Now connect your bank account in the Payments tab to start accepting shifts and getting paid.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Go to Payments",
+            onPress: () => router.push("/(tabs)/payments"),
+          },
+        ]
+      );
+      return;
+    }
+
     const hours = getHours(shift.scheduled_start, shift.scheduled_end);
     const pay = (shift.hourly_rate * parseFloat(hours)).toFixed(0);
 
@@ -227,6 +296,7 @@ export default function JobsScreen() {
             safeHaptic("medium");
             setClaiming(shift.id);
 
+            if (!supabase) return;
             try {
               // Use atomic claim function
               const { data: result, error } = await supabase.rpc("claim_shift", {
@@ -250,20 +320,21 @@ export default function JobsScreen() {
               safeHaptic("success");
               
               // Notify venue
+              if (!supabase) return;
               const { data: booking } = await supabase
                 .from("bookings")
                 .select("venue_id")
                 .eq("id", shift.booking_id)
                 .single();
 
-              if (booking?.venue_id) {
+              if (booking?.venue_id && supabase) {
                 const { data: venue } = await supabase
                   .from("venues")
                   .select("user_id")
                   .eq("id", booking.venue_id)
                   .single();
 
-                if (venue?.user_id) {
+                if (venue?.user_id && supabase) {
                   await supabase.from("notifications").insert({
                     user_id: venue.user_id,
                     type: "shift",
@@ -275,6 +346,7 @@ export default function JobsScreen() {
               }
 
               // Create Mission Control chat for this booking
+              if (!supabase) return;
               try {
                 await supabase.rpc("create_mission_control_chat", { p_booking_id: shift.booking_id });
                 console.log("Mission Control chat created for booking:", shift.booking_id);
@@ -350,6 +422,42 @@ export default function JobsScreen() {
         <Text style={styles.title}>Jobs</Text>
         <View style={{ width: 60 }} />
       </View>
+
+      {/* Verification Banner */}
+      {personnel && !isVerified && (
+        <TouchableOpacity
+          style={styles.verificationBanner}
+          onPress={() => router.push("/verification")}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.verificationIcon}>🔒</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.verificationTitle}>Verification Required</Text>
+            <Text style={styles.verificationText}>
+              Complete your verification to start accepting jobs. Tap here to verify.
+            </Text>
+          </View>
+          <Text style={{ color: "#F59E0B", fontSize: 16 }}>→</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Bank Account Banner */}
+      {personnel && isVerified && !hasBankAccount && (
+        <TouchableOpacity
+          style={[styles.verificationBanner, { borderColor: colors.accent }]}
+          onPress={() => router.push("/(tabs)/payments")}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.verificationIcon}>🏦</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.verificationTitle}>Connect Bank Account</Text>
+            <Text style={styles.verificationText}>
+              You're verified! Connect your bank account to start getting paid for shifts.
+            </Text>
+          </View>
+          <Text style={{ color: colors.accent, fontSize: 16 }}>→</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Live Banner */}
       {availableShifts.length > 0 && (
@@ -551,6 +659,33 @@ const styles = StyleSheet.create({
   title: {
     ...typography.title,
     color: colors.text,
+  },
+  verificationBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(245, 158, 11, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(245, 158, 11, 0.3)",
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    gap: spacing.sm,
+  },
+  verificationIcon: {
+    fontSize: 24,
+  },
+  verificationTitle: {
+    ...typography.body,
+    color: "#F59E0B",
+    fontWeight: "700",
+    fontSize: 14,
+  },
+  verificationText: {
+    ...typography.caption,
+    color: "rgba(245, 158, 11, 0.8)",
+    marginTop: 2,
+    fontSize: 12,
   },
   liveBanner: {
     flexDirection: "row",

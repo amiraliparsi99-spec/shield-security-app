@@ -12,7 +12,7 @@ interface CardProps {
   variant?: "default" | "elevated" | "outlined" | "glass";
   onPress?: () => void;
   padding?: "none" | "sm" | "md" | "lg";
-  style?: ViewStyle;
+  style?: ViewStyle | ViewStyle[];
 }
 
 export function Card({
@@ -25,9 +25,9 @@ export function Card({
   const cardStyles = [
     styles.base,
     styles[variant],
-    styles[`padding_${padding}`],
-    style,
-  ];
+    styles[`padding_${padding}` as keyof typeof styles],
+    ...(Array.isArray(style) ? style : style ? [style] : []),
+  ].filter((s): s is ViewStyle => s !== undefined);
 
   if (onPress) {
     return (
@@ -63,7 +63,7 @@ export function StatCard({
   style,
 }: StatCardProps) {
   return (
-    <Card variant="default" style={[styles.statCard, style]}>
+    <Card variant="default" style={style ? [styles.statCard, style] : styles.statCard}>
       <View style={styles.statHeader}>
         {icon && <View style={styles.statIcon}>{icon}</View>}
         <View style={styles.statInfo}>

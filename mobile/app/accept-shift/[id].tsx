@@ -11,6 +11,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Animated,
+  Alert,
   Dimensions,
   PanResponder,
   Vibration,
@@ -21,7 +22,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
 import { colors, typography, spacing, radius } from "../../theme";
 import { supabase } from "../../lib/supabase";
-import { getProfileIdAndRole, getPersonnelId } from "../../lib/auth";
+import { getProfileIdAndRole, getPersonnelId, isPersonnelVerified, isPersonnelBankConnected } from "../../lib/auth";
 import { safeHaptic } from "../../lib/haptics";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -149,11 +150,15 @@ export default function AcceptShiftScreen() {
   };
 
   const loadShiftAndUser = async () => {
+    if (!supabase) return;
     try {
-      const { profileId } = await getProfileIdAndRole(supabase);
-      if (profileId) {
-        const pId = await getPersonnelId(supabase, profileId);
-        setPersonnelId(pId);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const result = await getProfileIdAndRole(supabase, user.id);
+        if (result?.profileId) {
+          const pId = await getPersonnelId(supabase, result.profileId);
+          setPersonnelId(pId);
+        }
       }
 
       // Support loading from shift_offers (Uber-style popup deep link)
@@ -217,10 +222,50 @@ export default function AcceptShiftScreen() {
   const handleAccept = async () => {
     if (!shift || !personnelId || accepting) return;
 
+    if (supabase) {
+      const verified = await isPersonnelVerified(supabase, personnelId);
+      if (!verified) {
+        Alert.alert(
+          "Verification Required",
+          "You need to complete your ID and SIA licence verification before you can accept shifts.",
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Verify Now",
+              onPress: () => {
+                router.back();
+                setTimeout(() => router.push("/verification"), 300);
+              },
+            },
+          ]
+        );
+        return;
+      }
+      const bankConnected = await isPersonnelBankConnected(supabase, personnelId);
+      if (!bankConnected) {
+        Alert.alert(
+          "Connect Bank Account",
+          "Your identity is verified! Now connect your bank account in the Payments tab to start accepting shifts and getting paid.",
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Go to Payments",
+              onPress: () => {
+                router.back();
+                setTimeout(() => router.push("/(tabs)/payments"), 300);
+              },
+            },
+          ]
+        );
+        return;
+      }
+    }
+
     setAccepting(true);
     safeHaptic("medium");
     Vibration.vibrate(100);
 
+    if (!supabase) return;
     try {
       // Create application with auto-accept status
       const { error } = await supabase.from("shift_applications").insert({

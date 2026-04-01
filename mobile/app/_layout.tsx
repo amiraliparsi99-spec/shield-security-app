@@ -5,15 +5,19 @@ import { colors } from "../theme";
 import { supabase } from "../lib/supabase";
 import { CallProvider } from "../contexts/CallContext";
 import { ShiftOfferProvider } from "../contexts/ShiftOfferContext";
+import { TabBarProvider } from "../contexts/TabBarContext";
 import { ThemeProvider, useTheme } from "../contexts/ThemeContext";
+import { UnreadMessagesProvider } from "../contexts/UnreadMessagesContext";
 import { IncomingCallModal, ActiveCallScreen } from "../components/calling";
 import { ShiftOfferPopup } from "../components/shifts/ShiftOfferPopup";
 import { setupNotificationDeepLinks } from "../lib/push-notifications";
 import { AnimatedOnboarding, useAnimatedOnboardingComplete } from "../components/onboarding/AnimatedOnboarding";
+import { useAuthStore } from "../stores";
 
 function AppContent() {
   const { isDark, colors: themeColors } = useTheme();
   const { isComplete, setIsComplete } = useAnimatedOnboardingComplete();
+  const { loadAuth, clear: clearAuth } = useAuthStore();
 
   useEffect(() => {
     if (!supabase) return;
@@ -21,9 +25,14 @@ function AppContent() {
 
     const { data: { subscription } } = sb.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_OUT") {
+        clearAuth();
         return;
       }
+      if (session?.user) {
+        loadAuth();
+      }
     });
+    loadAuth();
 
     sb.auth.getSession().catch(async (error) => {
       if (error?.message?.includes("Refresh Token") || error?.message?.includes("Invalid")) {
@@ -63,10 +72,12 @@ function AppContent() {
   }
 
   return (
-    <CallProvider>
-      <ShiftOfferProvider>
-        <StatusBar style={isDark ? "light" : "dark"} />
-        <Stack
+    <TabBarProvider>
+      <UnreadMessagesProvider>
+        <CallProvider>
+          <ShiftOfferProvider>
+          <StatusBar style={isDark ? "light" : "dark"} />
+          <Stack
           screenOptions={{
             headerStyle: { backgroundColor: themeColors.background },
             headerTintColor: themeColors.text,
@@ -80,7 +91,7 @@ function AppContent() {
           <Stack.Screen name="d" options={{ headerShown: false }} />
           <Stack.Screen name="login" options={{ title: "Log in" }} />
           <Stack.Screen name="signup" options={{ title: "Sign up" }} />
-          <Stack.Screen name="verification" options={{ title: "Verification" }} />
+          <Stack.Screen name="verification" options={{ headerShown: false }} />
           <Stack.Screen name="venue/[id]" options={{ title: "Venue" }} />
           <Stack.Screen name="personnel/[id]" options={{ title: "Profile" }} />
           <Stack.Screen name="agency/[id]" options={{ title: "Agency" }} />
@@ -103,14 +114,21 @@ function AppContent() {
           <Stack.Screen name="referrals" options={{ headerShown: false }} />
           <Stack.Screen name="notification-settings" options={{ headerShown: false }} />
           <Stack.Screen name="calendar" options={{ headerShown: false }} />
+          <Stack.Screen name="upcoming-shifts" options={{ headerShown: false }} />
+          <Stack.Screen name="new-conversation" options={{ headerShown: false }} />
+          <Stack.Screen name="venue-settings" options={{ headerShown: false }} />
+          <Stack.Screen name="preferred-staff" options={{ headerShown: false }} />
+          <Stack.Screen name="spend-dashboard" options={{ headerShown: false }} />
           <Stack.Screen name="+not-found" options={{ headerShown: false }} />
         </Stack>
-        {/* Global overlays */}
-        <IncomingCallModal />
-        <ActiveCallScreen />
-        <ShiftOfferPopup />
-      </ShiftOfferProvider>
-    </CallProvider>
+            {/* Global overlays */}
+            <IncomingCallModal />
+            <ActiveCallScreen />
+            <ShiftOfferPopup />
+          </ShiftOfferProvider>
+        </CallProvider>
+      </UnreadMessagesProvider>
+    </TabBarProvider>
   );
 }
 

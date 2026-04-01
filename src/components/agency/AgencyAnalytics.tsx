@@ -11,6 +11,7 @@ export function AgencyAnalytics() {
     upcomingShifts, 
     totalRevenue, 
     totalHours, 
+    avgRating: avgRatingFromReviews,
     loading 
   } = useAgencyStats();
   const { data: shifts } = useAgencyShifts();
@@ -18,8 +19,7 @@ export function AgencyAnalytics() {
   // Calculate utilization (active staff / total staff)
   const utilization = totalStaff > 0 ? (activeStaff / totalStaff) * 100 : 0;
 
-  // Calculate average rating from shifts
-  const avgRating = 4.5; // Would come from reviews in real app
+  const avgRating = avgRatingFromReviews ?? 0;
 
   if (loading) {
     return (
@@ -39,49 +39,29 @@ export function AgencyAnalytics() {
 
       {/* Main Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <motion.div
-          className="glass rounded-xl p-4"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-        >
+        <div className="glass rounded-xl p-4">
           <p className="text-sm text-zinc-400">Total Revenue</p>
           <p className="text-2xl font-bold text-emerald-400">£{totalRevenue.toLocaleString()}</p>
           <p className="text-xs text-zinc-500 mt-1">From commissions</p>
-        </motion.div>
+        </div>
 
-        <motion.div
-          className="glass rounded-xl p-4"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-        >
+        <div className="glass rounded-xl p-4">
           <p className="text-sm text-zinc-400">Completed Shifts</p>
           <p className="text-2xl font-bold text-blue-400">{completedShifts}</p>
           <p className="text-xs text-zinc-500 mt-1">{upcomingShifts} upcoming</p>
-        </motion.div>
+        </div>
 
-        <motion.div
-          className="glass rounded-xl p-4"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-        >
+        <div className="glass rounded-xl p-4">
           <p className="text-sm text-zinc-400">Staff Utilization</p>
           <p className="text-2xl font-bold text-purple-400">{utilization.toFixed(0)}%</p>
           <p className="text-xs text-zinc-500 mt-1">{activeStaff} of {totalStaff} active</p>
-        </motion.div>
+        </div>
 
-        <motion.div
-          className="glass rounded-xl p-4"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
-        >
+        <div className="glass rounded-xl p-4">
           <p className="text-sm text-zinc-400">Avg Rating</p>
           <p className="text-2xl font-bold text-amber-400">★ {avgRating.toFixed(1)}</p>
           <p className="text-xs text-zinc-500 mt-1">Client satisfaction</p>
-        </motion.div>
+        </div>
       </div>
 
       {/* Secondary Stats */}
@@ -152,7 +132,7 @@ export function AgencyAnalytics() {
             <li>• Grow your team to take on more bookings</li>
           )}
           <li>• Maintain high ratings to attract premium venues</li>
-          <li>• Use Shield's instant fill to cover last-minute gaps</li>
+          <li>• Use Shield HQ&apos;s instant fill to cover last-minute gaps</li>
         </ul>
       </div>
     </div>

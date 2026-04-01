@@ -163,6 +163,15 @@ export default function JobsPage() {
 
   const claimShift = async (shift: Shift) => {
     if (!personnel) return;
+
+    const isVerified =
+      personnel.verification_status === "verified" || personnel.sia_verified === true;
+    if (!isVerified) {
+      alert(
+        "Verification Required\n\nYou need to complete your verification before you can accept jobs. Please go to Settings → Documents & Verification to get verified."
+      );
+      return;
+    }
     
     const hours = getHours(shift.scheduled_start, shift.scheduled_end);
     const pay = (shift.hourly_rate * parseFloat(hours)).toFixed(0);
@@ -262,6 +271,21 @@ export default function JobsPage() {
 
   return (
     <div className="p-4 sm:p-6 max-w-2xl mx-auto">
+      {/* Verification Banner */}
+      {personnel && personnel.verification_status !== "verified" && personnel.sia_verified !== true && (
+        <div className="mb-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl px-5 py-4 flex items-start gap-3">
+          <span className="text-2xl mt-0.5">🔒</span>
+          <div>
+            <p className="text-amber-300 font-semibold">Verification Required</p>
+            <p className="text-amber-200/70 text-sm mt-1">
+              Complete your verification to start accepting jobs. Go to{" "}
+              <a href="/d/personnel/settings" className="underline text-amber-300">Settings</a>{" "}
+              → Documents & Verification.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">Jobs</h1>

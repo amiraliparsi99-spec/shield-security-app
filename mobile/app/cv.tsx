@@ -86,8 +86,8 @@ export default function DigitalCVScreen() {
   const handleShare = async () => {
     try {
       await Share.share({
-        message: 'Check out my verified security profile on Shield!\n\n🛡️ James Mitchell\n✓ SIA Verified\n📍 156 shifts completed\n⭐ 4.8 avg rating\n\nhttps://shield.app/cv/james-mitchell',
-        title: 'My Shield Digital CV',
+        message: 'Check out my verified security profile on Shield HQ!\n\n🛡️ James Mitchell\n✓ SIA Verified\n📍 156 shifts completed\n⭐ 4.8 avg rating\n\nhttps://shield.app/cv/james-mitchell',
+        title: 'My Shield HQ Digital CV',
       });
     } catch (error) {
       console.error(error);

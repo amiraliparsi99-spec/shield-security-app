@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   ScrollView,
   StyleSheet,
@@ -9,20 +9,20 @@ import {
   Alert,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { colors, typography, spacing, radius } from "../../theme";
 import { supabase } from "../../lib/supabase";
+import { getProfileIdAndRole, getPersonnelId } from "../../lib/auth";
 import { useCall } from "../../contexts/CallContext";
 import { useTheme, ThemeMode } from "../../contexts/ThemeContext";
-import { useOnboardingComplete } from "../../components/onboarding/OnboardingTour";
 import { safeHaptic } from "../../lib/haptics";
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const { initiateCall, callState } = useCall();
   const { mode, setThemeMode, isDark, colors: themeColors } = useTheme();
-  const { resetOnboarding } = useOnboardingComplete();
+  const [verificationStatus, setVerificationStatus] = useState<string | null>(null);
   const [notifications, setNotifications] = useState({
     shifts: true,
     messages: true,
@@ -30,35 +30,9 @@ export default function SettingsScreen() {
     marketing: false,
   });
 
-  const handleDemoCall = () => {
-    if (callState !== 'idle') {
-      Alert.alert("Call in Progress", "You already have an active call");
-      return;
-    }
-    safeHaptic('medium');
-    router.push('/call/demo?name=Demo%20Contact&role=personnel');
-  };
-
   const handleThemeChange = (newTheme: ThemeMode) => {
     safeHaptic('selection');
     setThemeMode(newTheme);
-  };
-
-  const handleResetOnboarding = () => {
-    Alert.alert(
-      "Reset Onboarding",
-      "This will show the welcome tour again next time you open the app.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { 
-          text: "Reset", 
-          onPress: () => {
-            resetOnboarding();
-            Alert.alert("Done", "Onboarding will show on next app restart.");
-          }
-        }
-      ]
-    );
   };
 
   const handleLogout = async () => {
@@ -81,6 +55,29 @@ export default function SettingsScreen() {
       ]
     );
   };
+
+  useFocusEffect(
+    useCallback(() => {
+      (async () => {
+        if (!supabase) return;
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session?.user?.id) return;
+          const profile = await getProfileIdAndRole(supabase, session.user.id);
+          if (!profile || profile.role !== "personnel") return;
+          const pid = await getPersonnelId(supabase, profile.profileId);
+          if (!pid) return;
+          const { data: v } = await supabase
+            .from("verifications")
+            .select("status")
+            .eq("owner_type", "personnel")
+            .eq("owner_id", pid)
+            .maybeSingle();
+          setVerificationStatus(v?.status || null);
+        } catch {}
+      })();
+    }, [])
+  );
 
   const handleDeleteAccount = () => {
     Alert.alert(
@@ -188,15 +185,31 @@ export default function SettingsScreen() {
         <View style={styles.card}>
           <TouchableOpacity
             style={styles.menuItem}
-            onPress={() => router.push('/verification')}
+            onPress={() => {
+              if (verificationStatus === "verified") {
+                Alert.alert("Already Verified", "Your account has been verified. No further action is needed.");
+              } else {
+                router.push('/verification');
+              }
+            }}
             activeOpacity={0.7}
           >
-            <Text style={styles.menuIcon}>📄</Text>
+            <Text style={styles.menuIcon}>{verificationStatus === "verified" ? "✅" : "📄"}</Text>
             <View style={styles.menuInfo}>
               <Text style={styles.menuLabel}>Documents & Verification</Text>
-              <Text style={styles.menuDescription}>Manage your SIA license and documents</Text>
+              <Text style={styles.menuDescription}>
+                {verificationStatus === "verified"
+                  ? "Your account is verified"
+                  : "Manage your SIA license and documents"}
+              </Text>
             </View>
-            <Text style={styles.menuArrow}>→</Text>
+            {verificationStatus === "verified" ? (
+              <View style={styles.verifiedBadge}>
+                <Text style={styles.verifiedBadgeText}>Verified</Text>
+              </View>
+            ) : (
+              <Text style={styles.menuArrow}>→</Text>
+            )}
           </TouchableOpacity>
 
           <View style={styles.menuDivider} />
@@ -265,55 +278,6 @@ export default function SettingsScreen() {
         </View>
       </View>
 
-      {/* Test Features */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Test Features</Text>
-        <View style={styles.card}>
-          <TouchableOpacity
-            style={styles.menuItem}
-            onPress={handleDemoCall}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.menuIcon}>📞</Text>
-            <View style={styles.menuInfo}>
-              <Text style={styles.menuLabel}>Test Call Feature</Text>
-              <Text style={styles.menuDescription}>Try the WhatsApp-style calling UI</Text>
-            </View>
-            <Text style={styles.menuArrow}>→</Text>
-          </TouchableOpacity>
-
-          <View style={styles.menuDivider} />
-
-          <TouchableOpacity
-            style={styles.menuItem}
-            onPress={() => router.push('/(tabs)/messages')}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.menuIcon}>💬</Text>
-            <View style={styles.menuInfo}>
-              <Text style={styles.menuLabel}>View Demo Messages</Text>
-              <Text style={styles.menuDescription}>See sample chat conversations</Text>
-            </View>
-            <Text style={styles.menuArrow}>→</Text>
-          </TouchableOpacity>
-
-          <View style={styles.menuDivider} />
-
-          <TouchableOpacity
-            style={styles.menuItem}
-            onPress={handleResetOnboarding}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.menuIcon}>🎯</Text>
-            <View style={styles.menuInfo}>
-              <Text style={styles.menuLabel}>Reset Onboarding Tour</Text>
-              <Text style={styles.menuDescription}>View the welcome slides again</Text>
-            </View>
-            <Text style={styles.menuArrow}>→</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
       {/* Support */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Support</Text>
@@ -371,7 +335,7 @@ export default function SettingsScreen() {
       </View>
 
       {/* Version */}
-      <Text style={styles.version}>Shield v1.0.0</Text>
+      <Text style={styles.version}>Shield HQ v1.0.0</Text>
     </ScrollView>
   );
 }
@@ -497,6 +461,17 @@ const styles = StyleSheet.create({
   menuArrow: {
     ...typography.body,
     color: colors.textMuted,
+  },
+  verifiedBadge: {
+    backgroundColor: colors.successSoft,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+  },
+  verifiedBadgeText: {
+    ...typography.caption,
+    color: colors.success,
+    fontWeight: "600",
   },
   menuDivider: {
     height: 1,

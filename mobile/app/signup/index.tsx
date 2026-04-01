@@ -12,6 +12,7 @@ const roles = [
     icon: "🏢",
     color: "rgba(168, 85, 247, 0.2)",
     href: "/signup/venue",
+    comingSoon: false,
   },
   { 
     id: "personnel", 
@@ -20,14 +21,16 @@ const roles = [
     icon: "🛡️",
     color: "rgba(16, 185, 129, 0.2)",
     href: "/signup/personnel",
+    comingSoon: false,
   },
   { 
     id: "agency", 
     label: "Security Agency", 
-    description: "Manage your team and bookings",
+    description: "Coming Soon",
     icon: "🏛️",
-    color: "rgba(59, 130, 246, 0.2)",
+    color: "rgba(59, 130, 246, 0.1)",
     href: "/signup/agency",
+    comingSoon: true,
   },
 ];
 
@@ -43,31 +46,38 @@ export default function SignUpIndex() {
           <View style={styles.logo}>
             <Text style={styles.logoIcon}>🛡️</Text>
           </View>
-          <Text style={styles.logoText}>Shield</Text>
+          <Text style={styles.logoText}>Shield HQ</Text>
         </View>
 
-        <View style={styles.card}>
-          <Text style={styles.title}>Create an account</Text>
-          <Text style={styles.subtitle}>
-            Choose your role to get started with Shield.
-          </Text>
+        <Text style={styles.welcomeTitle}>Join Shield HQ</Text>
+        <Text style={styles.welcomeSubtitle}>Choose your role to get started.</Text>
 
+        <View style={styles.card}>
           <View style={styles.rolesContainer}>
             {roles.map((role) => (
               <TouchableOpacity
                 key={role.id}
-                style={styles.roleCard}
-                onPress={() => router.push(role.href as any)}
-                activeOpacity={0.7}
+                style={[styles.roleCard, role.comingSoon && styles.roleCardDisabled]}
+                onPress={() => !role.comingSoon && router.push(role.href as any)}
+                activeOpacity={role.comingSoon ? 1 : 0.85}
+                disabled={role.comingSoon}
               >
-                <View style={[styles.roleIcon, { backgroundColor: role.color }]}>
+                <View style={[styles.roleIcon, { backgroundColor: role.color }, role.comingSoon && { opacity: 0.4 }]}>
                   <Text style={styles.roleIconText}>{role.icon}</Text>
                 </View>
                 <View style={styles.roleContent}>
-                  <Text style={styles.roleLabel}>{role.label}</Text>
-                  <Text style={styles.roleDescription}>{role.description}</Text>
+                  <Text style={[styles.roleLabel, role.comingSoon && { opacity: 0.5 }]}>{role.label}</Text>
+                  <Text style={[styles.roleDescription, role.comingSoon && { color: colors.accent }]}>
+                    {role.description}
+                  </Text>
                 </View>
-                <Text style={styles.chevron}>›</Text>
+                {role.comingSoon ? (
+                  <View style={styles.comingSoonBadge}>
+                    <Text style={styles.comingSoonText}>Soon</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.chevron}>›</Text>
+                )}
               </TouchableOpacity>
             ))}
           </View>
@@ -113,25 +123,26 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontWeight: "700",
   },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.xl,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  title: {
+  welcomeTitle: {
     ...typography.display,
-    fontSize: 24,
+    fontSize: 28,
     color: colors.text,
+    marginTop: spacing.lg,
     marginBottom: spacing.xs,
   },
-  subtitle: {
+  welcomeSubtitle: {
     ...typography.bodySmall,
     color: colors.textMuted,
+    marginBottom: spacing.xl,
+  },
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
   },
   rolesContainer: {
-    marginTop: spacing.xl,
     gap: spacing.md,
   },
   roleCard: {
@@ -139,15 +150,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: spacing.lg,
     paddingHorizontal: spacing.lg,
-    borderRadius: radius.md,
+    borderRadius: radius.lg,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.background,
+    borderColor: colors.glassBorder,
+    backgroundColor: colors.glass,
   },
   roleIcon: {
     width: 48,
     height: 48,
-    borderRadius: radius.md,
+    borderRadius: radius.lg,
     alignItems: "center",
     justifyContent: "center",
     marginRight: spacing.md,
@@ -171,6 +182,22 @@ const styles = StyleSheet.create({
     fontSize: 24,
     color: colors.textMuted,
     marginLeft: spacing.sm,
+  },
+  roleCardDisabled: {
+    opacity: 0.5,
+  },
+  comingSoonBadge: {
+    backgroundColor: "rgba(255,255,255,0.08)",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.full,
+    marginLeft: spacing.sm,
+  },
+  comingSoonText: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontWeight: "600",
+    fontSize: 11,
   },
   link: {
     alignItems: "center",

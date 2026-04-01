@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { createClient } from "@/lib/supabase/client";
 
 type ShiftRating = {
   id: string;
@@ -29,52 +30,86 @@ type PendingRating = {
   eventDate: string;
 };
 
-const mockPendingRatings: PendingRating[] = [
-  { id: "p1", staffId: "1", staffName: "Marcus Johnson", role: "Door Security", eventName: "Friday Night", eventDate: "2026-01-26" },
-  { id: "p2", staffId: "2", staffName: "Sarah Williams", role: "Floor Security", eventName: "Friday Night", eventDate: "2026-01-26" },
-  { id: "p3", staffId: "3", staffName: "Lisa Brown", role: "Door Security", eventName: "Friday Night", eventDate: "2026-01-26" },
-];
-
-const mockPastRatings: ShiftRating[] = [
-  {
-    id: "r1",
-    staffId: "1",
-    staffName: "Marcus Johnson",
-    eventName: "Thursday Event",
-    eventDate: "2026-01-25",
-    rating: 5,
-    categories: { professionalism: 5, punctuality: 5, communication: 5, effectiveness: 5 },
-    feedback: "Excellent as always. Handled a difficult situation perfectly.",
-    wouldBookAgain: true,
-  },
-  {
-    id: "r2",
-    staffId: "4",
-    staffName: "Emma Thompson",
-    eventName: "VIP Night",
-    eventDate: "2026-01-24",
-    rating: 5,
-    categories: { professionalism: 5, punctuality: 5, communication: 4, effectiveness: 5 },
-    feedback: "Great with VIP guests.",
-    wouldBookAgain: true,
-  },
-  {
-    id: "r3",
-    staffId: "5",
-    staffName: "James Wilson",
-    eventName: "Friday Night",
-    eventDate: "2026-01-19",
-    rating: 2,
-    categories: { professionalism: 2, punctuality: 1, communication: 3, effectiveness: 2 },
-    feedback: "Late arrival, unprofessional conduct. Do not book again.",
-    wouldBookAgain: false,
-  },
-];
-
 export function StaffRatings() {
-  const [pendingRatings] = useState<PendingRating[]>(mockPendingRatings);
-  const [pastRatings, setPastRatings] = useState<ShiftRating[]>(mockPastRatings);
+  const [pendingRatings, setPendingRatings] = useState<PendingRating[]>([]);
+  const [pastRatings, setPastRatings] = useState<ShiftRating[]>([]);
+  const [loading, setLoading] = useState(true);
   const [activeRating, setActiveRating] = useState<PendingRating | null>(null);
+  useEffect(() => {
+    const fetch = async () => {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+      const { data: venue } = await supabase.from("venues").select("id").eq("user_id", user.id).single();
+      if (!venue) {
+        setLoading(false);
+        return;
+      }
+      const { data: reviewsData } = await supabase
+        .from("reviews")
+        .select("id, shift_id, reviewee_id, overall_rating, professionalism_rating, punctuality_rating, communication_rating, comment, created_at")
+        .eq("reviewer_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      const past: ShiftRating[] = (reviewsData || []).map((r: any) => ({
+        id: r.id,
+        staffId: r.reviewee_id,
+        staffName: "Staff",
+        eventName: "Shift",
+        eventDate: r.created_at?.slice(0, 10) || "",
+        rating: r.overall_rating || 0,
+        categories: {
+          professionalism: r.professionalism_rating ?? 0,
+          punctuality: r.punctuality_rating ?? 0,
+          communication: r.communication_rating ?? 0,
+          effectiveness: r.overall_rating ?? 0,
+        },
+        feedback: r.comment ?? undefined,
+        wouldBookAgain: (r.overall_rating || 0) >= 4,
+      }));
+      setPastRatings(past);
+      const { data: venueBookings } = await supabase
+        .from("bookings")
+        .select("id, event_name, event_date")
+        .eq("venue_id", venue.id)
+        .in("status", ["completed", "confirmed"]);
+      const bookingIds = (venueBookings || []).map((b: any) => b.id);
+      const bookingMap: Record<string, { event_name: string; event_date: string }> = {};
+      (venueBookings || []).forEach((b: any) => {
+        bookingMap[b.id] = { event_name: b.event_name || "Event", event_date: b.event_date || "" };
+      });
+      const reviewedShiftIds = new Set((reviewsData || []).map((r: any) => r.shift_id));
+      const pending: PendingRating[] = [];
+      if (bookingIds.length > 0) {
+        const { data: shiftsData } = await supabase
+          .from("shifts")
+          .select("id, personnel_id, booking_id")
+          .eq("status", "checked_out")
+          .in("booking_id", bookingIds)
+          .limit(50);
+        (shiftsData || []).forEach((s: any) => {
+          if (!s.personnel_id || reviewedShiftIds.has(s.id)) return;
+          const b = bookingMap[s.booking_id];
+          if (!b) return;
+          pending.push({
+            id: s.id,
+            staffId: s.personnel_id,
+            staffName: "Staff",
+            role: "Security",
+            eventName: b.event_name,
+            eventDate: b.event_date,
+          });
+        });
+      }
+      setPendingRatings(pending);
+      setLoading(false);
+    };
+    fetch();
+  }, []);
+
   const [ratingForm, setRatingForm] = useState({
     professionalism: 0,
     punctuality: 0,
@@ -95,16 +130,38 @@ export function StaffRatings() {
     return Math.round((professionalism + punctuality + communication + effectiveness) / 4 * 10) / 10;
   };
 
-  const submitRating = () => {
+  const submitRating = async () => {
     if (!activeRating) return;
-    
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const overall = calculateOverall();
+    const { data: inserted, error } = await supabase
+      .from("reviews")
+      .insert({
+        shift_id: activeRating.id,
+        reviewer_id: user.id,
+        reviewee_id: activeRating.staffId,
+        reviewer_type: "venue",
+        overall_rating: overall,
+        professionalism_rating: ratingForm.professionalism,
+        punctuality_rating: ratingForm.punctuality,
+        communication_rating: ratingForm.communication,
+        comment: ratingForm.feedback || null,
+        is_public: true,
+      })
+      .select("id, created_at")
+      .single();
+    if (error) {
+      return;
+    }
     const newRating: ShiftRating = {
-      id: String(Date.now()),
+      id: inserted?.id ?? String(Date.now()),
       staffId: activeRating.staffId,
       staffName: activeRating.staffName,
       eventName: activeRating.eventName,
       eventDate: activeRating.eventDate,
-      rating: calculateOverall(),
+      rating: overall,
       categories: {
         professionalism: ratingForm.professionalism,
         punctuality: ratingForm.punctuality,
@@ -114,8 +171,8 @@ export function StaffRatings() {
       feedback: ratingForm.feedback,
       wouldBookAgain: ratingForm.wouldBookAgain,
     };
-
     setPastRatings(prev => [newRating, ...prev]);
+    setPendingRatings(prev => prev.filter(p => p.id !== activeRating.id));
     setActiveRating(null);
     setRatingForm({
       professionalism: 0,
@@ -159,6 +216,18 @@ export function StaffRatings() {
     </div>
   );
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
+      </div>
+    );
+  }
+
+  const avgRating = pastRatings.length
+    ? (pastRatings.reduce((sum, r) => sum + r.rating, 0) / pastRatings.length).toFixed(1)
+    : "—";
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -179,9 +248,7 @@ export function StaffRatings() {
         </div>
         <div className="glass rounded-xl p-4">
           <p className="text-sm text-zinc-400">Avg Rating Given</p>
-          <p className="text-2xl font-bold text-emerald-400">
-            {(pastRatings.reduce((sum, r) => sum + r.rating, 0) / pastRatings.length).toFixed(1)}
-          </p>
+          <p className="text-2xl font-bold text-emerald-400">{avgRating}</p>
         </div>
       </div>
 

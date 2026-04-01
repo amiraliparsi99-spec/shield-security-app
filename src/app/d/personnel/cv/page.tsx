@@ -1,7 +1,7 @@
 import { DigitalCV, DEMO_CV_DATA } from "@/components/personnel/DigitalCV";
 
 export const metadata = {
-  title: "My Digital CV | Shield",
+  title: "My Digital CV | Shield HQ",
   description: "Your verified work history and training passport",
 };
 

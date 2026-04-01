@@ -154,14 +154,13 @@ export function StaffAvailability() {
       {/* Staff List */}
       <div className="grid gap-4">
         {filteredStaff.map(person => (
-          <motion.div
+          <div
             key={person.id}
             className={`glass rounded-xl p-4 ${
               person.is_available
                 ? "border border-emerald-500/30"
                 : "border border-white/5 opacity-70"
             }`}
-            whileHover={{ scale: 1.005 }}
           >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
@@ -224,7 +223,7 @@ export function StaffAvailability() {
                 </button>
               </div>
             </div>
-          </motion.div>
+          </div>
         ))}
       </div>
 

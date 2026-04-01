@@ -6,32 +6,44 @@ import { VenueSidebar, VenueMobileNav } from "@/components/venue/VenueSidebar";
 import { ShieldAIWrapper } from "@/components/ai/ShieldAIWrapper";
 
 async function getVenueDetails(supabase: any, userId: string) {
-  // Get profile ID
-  const { data: profile } = await supabase
+  // Resolve profile ID reliably
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("id")
     .eq("user_id", userId)
-    .single();
+    .maybeSingle();
+  if (profileError) {
+    console.error("[VenueLayout] Profile lookup by user_id failed:", profileError.message);
+  }
+
+  let profileId = profile?.id ?? null;
 
   if (!profile) {
-    // Try with id = userId
-    const { data: profileById } = await supabase
+    // Fallback: some rows use id = auth user id
+    const { data: profileById, error: profileByIdError } = await supabase
       .from("profiles")
       .select("id")
       .eq("id", userId)
       .single();
-    
+    if (profileByIdError) {
+      console.error("[VenueLayout] Profile fallback lookup failed:", profileByIdError.message);
+    }
+
     if (!profileById) return null;
+    profileId = profileById.id;
   }
 
-  const profileId = profile?.id || userId;
+  if (!profileId) return null;
 
-  // Get venue details
-  const { data: venue } = await supabase
+  // Get venue details — schema uses user_id (not owner_id)
+  const { data: venue, error: venueError } = await supabase
     .from("venues")
-    .select("id, name, verification_status")
-    .eq("owner_id", profileId)
+    .select("id, name, type, is_active")
+    .eq("user_id", profileId)
     .single();
+  if (venueError) {
+    console.error("[VenueLayout] Venue lookup failed:", venueError.message);
+  }
 
   return venue;
 }
@@ -48,7 +60,7 @@ export default async function VenueDashboardLayout({
 
   const role = session ? await getProfileRole(supabase, session.user.id) : null;
   const allow = (session && role === "venue") || (!session && guestRole === "venue");
-  
+
   if (!allow) {
     redirect(role ? getRoleDashboardPath(role) : "/signup");
   }
@@ -68,7 +80,7 @@ export default async function VenueDashboardLayout({
       {/* Sidebar (desktop) */}
       <VenueSidebar 
         venueName={venue?.name} 
-        isVerified={venue?.verification_status === "verified"} 
+        isVerified={venue?.is_active ?? false} 
       />
 
       {/* Main content */}

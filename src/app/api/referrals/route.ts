@@ -138,10 +138,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Failed to apply referral" }, { status: 500 });
     }
 
-    // Update referrer stats
+    // Increment referrer total_referrals
+    const { data: currentRef } = await supabase
+      .from("referrals")
+      .select("total_referrals")
+      .eq("user_id", referrer.user_id)
+      .single();
+
     await supabase
       .from("referrals")
-      .update({ total_referrals: supabase.rpc("increment_total_referrals") })
+      .update({ total_referrals: (currentRef?.total_referrals ?? 0) + 1 })
       .eq("user_id", referrer.user_id);
 
     return NextResponse.json({ success: true, message: "Referral code applied!" });

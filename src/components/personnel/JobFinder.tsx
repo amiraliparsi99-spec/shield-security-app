@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { createClient } from "@/lib/supabase/client";
 
 type Job = {
   id: string;
@@ -21,96 +22,70 @@ type Job = {
   matchScore: number;
 };
 
-const mockJobs: Job[] = [
-  {
-    id: "1",
-    venue: "The Grand Club",
-    venueRating: 4.8,
-    date: "2026-02-01",
-    startTime: "21:00",
-    endTime: "03:00",
-    role: "Door Security",
-    rate: 18,
-    distance: 2.3,
-    urgent: true,
-    description: "Busy Saturday night. Need experienced door staff. Smart dress code.",
-    requirements: ["SIA Door Supervisor", "2+ years experience"],
-    postedAt: "2026-01-30T10:00:00",
-    applicants: 3,
-    matchScore: 95,
-  },
-  {
-    id: "2",
-    venue: "Birmingham Arena",
-    venueRating: 4.9,
-    date: "2026-02-05",
-    startTime: "17:00",
-    endTime: "23:00",
-    role: "Event Security",
-    rate: 16,
-    distance: 4.1,
-    urgent: false,
-    description: "Concert event. Crowd management experience preferred.",
-    requirements: ["SIA Door Supervisor", "Event experience"],
-    postedAt: "2026-01-29T14:00:00",
-    applicants: 8,
-    matchScore: 88,
-  },
-  {
-    id: "3",
-    venue: "Mailbox Tower",
-    venueRating: 4.7,
-    date: "2026-02-03",
-    startTime: "08:00",
-    endTime: "18:00",
-    role: "Corporate Security",
-    rate: 15,
-    distance: 3.2,
-    urgent: false,
-    description: "Corporate building reception security. Professional appearance essential.",
-    requirements: ["SIA Door Supervisor", "Corporate experience preferred"],
-    postedAt: "2026-01-28T09:00:00",
-    applicants: 5,
-    matchScore: 72,
-  },
-  {
-    id: "4",
-    venue: "Pryzm",
-    venueRating: 4.5,
-    date: "2026-02-07",
-    startTime: "22:00",
-    endTime: "04:00",
-    role: "Floor Security",
-    rate: 17,
-    distance: 1.8,
-    urgent: true,
-    description: "Friday night club shift. Need confident floor presence.",
-    requirements: ["SIA Door Supervisor"],
-    postedAt: "2026-01-30T08:00:00",
-    applicants: 2,
-    matchScore: 90,
-  },
-  {
-    id: "5",
-    venue: "The Grand Hotel",
-    venueRating: 4.9,
-    date: "2026-02-14",
-    startTime: "18:00",
-    endTime: "02:00",
-    role: "VIP Security",
-    rate: 22,
-    distance: 5.5,
-    urgent: false,
-    description: "Valentine's Day gala. High-end event requiring experienced VIP security.",
-    requirements: ["SIA Door Supervisor", "VIP experience", "Suit required"],
-    postedAt: "2026-01-25T12:00:00",
-    applicants: 12,
-    matchScore: 85,
-  },
-];
+const formatTime = (iso: string) => new Date(iso).toTimeString().slice(0, 5);
 
 export function JobFinder() {
-  const [jobs] = useState<Job[]>(mockJobs);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(true);
+
+  useEffect(() => {
+    const load = async () => {
+      const supabase = createClient();
+      const today = new Date().toISOString().slice(0, 10);
+      const { data: shiftsData } = await supabase
+        .from("shifts")
+        .select(`
+          id,
+          role,
+          hourly_rate,
+          scheduled_start,
+          scheduled_end,
+          is_urgent,
+          created_at,
+          booking:bookings(id, event_name, event_date, venue_id, notes, status)
+        `)
+        .is("personnel_id", null)
+        .eq("status", "pending")
+        .gte("scheduled_start", today)
+        .limit(50);
+      const allowed = (shiftsData || []).filter((s: any) => {
+        const status = s.booking?.status;
+        return status === "confirmed" || status === "pending";
+      });
+      const venueIds = [...new Set(allowed.map((s: any) => s.booking?.venue_id).filter(Boolean))];
+      let venueMap: Record<string, { name: string }> = {};
+      if (venueIds.length > 0) {
+        const { data: venues } = await supabase.from("venues").select("id, name").in("id", venueIds);
+        (venues || []).forEach((v: { id: string; name: string }) => {
+          venueMap[v.id] = { name: v.name };
+        });
+      }
+      const list: Job[] = allowed.map((s: any) => {
+        const booking = s.booking;
+        const venueName = booking?.venue_id ? (venueMap[booking.venue_id]?.name ?? "Venue") : "Venue";
+        return {
+          id: s.id,
+          venue: venueName,
+          venueRating: 4.5,
+          date: booking?.event_date?.slice(0, 10) || s.scheduled_start?.slice(0, 10) || "",
+          startTime: formatTime(s.scheduled_start || ""),
+          endTime: formatTime(s.scheduled_end || ""),
+          role: s.role || "Security",
+          rate: s.hourly_rate ?? 0,
+          distance: 0,
+          urgent: !!s.is_urgent,
+          description: booking?.notes || "Security shift.",
+          requirements: ["SIA Door Supervisor"],
+          postedAt: s.created_at || new Date().toISOString(),
+          applicants: 0,
+          matchScore: 80,
+        };
+      });
+      setJobs(list);
+      setJobsLoading(false);
+    };
+    load();
+  }, []);
   const [filters, setFilters] = useState({
     role: "all",
     distance: 10,
@@ -154,6 +129,14 @@ export function JobFinder() {
   };
 
   const uniqueRoles = [...new Set(jobs.map(j => j.role))];
+
+  if (jobsLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-shield-500 border-t-transparent" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -245,7 +228,6 @@ export function JobFinder() {
               job.urgent ? "border border-amber-500/30" : ""
             }`}
             onClick={() => setSelectedJob(job)}
-            whileHover={{ scale: 1.005 }}
           >
             <div className="flex items-start justify-between">
               <div className="flex-1">

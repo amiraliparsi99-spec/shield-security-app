@@ -172,12 +172,7 @@ export default function PersonnelSignUp() {
             Back to role selection
           </Link>
 
-          <motion.div
-            className="glass rounded-2xl p-8"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2, duration: 0.5 }}
-          >
+          <div className="glass rounded-2xl p-8">
             <div className="flex items-center gap-3 mb-6">
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 text-2xl">
                 🛡️
@@ -451,15 +446,13 @@ export default function PersonnelSignUp() {
                 </div>
               </div>
 
-              <motion.button
+              <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full rounded-lg bg-gradient-to-r from-shield-500 to-shield-600 px-4 py-3.5 font-semibold text-white transition hover:from-shield-600 hover:to-shield-700 focus:outline-none focus:ring-2 focus:ring-shield-500 focus:ring-offset-2 focus:ring-offset-zinc-900 disabled:opacity-50 disabled:cursor-not-allowed"
-                whileHover={{ scale: 1.01 }}
-                whileTap={{ scale: 0.99 }}
+                className="w-full rounded-lg bg-gradient-to-r from-shield-500 to-shield-600 px-4 py-3.5 font-semibold text-white transition hover:from-shield-600 hover:to-shield-700 focus:outline-none focus:ring-2 focus:ring-shield-500 focus:ring-offset-2 focus:ring-offset-zinc-900 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.99]"
               >
                 {isLoading ? "Creating account..." : "Create Security Account"}
-              </motion.button>
+              </button>
             </form>
 
             <p className="mt-6 text-center text-sm text-zinc-500">
@@ -468,7 +461,7 @@ export default function PersonnelSignUp() {
                 Log in
               </Link>
             </p>
-          </motion.div>
+          </div>
         </div>
       </FadeIn>
     </div>

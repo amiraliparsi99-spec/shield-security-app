@@ -248,7 +248,6 @@ export function DocumentVault() {
               doc.status === "expiring_soon" ? "border border-orange-500/30" :
               doc.status === "expired" ? "border border-red-500/30" : ""
             }`}
-            whileHover={{ scale: 1.005 }}
           >
             <div className="flex items-center gap-4">
               <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl ${

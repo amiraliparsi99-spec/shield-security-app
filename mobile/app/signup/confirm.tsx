@@ -28,6 +28,7 @@ export default function ConfirmEmail() {
     setResendError(null);
     setResendSuccess(false);
 
+    if (!supabase) return;
     try {
       const { error } = await supabase.auth.resend({
         type: "signup",

@@ -322,9 +322,53 @@ export async function checkOutShift(
     
     // Create payment record for the completed shift
     await createPaymentForShift(supabase, result.shift);
+    
+    // Check if all shifts for this booking are now completed
+    await checkAndCompleteBooking(supabase, result.shift.booking_id);
   }
 
   return result;
+}
+
+/**
+ * Check if all shifts for a booking are completed and update booking status
+ */
+async function checkAndCompleteBooking(
+  supabase: TypedSupabaseClient,
+  bookingId: string
+): Promise<void> {
+  try {
+    // Get all shifts for this booking
+    const { data: shifts } = await supabase
+      .from('shifts')
+      .select('id, status')
+      .eq('booking_id', bookingId);
+
+    if (!shifts || shifts.length === 0) return;
+
+    // Check if all shifts are either checked_out or cancelled
+    const allCompleted = shifts.every(s => 
+      s.status === 'checked_out' || s.status === 'cancelled' || s.status === 'no_show'
+    );
+
+    // Check if at least one shift was actually completed (not all cancelled)
+    const hasCompletedShift = shifts.some(s => s.status === 'checked_out');
+
+    if (allCompleted && hasCompletedShift) {
+      // Update booking status to completed
+      await supabase
+        .from('bookings')
+        .update({ 
+          status: 'completed',
+          completed_at: new Date().toISOString()
+        })
+        .eq('id', bookingId);
+
+      console.log(`Booking ${bookingId} marked as completed - all shifts done`);
+    }
+  } catch (error) {
+    console.error('Error checking/completing booking:', error);
+  }
 }
 
 /**

@@ -37,12 +37,7 @@ export default function AuthError() {
 
       <FadeIn direction="up" delay={0.1}>
         <div className="w-full max-w-md text-center">
-          <motion.div
-            className="glass rounded-2xl p-8"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2, duration: 0.5 }}
-          >
+          <div className="glass rounded-2xl p-8">
             {/* Error Icon */}
             <motion.div
               className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-red-500/20 to-red-600/20 text-5xl"
@@ -81,7 +76,7 @@ export default function AuthError() {
                 ← Back to home
               </Link>
             </div>
-          </motion.div>
+          </div>
         </div>
       </FadeIn>
     </div>

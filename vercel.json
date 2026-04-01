@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/check-attendance",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/auto-confirm-shifts",
+      "schedule": "0 * * * *"
     }
   ]
 }

@@ -73,6 +73,56 @@ export async function getAgencyId(supabase: SupabaseClient, profileId: string): 
   return null;
 }
 
+/**
+ * Check if a personnel member has completed verification.
+ * Checks the verifications table for status = 'verified'.
+ */
+export async function isPersonnelVerified(
+  supabase: SupabaseClient,
+  personnelId: string
+): Promise<boolean> {
+  const { data } = await supabase
+    .from("verifications")
+    .select("status")
+    .eq("owner_type", "personnel")
+    .eq("owner_id", personnelId)
+    .maybeSingle();
+
+  return data?.status === "verified";
+}
+
+/**
+ * Check if a personnel member has a fully connected Stripe bank account.
+ * Having a stripe_accounts row alone is not enough — onboarding must be complete.
+ */
+export async function isPersonnelBankConnected(
+  supabase: SupabaseClient,
+  personnelId: string
+): Promise<boolean> {
+  const { data: personnel } = await supabase
+    .from("personnel")
+    .select("user_id")
+    .eq("id", personnelId)
+    .single();
+
+  if (!personnel?.user_id) return false;
+
+  const { data: stripeAccount } = await supabase
+    .from("stripe_accounts")
+    .select("stripe_account_id, onboarding_complete, charges_enabled, payouts_enabled, details_submitted")
+    .eq("user_id", personnel.user_id)
+    .maybeSingle();
+
+  if (!stripeAccount?.stripe_account_id) return false;
+
+  return !!(
+    stripeAccount.onboarding_complete ||
+    stripeAccount.charges_enabled ||
+    stripeAccount.payouts_enabled ||
+    stripeAccount.details_submitted
+  );
+}
+
 /** Venue id for this profile. Tries both profileId and auth user id. */
 export async function getVenueId(supabase: SupabaseClient, profileId: string): Promise<string | null> {
   // Try by profileId first (user_id column)

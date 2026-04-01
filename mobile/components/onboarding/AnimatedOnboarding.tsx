@@ -17,7 +17,7 @@ const { width, height } = Dimensions.get('window');
 
 interface OnboardingSlide {
   id: string;
-  illustration: React.ReactNode;
+  illustration: React.ComponentType<{ color: string; scale: Animated.Value }>;
   title: string;
   subtitle: string;
   description: string;
@@ -363,7 +363,7 @@ const SLIDES: OnboardingSlide[] = [
   {
     id: '1',
     illustration: ShieldIllustration,
-    title: 'Welcome to Shield',
+    title: 'Welcome to Shield HQ',
     subtitle: 'Your Security Career Starts Here',
     description: 'The platform connecting SIA-licensed professionals with venues and agencies across the UK.',
     accentColor: '#2dd4bf',
@@ -473,7 +473,7 @@ export function AnimatedOnboarding({ onComplete }: Props) {
       extrapolate: 'clamp',
     });
 
-    const IllustrationComponent = item.illustration as React.ComponentType<{ color: string; scale: Animated.Value }>;
+    const IllustrationComponent = item.illustration;
 
     return (
       <View style={styles.slide}>
@@ -484,7 +484,7 @@ export function AnimatedOnboarding({ onComplete }: Props) {
         
         {/* Illustration */}
         <View style={styles.illustrationWrapper}>
-          <IllustrationComponent color={item.accentColor} scale={scale} />
+          <IllustrationComponent color={item.accentColor} scale={scale as any} />
         </View>
         
         {/* Text content */}
@@ -596,11 +596,26 @@ export function AnimatedOnboarding({ onComplete }: Props) {
 // Hook to check if onboarding is complete
 export function useAnimatedOnboardingComplete() {
   const [isComplete, setIsComplete] = useState<boolean | null>(null);
+  const resolvedRef = useRef(false);
 
   useEffect(() => {
-    AsyncStorage.getItem(ONBOARDING_KEY).then((value) => {
-      setIsComplete(value === 'true');
-    });
+    let cancelled = false;
+    const timeout = setTimeout(() => {
+      if (!cancelled && !resolvedRef.current) setIsComplete(true);
+    }, 2000);
+    AsyncStorage.getItem(ONBOARDING_KEY)
+      .then((value) => {
+        resolvedRef.current = true;
+        if (!cancelled) setIsComplete(value === 'true');
+      })
+      .catch(() => {
+        resolvedRef.current = true;
+        if (!cancelled) setIsComplete(true);
+      });
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
   }, []);
 
   const resetOnboarding = async () => {

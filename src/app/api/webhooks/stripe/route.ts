@@ -3,6 +3,8 @@ import { headers } from "next/headers";
 import { createClient } from "@supabase/supabase-js";
 import Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
+import { notifyGuardsForBooking } from "@/lib/notifications/notify-guards";
+import { sendPushNotification } from "@/lib/notifications/push-service";
 
 // Use service role for webhooks (bypasses RLS)
 const supabaseAdmin = createClient(
@@ -53,24 +55,28 @@ export async function POST(request: NextRequest) {
           })
           .eq("stripe_payment_intent_id", paymentIntent.id);
 
-        // Add to payee's pending balance
-        const payeeId = paymentIntent.metadata.payee_id;
-        const netAmount = parseInt(paymentIntent.metadata.net_amount || "0");
-
-        if (payeeId && netAmount > 0) {
-          await supabaseAdmin.rpc("update_wallet_balance", {
-            p_user_id: payeeId,
-            p_available_change: 0,
-            p_pending_change: netAmount,
-          });
-        }
-
-        // Update booking status
+        // Update booking status and mark venue escrow as completed
         if (paymentIntent.metadata.booking_id) {
+          const bookingId = paymentIntent.metadata.booking_id;
           await supabaseAdmin
             .from("bookings")
             .update({ payment_status: "paid" })
-            .eq("id", paymentIntent.metadata.booking_id);
+            .eq("id", bookingId);
+
+          await supabaseAdmin
+            .from("escrow_transactions")
+            .update({ status: "completed", completed_at: new Date().toISOString() })
+            .eq("booking_id", bookingId)
+            .eq("transaction_type", "venue_payment")
+            .eq("status", "pending");
+
+          // Notify guards only after payment — only nearby guards within search radius get the offer
+          try {
+            const notifyResult = await notifyGuardsForBooking(bookingId);
+            console.log("[Stripe webhook] Notified guards for booking", bookingId, ":", notifyResult.guards_notified);
+          } catch (notifyErr) {
+            console.error("[Stripe webhook] notifyGuardsForBooking failed:", notifyErr);
+          }
         }
 
         break;
@@ -222,6 +228,48 @@ export async function POST(request: NextRequest) {
       }
 
       // ========================================
+      // IDENTITY VERIFICATION EVENTS
+      // ========================================
+
+      case "identity.verification_session.verified": {
+        const session = event.data.object as Stripe.Identity.VerificationSession;
+        console.log("Identity verified:", session.id);
+
+        const userId = session.metadata?.user_id;
+        if (userId) {
+          // 1. Update the verifications table
+          // We assume the user is 'personnel' for now, but could be agency owner
+          const { data: verification } = await supabaseAdmin
+            .from("verifications")
+            .select("id, owner_type, owner_id")
+            .eq("owner_id", (
+              await supabaseAdmin.from("personnel").select("id").eq("user_id", userId).single()
+            ).data?.id) 
+            .single();
+
+          if (verification) {
+            await supabaseAdmin
+              .from("verifications")
+              .update({
+                identity_verified: true,
+                updated_at: new Date().toISOString(),
+                // Store the Stripe Verification Report ID for audit
+                automated_check_data: {
+                  stripe_verification_session: session.id,
+                  stripe_verification_report: session.last_verification_report,
+                }
+              })
+              .eq("id", verification.id);
+            
+            // Trigger re-evaluation of overall status
+            // (The database trigger update_verification_on_document_change handles documents, 
+            // but we might need to manually check if this completes the flow)
+          }
+        }
+        break;
+      }
+
+      // ========================================
       // ACCOUNT EVENTS (Connect onboarding)
       // ========================================
 
@@ -229,16 +277,78 @@ export async function POST(request: NextRequest) {
         const account = event.data.object as Stripe.Account;
         console.log("Account updated:", account.id);
 
-        await supabaseAdmin
+        // Fetch old state first so we can detect onboarding completion transitions.
+        const { data: existingStripeAccount } = await supabaseAdmin
+          .from("stripe_accounts")
+          .select("user_id, account_type, onboarding_complete")
+          .eq("stripe_account_id", account.id)
+          .single();
+
+        const onboardingCompleteAfter = account.charges_enabled && account.payouts_enabled;
+
+        // 1. Update stripe_accounts table
+        const { data: stripeAccount } = await supabaseAdmin
           .from("stripe_accounts")
           .update({
             charges_enabled: account.charges_enabled,
             payouts_enabled: account.payouts_enabled,
             details_submitted: account.details_submitted,
-            onboarding_complete: account.charges_enabled && account.payouts_enabled,
+            onboarding_complete: onboardingCompleteAfter,
             business_name: account.business_profile?.name || null,
           })
-          .eq("stripe_account_id", account.id);
+          .eq("stripe_account_id", account.id)
+          .select("user_id, account_type")
+          .single();
+
+        // 2. If it's a Venue (which might use a Standard/Express account tracked here),
+        // or if we track Venues in stripe_accounts (we should), update their verification status.
+        // Currently stripe_accounts has account_type IN ('agency', 'personnel').
+        // If Venues are using Stripe for payments (Customer side), they don't have a connected account usually.
+        // BUT if they are a Platform Customer, we check their KYB status differently.
+        
+        // However, if this IS a Venue (e.g. we treat them as a Connect account for some reason), update them.
+        // More likely: Venues are just Customers. But if we require KYB, we might use Connect for them too.
+        // Assuming Venues are just Payers for now, their "Verification" is implicit in their ability to pay.
+
+        // 2a. Guard: notify when payouts are ready
+        if (
+          stripeAccount?.account_type === "personnel" &&
+          !existingStripeAccount?.onboarding_complete &&
+          onboardingCompleteAfter &&
+          stripeAccount.user_id
+        ) {
+          try {
+            await sendPushNotification({
+              userId: stripeAccount.user_id,
+              type: "payment_received",
+              title: "Bank connected ✓",
+              body: "Your Stripe payout setup is ready. You can now receive payments from confirmed shifts.",
+              data: { type: "bank_connected" },
+            });
+          } catch (pushErr) {
+            console.warn("[STRIPE WEBHOOK] Push failed on account.updated:", pushErr);
+          }
+        }
+        
+        // If this is an AGENCY, update their verification status
+        if (stripeAccount?.account_type === 'agency' && account.charges_enabled) {
+           const { data: agency } = await supabaseAdmin
+             .from("agencies")
+             .select("id")
+             .eq("user_id", stripeAccount.user_id)
+             .single();
+             
+           if (agency) {
+             await supabaseAdmin
+               .from("verifications")
+               .update({ 
+                 identity_verified: true, // Stripe verified the business/owner
+                 status: 'verified' 
+               })
+               .eq("owner_id", agency.id)
+               .eq("owner_type", "agency");
+           }
+        }
 
         break;
       }

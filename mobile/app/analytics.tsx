@@ -71,8 +71,14 @@ export default function AnalyticsScreen() {
   }, [timeRange]);
 
   const loadAnalytics = async () => {
+    if (!supabase) return;
     try {
-      const { profileId, role: userRole } = await getProfileIdAndRole(supabase);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      
+      const result = await getProfileIdAndRole(supabase, user.id);
+      const profileId = result?.profileId;
+      const userRole = result?.role;
       setRole(userRole || "");
 
       if (!profileId) return;

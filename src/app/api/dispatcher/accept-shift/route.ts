@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
     // --- Look up the guard's personnel record ---
     const { data: personnel, error: personnelErr } = await supabase
       .from("personnel")
-      .select("id, is_standby, is_active, is_available")
+      .select("id, is_standby, is_active, is_available, verification_status, sia_verified")
       .eq("user_id", user.id)
       .single();
 
@@ -75,6 +75,13 @@ export async function POST(request: NextRequest) {
     if (!personnel.is_active || !personnel.is_available) {
       return NextResponse.json(
         { error: "Your account is not currently active/available" },
+        { status: 403 }
+      );
+    }
+
+    if (personnel.verification_status !== "verified" && personnel.sia_verified !== true) {
+      return NextResponse.json(
+        { error: "You must complete verification before accepting shifts." },
         { status: 403 }
       );
     }

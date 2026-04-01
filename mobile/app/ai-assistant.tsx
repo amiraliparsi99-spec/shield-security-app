@@ -117,8 +117,16 @@ export default function AIAssistantScreen() {
   }, []);
 
   const initializeRole = async () => {
-    const { role: userRole } = await getProfileIdAndRole(supabase);
-    if (userRole) setRole(userRole);
+    if (!supabase) return;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user?.id) {
+        const result = await getProfileIdAndRole(supabase, user.id);
+        if (result?.role) setRole(result.role);
+      }
+    } catch (err) {
+      console.error("Error getting role:", err);
+    }
   };
 
   const scrollToBottom = () => {
@@ -171,6 +179,7 @@ Try asking:
     safeHaptic("light");
     scrollToBottom();
 
+    if (!supabase) return;
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const apiUrl = process.env.EXPO_PUBLIC_API_URL || "http://localhost:3000";

@@ -66,7 +66,7 @@ export default function AgencyBidsPage() {
 
   const pending = bids.filter((b) => b.status === "pending");
   const accepted = bids.filter((b) => b.status === "accepted");
-  const declined = bids.filter((b) => b.status === "declined" || b.status === "withdrawn"));
+  const declined = bids.filter((b) => b.status === "declined" || b.status === "withdrawn");
 
   return (
     <div className="px-4 py-6 sm:px-6">

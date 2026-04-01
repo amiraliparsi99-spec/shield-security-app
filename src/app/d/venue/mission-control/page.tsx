@@ -30,6 +30,7 @@ export default function MissionControlPage() {
   const [showQuickActions, setShowQuickActions] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [requestingReport, setRequestingReport] = useState(false);
 
   // Get current user
   useEffect(() => {
@@ -168,6 +169,58 @@ export default function MissionControlPage() {
     return member?.role || "member";
   };
 
+  const handleRequestIncidentReport = async () => {
+    if (!activeChat || requestingReport) return;
+    
+    setRequestingReport(true);
+    try {
+      // Get the booking's shifts to find personnel
+      const { data: shifts } = await supabase
+        .from("shifts")
+        .select("id, personnel_id, status")
+        .eq("booking_id", activeChat.booking_id)
+        .eq("status", "checked_out");
+
+      if (!shifts || shifts.length === 0) {
+        alert("No completed shifts found for this booking.");
+        setRequestingReport(false);
+        return;
+      }
+
+      // Update shifts to request incident reports
+      for (const shift of shifts) {
+        await supabase
+          .from("shifts")
+          .update({
+            incident_report_requested: true,
+            incident_report_requested_at: new Date().toISOString(),
+            incident_report_requested_by: userId,
+          })
+          .eq("id", shift.id);
+      }
+
+      // Send a message in Mission Control
+      await sendGroupMessage(
+        supabase,
+        activeChat.id,
+        "📋 **Incident Report Requested**\n\nPlease submit a post-shift incident report for this shift. Tap here to fill out the report.",
+        "system",
+        { 
+          type: "incident_report_request",
+          shift_ids: shifts.map(s => s.id),
+          action: "request_incident_report"
+        }
+      );
+
+      alert("Incident report request sent to the team!");
+    } catch (error) {
+      console.error("Error requesting incident report:", error);
+      alert("Failed to request incident report. Please try again.");
+    } finally {
+      setRequestingReport(false);
+    }
+  };
+
   const getMessageStyle = (msg: GroupChatMessage) => {
     const isOwn = msg.sender_id === userId;
     const isSystem = msg.message_type === "system";
@@ -257,6 +310,21 @@ export default function MissionControlPage() {
                 </p>
               </div>
               <div className="flex items-center gap-3">
+                {/* Incident Report Button */}
+                <button
+                  onClick={handleRequestIncidentReport}
+                  disabled={requestingReport}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 transition disabled:opacity-50"
+                  title="Request Incident Report"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <span className="text-sm font-medium hidden sm:inline">
+                    {requestingReport ? "Sending..." : "Request Report"}
+                  </span>
+                </button>
+
                 {/* Team Members with Call Buttons */}
                 <div className="flex items-center gap-2">
                   {members

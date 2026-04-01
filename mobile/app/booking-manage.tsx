@@ -21,6 +21,9 @@ import { SlideInView } from "../components/ui/AnimatedComponents";
 
 interface Booking {
   id: string;
+  venue_id?: string;
+  event_name?: string;
+  event_date?: string;
   shift_date: string;
   start_time: string;
   end_time: string;
@@ -28,6 +31,8 @@ interface Booking {
   rate: number;
   status: string;
   notes: string;
+  brief_notes?: string;
+  estimated_total?: number;
   venue_name?: string;
   personnel_name?: string;
 }
@@ -41,6 +46,7 @@ export default function BookingManageScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [role, setRole] = useState<string>("");
+  const [canEdit, setCanEdit] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   
   // Edit form
@@ -58,10 +64,29 @@ export default function BookingManageScreen() {
   }, [bookingId]);
 
   const loadBooking = async () => {
+    if (!supabase) return;
     setLoading(true);
     try {
-      const { role: userRole } = await getProfileIdAndRole(supabase);
-      setRole(userRole || "");
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const result = await getProfileIdAndRole(supabase, user.id);
+        setRole(result?.role || "");
+        if (result?.role === "venue" && result.profileId) {
+          const myVenueId = await getVenueId(supabase, result.profileId);
+          if (myVenueId) {
+            const { data: ownerRow } = await supabase
+              .from("bookings")
+              .select("id, venue_id")
+              .eq("id", bookingId)
+              .single();
+            setCanEdit(!!ownerRow && ownerRow.venue_id === myVenueId);
+          } else {
+            setCanEdit(false);
+          }
+        } else {
+          setCanEdit(false);
+        }
+      }
 
       if (bookingId) {
         const { data } = await supabase
@@ -73,12 +98,12 @@ export default function BookingManageScreen() {
         if (data) {
           setBooking(data);
           setEditForm({
-            shift_date: data.shift_date || "",
+            shift_date: data.event_date || data.shift_date || "",
             start_time: data.start_time || "",
             end_time: data.end_time || "",
-            guards_count: data.guards_count?.toString() || "1",
-            rate: data.rate?.toString() || "",
-            notes: data.notes || "",
+            guards_count: data.staff_requirements?.staff_count?.toString() || data.guards_count?.toString() || "1",
+            rate: data.staff_requirements?.hourly_rate_pence?.toString() || data.rate?.toString() || "",
+            notes: data.brief_notes || data.notes || "",
           });
         }
       }
@@ -90,19 +115,21 @@ export default function BookingManageScreen() {
   };
 
   const handleSave = async () => {
-    if (!booking) return;
+    if (!booking || !supabase || !canEdit) return;
     
     setSaving(true);
     try {
       const { error } = await supabase
         .from("bookings")
         .update({
-          shift_date: editForm.shift_date,
+          event_date: editForm.shift_date,
           start_time: editForm.start_time,
           end_time: editForm.end_time,
-          guards_count: parseInt(editForm.guards_count) || 1,
-          rate: parseInt(editForm.rate) || 0,
-          notes: editForm.notes,
+          brief_notes: editForm.notes,
+          staff_requirements: {
+            staff_count: parseInt(editForm.guards_count) || 1,
+            hourly_rate_pence: parseInt(editForm.rate) || 0,
+          },
         })
         .eq("id", booking.id);
 
@@ -122,7 +149,7 @@ export default function BookingManageScreen() {
   };
 
   const handleStatusChange = async (newStatus: string) => {
-    if (!booking) return;
+    if (!booking || !canEdit) return;
 
     Alert.alert(
       "Confirm",
@@ -132,6 +159,7 @@ export default function BookingManageScreen() {
         {
           text: "Yes",
           onPress: async () => {
+            if (!supabase) return;
             try {
               const { error } = await supabase
                 .from("bookings")
@@ -155,7 +183,7 @@ export default function BookingManageScreen() {
   };
 
   const handleDelete = async () => {
-    if (!booking) return;
+    if (!booking || !canEdit) return;
 
     Alert.alert(
       "Delete Booking",
@@ -166,6 +194,7 @@ export default function BookingManageScreen() {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
+            if (!supabase) return;
             try {
               const { error } = await supabase
                 .from("bookings")
@@ -245,7 +274,7 @@ export default function BookingManageScreen() {
           <Text style={styles.backText}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.title}>Booking Details</Text>
-        {!isEditing && booking.status === "pending" && (
+        {!isEditing && booking.status === "pending" && canEdit && (
           <TouchableOpacity onPress={() => setIsEditing(true)} style={styles.editBtn}>
             <Text style={styles.editText}>Edit</Text>
           </TouchableOpacity>
@@ -364,7 +393,7 @@ export default function BookingManageScreen() {
               <>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>📅 Date</Text>
-                  <Text style={styles.detailValue}>{formatDate(booking.shift_date)}</Text>
+                  <Text style={styles.detailValue}>{formatDate(booking.event_date || booking.shift_date)}</Text>
                 </View>
 
                 <View style={styles.detailRow}>
@@ -376,20 +405,20 @@ export default function BookingManageScreen() {
 
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>👥 Guards</Text>
-                  <Text style={styles.detailValue}>{booking.guards_count}</Text>
+                  <Text style={styles.detailValue}>{booking.guards_count || 0}</Text>
                 </View>
 
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>💷 Rate</Text>
                   <Text style={styles.detailValue}>
-                    £{((booking.rate || 0) / 100).toFixed(2)}/hr
+                    £{((booking.rate || booking.estimated_total || 0) / 100).toFixed(2)}
                   </Text>
                 </View>
 
-                {booking.notes && (
+                {(booking.notes || booking.brief_notes) && (
                   <View style={styles.notesContainer}>
                     <Text style={styles.notesLabel}>📝 Notes</Text>
-                    <Text style={styles.notesText}>{booking.notes}</Text>
+                    <Text style={styles.notesText}>{booking.notes || booking.brief_notes}</Text>
                   </View>
                 )}
               </>
@@ -398,7 +427,7 @@ export default function BookingManageScreen() {
         </SlideInView>
 
         {/* Action Buttons */}
-        {!isEditing && (
+        {!isEditing && canEdit && (
           <SlideInView delay={200}>
             <View style={styles.actionsCard}>
               <Text style={styles.actionsTitle}>Actions</Text>
@@ -445,6 +474,14 @@ export default function BookingManageScreen() {
               >
                 <Text style={styles.deleteButtonText}>🗑 Delete Booking</Text>
               </TouchableOpacity>
+            </View>
+          </SlideInView>
+        )}
+        {!isEditing && !canEdit && (
+          <SlideInView delay={200}>
+            <View style={styles.actionsCard}>
+              <Text style={styles.actionsTitle}>Read-only</Text>
+              <Text style={styles.notesText}>Only the venue that created this booking can edit status or delete it.</Text>
             </View>
           </SlideInView>
         )}

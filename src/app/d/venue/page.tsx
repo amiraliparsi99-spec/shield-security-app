@@ -3,7 +3,6 @@ import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { getProfileRole, getRoleDashboardPath } from "@/lib/auth";
 import { VenueDashboardTabs } from "@/components/dashboard/VenueDashboardTabs";
-import { AGENCIES, AVAILABLE_PERSONNEL } from "@/lib/dashboard-mock";
 import type { EnrichedBooking } from "@/components/dashboard/VenueBookingsList";
 import type { Personnel } from "@/types/database";
 
@@ -17,43 +16,77 @@ export default async function VenueDashboard() {
   const allow = (session && role === "venue") || (!session && guestRole === "venue");
   if (!allow) redirect(role ? getRoleDashboardPath(role) : "/signup");
 
-  // Fetch personnel: try Supabase, fallback to mock
-  let personnel: Personnel[] = [...AVAILABLE_PERSONNEL];
-  const { data: personnelRows } = await supabase
+  // Fetch personnel from Supabase
+  let personnel: Personnel[] = [];
+  const { data: personnelRows, error: personnelError } = await supabase
     .from("personnel")
     .select("*")
-    .in("status", ["available", "looking"]);
+    .eq("is_active", true)
+    .order("shield_score", { ascending: false })
+    .limit(50);
+  if (personnelError) {
+    console.error("[VenueDashboard] Failed to load personnel:", personnelError.message);
+  }
   if (personnelRows && personnelRows.length > 0) {
     personnel = personnelRows as Personnel[];
   }
 
-  // Fetch agencies: use mock (DB shape differs from Agency in dashboard-mock)
-  const agencies = [...AGENCIES];
+  // Fetch agencies from Supabase
+  let agencies: any[] = [];
+  const { data: agencyRows, error: agenciesError } = await supabase
+    .from("agencies")
+    .select("*")
+    .eq("is_active", true)
+    .order("name")
+    .limit(50);
+  if (agenciesError) {
+    console.error("[VenueDashboard] Failed to load agencies:", agenciesError.message);
+  }
+  if (agencyRows && agencyRows.length > 0) {
+    agencies = agencyRows;
+  }
 
   // Fetch bookings for this venue's venues (guests have none)
-  const venueIds =
-    session?.user?.id != null
-      ? (await supabase.from("venues").select("id").eq("owner_id", session.user.id)).data?.map((v) => v.id) ?? []
-      : [];
+  let venueIds: string[] = [];
+  if (session?.user?.id != null) {
+    const { data: venueRows, error: venueIdsError } = await supabase
+      .from("venues")
+      .select("id")
+      .eq("user_id", session.user.id);
+    if (venueIdsError) {
+      console.error("[VenueDashboard] Failed to resolve venue IDs:", venueIdsError.message);
+    } else {
+      venueIds = venueRows?.map((v) => v.id) ?? [];
+    }
+  }
 
   let bookings: EnrichedBooking[] = [];
   if (venueIds.length > 0) {
-    const { data: bookingRows } = await supabase
+    const { data: bookingRows, error: bookingsError } = await supabase
       .from("bookings")
       .select("*")
       .in("venue_id", venueIds)
-      .order("start", { ascending: false });
+      .order("event_date", { ascending: false });
+    if (bookingsError) {
+      console.error("[VenueDashboard] Failed to load bookings:", bookingsError.message);
+    }
 
     if (bookingRows && bookingRows.length > 0) {
       const personnelIds = [...new Set(bookingRows.filter((b) => b.provider_type === "personnel").map((b) => b.provider_id))];
       const agencyIds = [...new Set(bookingRows.filter((b) => b.provider_type === "agency").map((b) => b.provider_id))];
 
-      const { data: personnelForBookings } = personnelIds.length > 0
+      const { data: personnelForBookings, error: personnelBookingsError } = personnelIds.length > 0
         ? await supabase.from("personnel").select("id, display_name").in("id", personnelIds)
-        : { data: [] };
-      const { data: agenciesForBookings } = agencyIds.length > 0
+        : { data: [], error: null };
+      if (personnelBookingsError) {
+        console.error("[VenueDashboard] Failed to load booking personnel:", personnelBookingsError.message);
+      }
+      const { data: agenciesForBookings, error: agenciesBookingsError } = agencyIds.length > 0
         ? await supabase.from("agencies").select("id, name").in("id", agencyIds)
-        : { data: [] };
+        : { data: [], error: null };
+      if (agenciesBookingsError) {
+        console.error("[VenueDashboard] Failed to load booking agencies:", agenciesBookingsError.message);
+      }
 
       const personnelMap = new Map((personnelForBookings ?? []).map((p) => [p.id, p.display_name]));
       const agenciesMap = new Map((agenciesForBookings ?? []).map((a) => [a.id, a.name]));

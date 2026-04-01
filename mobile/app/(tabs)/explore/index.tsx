@@ -12,13 +12,15 @@ import {
   RefreshControl,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
 import { BIRMINGHAM_CENTER, BIRMINGHAM_VENUES } from "../../../data/dashboard";
 import type { Venue, VenueRequest } from "../../../data/dashboard";
 import { VenuesMap } from "../../../components/VenuesMap";
 import { colors, typography, spacing, radius } from "../../../theme";
 import { supabase } from "../../../lib/supabase";
-import { getProfileIdAndRole, getPersonnelId } from "../../../lib/auth";
+import { getProfileIdAndRole, getPersonnelId, getVenueId, isPersonnelVerified, isPersonnelBankConnected } from "../../../lib/auth";
 import { safeHaptic } from "../../../lib/haptics";
+import { getApiBaseUrl } from "../../../lib/api";
 
 type Tab = "venues" | "jobs";
 
@@ -32,6 +34,36 @@ interface AvailableShift {
   venue_name: string;
   venue_city: string;
   event_name: string;
+}
+
+// Grouped job (multiple shifts for same booking/role)
+interface GroupedJob {
+  booking_id: string;
+  role: string;
+  hourly_rate: number;
+  scheduled_start: string;
+  scheduled_end: string;
+  venue_name: string;
+  venue_city: string;
+  event_name: string;
+  positions_available: number;
+  shift_ids: string[];
+}
+
+interface VenueBookingItem {
+  id: string;
+  event_name: string;
+  event_date: string | null;
+  status: string;
+  estimated_total: number | null;
+  final_total: number | null;
+}
+
+interface RecommendedStaffItem {
+  id: string;
+  display_name: string | null;
+  rating: number;
+  shifts_count: number;
 }
 
 function filterVenues(venues: Venue[], q: string): Venue[] {
@@ -48,7 +80,7 @@ function filterVenues(venues: Venue[], q: string): Venue[] {
 
 export default function ExploreTab() {
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<Tab>("venues");
+  const [tab, setTab] = useState<Tab>("jobs"); // Default to jobs tab
   const [search, setSearch] = useState("");
   const [refreshing, setRefreshing] = useState(false);
 
@@ -57,6 +89,10 @@ export default function ExploreTab() {
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [claiming, setClaiming] = useState<string | null>(null);
   const [personnel, setPersonnel] = useState<any>(null);
+  const [role, setRole] = useState<string | null>(null);
+  const [venueId, setVenueId] = useState<string | null>(null);
+  const [venueBookings, setVenueBookings] = useState<VenueBookingItem[]>([]);
+  const [recommendedStaff, setRecommendedStaff] = useState<RecommendedStaffItem[]>([]);
 
   const filteredVenues = useMemo(() => filterVenues(BIRMINGHAM_VENUES, search), [search]);
 
@@ -68,9 +104,99 @@ export default function ExploreTab() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      // Get personnel info
+      // Resolve role
       const profileData = await getProfileIdAndRole(supabase, user.id);
       if (profileData) {
+        setRole(profileData.role);
+
+        if (profileData.role === "venue") {
+          const vid = await getVenueId(supabase, profileData.profileId);
+          setVenueId(vid);
+          if (!vid) {
+            setVenueBookings([]);
+            setRecommendedStaff([]);
+            setAvailableShifts([]);
+            return;
+          }
+
+          const { data: bookingRows } = await supabase
+            .from("bookings")
+            .select("id, event_name, event_date, status, estimated_total, final_total")
+            .eq("venue_id", vid)
+            .order("event_date", { ascending: true })
+            .limit(20);
+
+          const bookings = (bookingRows || []) as VenueBookingItem[];
+          setVenueBookings(bookings);
+          setAvailableShifts([]);
+
+          const bookingIdsForStaff = bookings.map((b) => b.id);
+          if (bookingIdsForStaff.length === 0) {
+            setRecommendedStaff([]);
+            return;
+          }
+
+          const { data: shiftRows } = await supabase
+            .from("shifts")
+            .select("personnel_id")
+            .in("booking_id", bookingIdsForStaff)
+            .not("personnel_id", "is", null);
+
+          const personnelCount = new Map<string, number>();
+          for (const row of shiftRows || []) {
+            const pid = row.personnel_id as string | null;
+            if (!pid) continue;
+            personnelCount.set(pid, (personnelCount.get(pid) || 0) + 1);
+          }
+
+          const staffIds = [...personnelCount.keys()];
+          if (staffIds.length === 0) {
+            setRecommendedStaff([]);
+            return;
+          }
+
+          const { data: staffRows } = await supabase
+            .from("personnel")
+            .select("id, display_name")
+            .in("id", staffIds);
+
+          const { data: reviewRows } = await supabase
+            .from("reviews")
+            .select("reviewee_id, rating")
+            .in("reviewee_id", staffIds);
+
+          const ratingsMap = new Map<string, { sum: number; count: number }>();
+          for (const review of reviewRows || []) {
+            const reviewee = review.reviewee_id as string | null;
+            if (!reviewee) continue;
+            const prev = ratingsMap.get(reviewee) || { sum: 0, count: 0 };
+            ratingsMap.set(reviewee, {
+              sum: prev.sum + Number(review.rating || 0),
+              count: prev.count + 1,
+            });
+          }
+
+          const recommended = (staffRows || [])
+            .map((s) => {
+              const aggregate = ratingsMap.get(s.id);
+              const rating = aggregate && aggregate.count > 0 ? aggregate.sum / aggregate.count : 0;
+              return {
+                id: s.id,
+                display_name: s.display_name || "Security Professional",
+                shifts_count: personnelCount.get(s.id) || 0,
+                rating,
+              };
+            })
+            .sort((a, b) => {
+              if (b.shifts_count !== a.shifts_count) return b.shifts_count - a.shifts_count;
+              return b.rating - a.rating;
+            })
+            .slice(0, 8);
+
+          setRecommendedStaff(recommended);
+          return;
+        }
+
         const personnelId = await getPersonnelId(supabase, profileData.profileId);
         if (personnelId) {
           const { data: personnelData } = await supabase
@@ -99,6 +225,7 @@ export default function ExploreTab() {
       let bookingsMap: Record<string, any> = {};
 
       if (bookingIds.length > 0) {
+        // Try direct Supabase query first (works if RLS allows it)
         const { data: bookings } = await supabase
           .from("bookings")
           .select("id, event_name, venue_id")
@@ -124,6 +251,35 @@ export default function ExploreTab() {
               venue: venuesMap[b.venue_id] || { name: "Venue", city: "" },
             };
           });
+        }
+
+        // Fallback: if RLS blocked the query, fetch metadata via the API
+        const missingIds = bookingIds.filter((id) => !bookingsMap[id]);
+        if (missingIds.length > 0) {
+          try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 4000);
+            const metaRes = await fetch(`${getApiBaseUrl()}/api/shifts/metadata`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ booking_ids: missingIds }),
+              signal: controller.signal,
+            });
+            clearTimeout(timeout);
+            if (metaRes.ok) {
+              const { data: metaData } = await metaRes.json();
+              if (metaData) {
+                for (const [id, meta] of Object.entries(metaData) as [string, any][]) {
+                  bookingsMap[id] = {
+                    event_name: meta.event_name,
+                    venue: { name: meta.venue_name, city: meta.venue_city },
+                  };
+                }
+              }
+            }
+          } catch {
+            // API unreachable — names will fall back to defaults
+          }
         }
       }
 
@@ -187,18 +343,53 @@ export default function ExploreTab() {
     return ((new Date(end).getTime() - new Date(start).getTime()) / 3600000).toFixed(1);
   };
 
-  const claimShift = async (shift: AvailableShift) => {
+  const claimShift = async (job: GroupedJob) => {
     if (!personnel || !supabase) {
       Alert.alert("Login Required", "Please log in with your guard account to claim shifts.");
       return;
     }
 
-    const hours = getHours(shift.scheduled_start, shift.scheduled_end);
-    const pay = (shift.hourly_rate * parseFloat(hours)).toFixed(0);
+    const verified = await isPersonnelVerified(supabase, personnel.id);
+    if (!verified) {
+      Alert.alert(
+        "Verification Required",
+        "You need to complete your ID and SIA licence verification before you can claim shifts.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Verify Now",
+            onPress: () => router.push("/verification"),
+          },
+        ]
+      );
+      return;
+    }
+
+    const bankConnected = await isPersonnelBankConnected(supabase, personnel.id);
+    if (!bankConnected) {
+      Alert.alert(
+        "Connect Bank Account",
+        "Your identity is verified! Now connect your bank account in the Payments tab to start accepting shifts and getting paid.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Go to Payments",
+            onPress: () => router.push("/(tabs)/payments"),
+          },
+        ]
+      );
+      return;
+    }
+
+    const hours = getHours(job.scheduled_start, job.scheduled_end);
+    const pay = (job.hourly_rate * parseFloat(hours)).toFixed(0);
+    
+    // Pick the first available shift from this group
+    const shiftId = job.shift_ids[0];
 
     Alert.alert(
       "Claim This Shift?",
-      `📍 ${shift.venue_name}\n📅 ${formatDate(shift.scheduled_start)}\n🕐 ${formatTime(shift.scheduled_start)} - ${formatTime(shift.scheduled_end)}\n💰 £${pay}\n\nYou're committing to this shift.`,
+      `📍 ${job.venue_name}\n📅 ${formatDate(job.scheduled_start)}\n🕐 ${formatTime(job.scheduled_start)} - ${formatTime(job.scheduled_end)}\n💰 £${pay}\n\nYou're committing to this shift.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -206,11 +397,12 @@ export default function ExploreTab() {
           style: "default",
           onPress: async () => {
             safeHaptic("medium");
-            setClaiming(shift.id);
+            setClaiming(shiftId);
 
+            if (!supabase) return;
             try {
               const { data: result, error } = await supabase.rpc("claim_shift", {
-                p_shift_id: shift.id,
+                p_shift_id: shiftId,
                 p_personnel_id: personnel.id,
               });
 
@@ -221,7 +413,8 @@ export default function ExploreTab() {
                 } else {
                   Alert.alert("Error", result?.message || "Failed to claim. Try again.");
                 }
-                setAvailableShifts((prev) => prev.filter((s) => s.id !== shift.id));
+                // Remove the claimed shift from available shifts
+                setAvailableShifts((prev) => prev.filter((s) => s.id !== shiftId));
                 setClaiming(null);
                 return;
               }
@@ -229,38 +422,41 @@ export default function ExploreTab() {
               safeHaptic("success");
 
               // Create Mission Control chat
+              if (!supabase) return;
               try {
-                await supabase.rpc("create_mission_control_chat", { p_booking_id: shift.booking_id });
+                await supabase.rpc("create_mission_control_chat", { p_booking_id: job.booking_id });
               } catch (chatErr) {
                 console.log("Mission Control chat (non-critical):", chatErr);
               }
 
               // Notify venue
+              if (!supabase) return;
               const { data: booking } = await supabase
                 .from("bookings")
                 .select("venue_id")
-                .eq("id", shift.booking_id)
+                .eq("id", job.booking_id)
                 .single();
 
-              if (booking?.venue_id) {
+              if (booking?.venue_id && supabase) {
                 const { data: venue } = await supabase
                   .from("venues")
                   .select("user_id")
                   .eq("id", booking.venue_id)
                   .single();
 
-                if (venue?.user_id) {
+                if (venue?.user_id && supabase) {
                   await supabase.from("notifications").insert({
                     user_id: venue.user_id,
                     type: "shift",
                     title: "✅ Shift Confirmed!",
-                    body: `${personnel.display_name} accepted the ${shift.role} shift for ${shift.event_name}`,
-                    data: { booking_id: shift.booking_id },
+                    body: `${personnel.display_name} accepted the ${job.role} shift for ${job.event_name}`,
+                    data: { booking_id: job.booking_id },
                   });
                 }
               }
 
-              setAvailableShifts((prev) => prev.filter((s) => s.id !== shift.id));
+              // Remove just the claimed shift (others in group may still be available)
+              setAvailableShifts((prev) => prev.filter((s) => s.id !== shiftId));
               Alert.alert("✅ Shift Claimed!", "You're confirmed for this job. Check Mission Control for team updates.");
             } catch (e) {
               console.error("Claim error:", e);
@@ -274,60 +470,169 @@ export default function ExploreTab() {
     );
   };
 
+  // Group shifts by booking + role (so 2 Door Security shifts show as "2 positions")
+  const groupedJobs = useMemo((): GroupedJob[] => {
+    const groups: Record<string, GroupedJob> = {};
+    
+    for (const shift of availableShifts) {
+      const key = `${shift.booking_id}-${shift.role}`;
+      
+      if (!groups[key]) {
+        groups[key] = {
+          booking_id: shift.booking_id,
+          role: shift.role,
+          hourly_rate: shift.hourly_rate,
+          scheduled_start: shift.scheduled_start,
+          scheduled_end: shift.scheduled_end,
+          venue_name: shift.venue_name,
+          venue_city: shift.venue_city,
+          event_name: shift.event_name,
+          positions_available: 1,
+          shift_ids: [shift.id],
+        };
+      } else {
+        groups[key].positions_available += 1;
+        groups[key].shift_ids.push(shift.id);
+      }
+    }
+    
+    return Object.values(groups);
+  }, [availableShifts]);
+
   // Filter jobs by search
   const filteredJobs = useMemo(() => {
-    if (!search.trim()) return availableShifts;
+    if (!search.trim()) return groupedJobs;
     const lower = search.trim().toLowerCase();
-    return availableShifts.filter(
+    return groupedJobs.filter(
       (s) =>
         s.event_name.toLowerCase().includes(lower) ||
         s.venue_name.toLowerCase().includes(lower) ||
         s.venue_city.toLowerCase().includes(lower) ||
         s.role.toLowerCase().includes(lower)
     );
-  }, [availableShifts, search]);
+  }, [groupedJobs, search]);
+
+  const isVenueRole = role === "venue";
+  const roleResolved = role !== null;
+  const filteredVenueBookings = useMemo(() => {
+    if (!search.trim()) return venueBookings;
+    const lower = search.trim().toLowerCase();
+    return venueBookings.filter(
+      (b) =>
+        (b.event_name || "").toLowerCase().includes(lower) ||
+        (b.status || "").toLowerCase().includes(lower)
+    );
+  }, [venueBookings, search]);
+
+  if (loadingJobs && !roleResolved) {
+    return (
+      <View style={[styles.container, { justifyContent: "center", alignItems: "center" }]}>
+        <ActivityIndicator size="large" color={colors.accent} />
+      </View>
+    );
+  }
+
+  if (isVenueRole) {
+    return (
+      <View style={[styles.container, { paddingTop: 0 }]}>
+        {/* Full-screen map with roaming guards */}
+        <View style={styles.venueMapContainer}>
+          <VenuesMap venues={filteredVenues} center={BIRMINGHAM_CENTER} showGuards />
+        </View>
+
+        {/* Top gradient fade for status bar readability */}
+        <LinearGradient
+          colors={["rgba(8,10,15,0.8)", "rgba(8,10,15,0.4)", "transparent"]}
+          style={[styles.venueTopGradient, { height: insets.top + 60 }]}
+          pointerEvents="none"
+        />
+
+        {/* Bottom gradient fade */}
+        <LinearGradient
+          colors={["transparent", "rgba(8,10,15,0.5)", "rgba(8,10,15,0.85)"]}
+          style={styles.venueBottomGradient}
+          pointerEvents="none"
+        />
+
+        {/* Top bar: guard count */}
+        <View style={[styles.venueTopBar, { top: insets.top + spacing.sm }]}>
+          <View />
+          <View style={styles.venueGuardBadge}>
+            <View style={styles.venueLiveDot} />
+            <Text style={styles.venueGuardBadgeText}>10 guards nearby</Text>
+          </View>
+        </View>
+
+        {/* Bottom action area */}
+        <View style={[styles.venueBottomActions, { paddingBottom: insets.bottom + 90 }]}>
+          <TouchableOpacity
+            style={styles.venueBookBtn}
+            onPress={() => { safeHaptic("medium"); router.push("/booking/new"); }}
+            activeOpacity={0.85}
+          >
+            <LinearGradient
+              colors={[colors.accent, "#1fa89e"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.venueBookGradient}
+            >
+              <Text style={styles.venueBookBtnIcon}>🛡️</Text>
+              <Text style={styles.venueBookBtnText}>Book Security</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.venueBookingsBtn}
+            onPress={() => { safeHaptic("light"); router.push("/venue-bookings"); }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.venueBookingsBtnText}>📋  View Bookings</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>Explore</Text>
-          <Text style={styles.headerSubtitle}>Birmingham</Text>
+          <Text style={styles.headerTitle}>{tab === "jobs" ? "Find Shifts" : "Explore"}</Text>
+          <Text style={styles.headerSubtitle}>
+            {tab === "jobs" 
+              ? `${groupedJobs.length} job${groupedJobs.length !== 1 ? 's' : ''} available`
+              : "Birmingham"}
+          </Text>
         </View>
-        <TouchableOpacity
-          style={styles.incidentBtn}
-          onPress={() => router.push("/incidents/report")}
-        >
-          <Text style={styles.incidentBtnText}>⚠️ Report</Text>
-        </TouchableOpacity>
+        <View style={{ width: 40 }} />
       </View>
 
-      {/* Tabs: Venues + Jobs */}
+      {/* Tabs: Jobs + Venues */}
       <View style={styles.tabsContainer}>
         <View style={styles.tabs}>
-          <TouchableOpacity
-            style={[styles.tab, tab === "venues" && styles.tabActive]}
-            onPress={() => setTab("venues")}
-          >
-            <Text style={[styles.tabText, tab === "venues" && styles.tabTextActive]}>
-              Venues
-            </Text>
-          </TouchableOpacity>
           <TouchableOpacity
             style={[styles.tab, tab === "jobs" && styles.tabActiveJobs]}
             onPress={() => { setTab("jobs"); safeHaptic("selection"); }}
           >
             <View style={styles.jobsTabContent}>
               <Text style={[styles.tabText, tab === "jobs" && styles.tabTextActiveJobs]}>
-                Jobs
+                🔍 Available Jobs
               </Text>
-              {availableShifts.length > 0 && (
+              {groupedJobs.length > 0 && (
                 <View style={styles.jobsBadge}>
-                  <Text style={styles.jobsBadgeText}>{availableShifts.length}</Text>
+                  <Text style={styles.jobsBadgeText}>{groupedJobs.length}</Text>
                 </View>
               )}
             </View>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, tab === "venues" && styles.tabActive]}
+            onPress={() => setTab("venues")}
+          >
+            <Text style={[styles.tabText, tab === "venues" && styles.tabTextActive]}>
+              📍 Venues
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -424,48 +729,56 @@ export default function ExploreTab() {
               </Text>
             </View>
           ) : (
-            filteredJobs.map((shift) => {
-              const hours = getHours(shift.scheduled_start, shift.scheduled_end);
-              const pay = (shift.hourly_rate * parseFloat(hours)).toFixed(0);
+            filteredJobs.map((job) => {
+              const hours = getHours(job.scheduled_start, job.scheduled_end);
+              const pay = (job.hourly_rate * parseFloat(hours)).toFixed(0);
+              const firstShiftId = job.shift_ids[0];
 
               return (
-                <View key={shift.id} style={styles.shiftCard}>
+                <View key={`${job.booking_id}-${job.role}`} style={styles.shiftCard}>
                   <View style={styles.shiftContent}>
                     <View style={styles.shiftHeader}>
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.shiftTitle}>{shift.event_name}</Text>
+                        <Text style={styles.shiftTitle}>{job.event_name}</Text>
                         <Text style={styles.shiftVenue}>
-                          {shift.venue_name}{shift.venue_city ? ` · ${shift.venue_city}` : ""}
+                          {job.venue_name}{job.venue_city ? ` · ${job.venue_city}` : ""}
                         </Text>
                       </View>
                       <View style={styles.payContainer}>
                         <Text style={styles.payAmount}>£{pay}</Text>
-                        <Text style={styles.payRate}>{hours}h @ £{shift.hourly_rate}/hr</Text>
+                        <Text style={styles.payRate}>{hours}h @ £{job.hourly_rate}/hr</Text>
                       </View>
                     </View>
 
                     <View style={styles.shiftDetails}>
                       <View style={styles.detailChip}>
-                        <Text style={styles.detailChipText}>📅 {formatDate(shift.scheduled_start)}</Text>
+                        <Text style={styles.detailChipText}>📅 {formatDate(job.scheduled_start)}</Text>
                       </View>
                       <View style={styles.detailChip}>
                         <Text style={styles.detailChipText}>
-                          🕐 {formatTime(shift.scheduled_start)} - {formatTime(shift.scheduled_end)}
+                          🕐 {formatTime(job.scheduled_start)} - {formatTime(job.scheduled_end)}
                         </Text>
                       </View>
                       <View style={styles.detailChip}>
-                        <Text style={styles.detailChipText}>{shift.role}</Text>
+                        <Text style={styles.detailChipText}>{job.role}</Text>
                       </View>
+                      {job.positions_available > 1 && (
+                        <View style={[styles.detailChip, styles.positionsChip]}>
+                          <Text style={styles.positionsChipText}>
+                            👥 {job.positions_available} positions
+                          </Text>
+                        </View>
+                      )}
                     </View>
                   </View>
 
                   <TouchableOpacity
-                    style={[styles.claimButton, claiming === shift.id && styles.claimButtonDisabled]}
-                    onPress={() => claimShift(shift)}
-                    disabled={claiming === shift.id}
+                    style={[styles.claimButton, claiming === firstShiftId && styles.claimButtonDisabled]}
+                    onPress={() => claimShift(job)}
+                    disabled={claiming === firstShiftId}
                     activeOpacity={0.8}
                   >
-                    {claiming === shift.id ? (
+                    {claiming === firstShiftId ? (
                       <ActivityIndicator size="small" color="#000" />
                     ) : (
                       <Text style={styles.claimButtonText}>Claim This Shift</Text>
@@ -585,6 +898,99 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   noResults: { ...typography.label, color: colors.textMuted, paddingVertical: spacing.xl },
+  venueMapContainer: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  venueTopGradient: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1,
+  },
+  venueBottomGradient: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 280,
+    zIndex: 1,
+  },
+  venueTopBar: {
+    position: "absolute",
+    left: spacing.lg,
+    right: spacing.lg,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    zIndex: 10,
+  },
+  venueGuardBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(0,212,170,0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(0,212,170,0.3)",
+    borderRadius: radius.full,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  venueLiveDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: colors.accent,
+  },
+  venueGuardBadgeText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: colors.accent,
+  },
+  venueBottomActions: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: spacing.lg,
+    zIndex: 10,
+  },
+  venueBookBtn: {
+    borderRadius: radius.lg,
+    overflow: "hidden",
+    marginBottom: spacing.sm,
+    shadowColor: colors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  venueBookGradient: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 16,
+    gap: 10,
+  },
+  venueBookBtnIcon: {
+    fontSize: 20,
+  },
+  venueBookBtnText: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#000",
+  },
+  venueBookingsBtn: {
+    backgroundColor: "#000",
+    borderRadius: radius.lg,
+    paddingVertical: 16,
+    alignItems: "center",
+  },
+  venueBookingsBtnText: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: colors.text,
+  },
   venuesContainer: { flex: 1 },
   mapSection: { paddingHorizontal: spacing.md, paddingTop: 10, paddingBottom: spacing.sm },
   mapTitle: { ...typography.bodySmall, fontWeight: "600", color: colors.text },
@@ -723,6 +1129,17 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.text,
     fontSize: 13,
+  },
+  positionsChip: {
+    backgroundColor: "rgba(16, 185, 129, 0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(16, 185, 129, 0.3)",
+  },
+  positionsChipText: {
+    ...typography.body,
+    color: "#10B981",
+    fontSize: 13,
+    fontWeight: "600",
   },
   claimButton: {
     backgroundColor: "#10B981",

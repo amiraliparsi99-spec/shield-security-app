@@ -14,16 +14,29 @@ import {
   Modal,
   Animated,
   Dimensions,
-  PanResponder,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { useShiftOffer } from "../../contexts/ShiftOfferContext";
 import { colors, typography, spacing, radius } from "../../theme";
+import { supabase } from "../../lib/supabase";
+import { isPersonnelVerified, isPersonnelBankConnected } from "../../lib/auth";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
-const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.4;
+
+function parseEventVenueLabel(label: string | null): { eventName: string; venueName: string } {
+  if (!label) return { eventName: "Security Shift", venueName: "Venue" };
+  const split = label.split(" @ ");
+  if (split.length >= 2) {
+    return {
+      eventName: split[0] || "Security Shift",
+      venueName: split.slice(1).join(" @ ") || "Venue",
+    };
+  }
+  return { eventName: label, venueName: "Venue" };
+}
 
 export function ShiftOfferPopup() {
   const insets = useSafeAreaInsets();
@@ -32,8 +45,6 @@ export function ShiftOfferPopup() {
 
   // Animations
   const cardAnim = useRef(new Animated.Value(0)).current;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  const slideAnim = useRef(new Animated.Value(0)).current;
   const successAnim = useRef(new Animated.Value(0)).current;
   const accepted = useRef(false);
 
@@ -43,7 +54,6 @@ export function ShiftOfferPopup() {
       accepted.current = false;
       cardAnim.setValue(0);
       successAnim.setValue(0);
-      slideAnim.setValue(0);
 
       // Slide card in
       Animated.spring(cardAnim, {
@@ -52,74 +62,12 @@ export function ShiftOfferPopup() {
         friction: 8,
         useNativeDriver: true,
       }).start();
-
-      // Pulse the accept button
-      const pulse = Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1.04,
-            duration: 900,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 1,
-            duration: 900,
-            useNativeDriver: true,
-          }),
-        ])
-      );
-      pulse.start();
-
-      return () => pulse.stop();
     }
   }, [currentOffer?.id]);
 
-  // Swipe-to-accept gesture
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, gs) => gs.dx > 5,
-      onPanResponderMove: (_, gs) => {
-        if (gs.dx > 0) {
-          slideAnim.setValue(Math.min(gs.dx, SWIPE_THRESHOLD));
-        }
-      },
-      onPanResponderRelease: (_, gs) => {
-        if (gs.dx >= SWIPE_THRESHOLD * 0.6) {
-          Animated.spring(slideAnim, {
-            toValue: SWIPE_THRESHOLD,
-            useNativeDriver: true,
-          }).start(() => {
-            handleAccept();
-          });
-        } else {
-          Animated.spring(slideAnim, {
-            toValue: 0,
-            useNativeDriver: true,
-          }).start();
-        }
-      },
-    })
-  ).current;
-
-  const handleAccept = async () => {
-    if (accepted.current) return;
-    accepted.current = true;
-
-    Animated.timing(successAnim, {
-      toValue: 1,
-      duration: 400,
-      useNativeDriver: true,
-    }).start();
-
-    await acceptOffer();
-  };
-
-  if (!currentOffer) return null;
-
-  // Calculate earnings
+  // Calculate earnings helper
   const calcEarnings = () => {
-    if (!currentOffer.start_time || !currentOffer.end_time) {
+    if (!currentOffer?.start_time || !currentOffer?.end_time) {
       return { hours: 0, total: 0 };
     }
     // Parse HH:MM format
@@ -131,8 +79,64 @@ export function ShiftOfferPopup() {
     return { hours: Math.round(hours * 10) / 10, total };
   };
 
+  const handleAccept = async () => {
+    if (accepted.current || !currentOffer) return;
+
+    if (supabase && currentOffer.personnel_id) {
+      const verified = await isPersonnelVerified(supabase, currentOffer.personnel_id);
+      if (!verified) {
+        Alert.alert(
+          "Verification Required",
+          "You need to complete your ID and SIA licence verification before you can accept shifts.",
+          [{ text: "OK" }]
+        );
+        return;
+      }
+      const bankConnected = await isPersonnelBankConnected(supabase, currentOffer.personnel_id);
+      if (!bankConnected) {
+        Alert.alert(
+          "Connect Bank Account",
+          "Your identity is verified! Now connect your bank account in the Payments tab to start accepting shifts and getting paid.",
+          [{ text: "OK" }]
+        );
+        return;
+      }
+    }
+
+    const { hours, total } = calcEarnings();
+
+    Alert.alert(
+      "Confirm Shift",
+      `Are you sure you want to accept this shift?\n\n📍 ${currentOffer.venue_name}\n📅 ${currentOffer.shift_date}\n🕐 ${currentOffer.start_time} - ${currentOffer.end_time}\n💰 £${total.toFixed(2)} (${hours}h)\n\nYou're committing to work this shift.`,
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Yes, Accept",
+          style: "default",
+          onPress: async () => {
+            accepted.current = true;
+
+            Animated.timing(successAnim, {
+              toValue: 1,
+              duration: 400,
+              useNativeDriver: true,
+            }).start();
+
+            await acceptOffer();
+          },
+        },
+      ]
+    );
+  };
+
+  if (!currentOffer) return null;
+
   const { hours, total } = calcEarnings();
   const isUrgent = countdown <= 15;
+  const { eventName, venueName } = parseEventVenueLabel(currentOffer.venue_name);
 
   // Success overlay
   if (accepted.current && accepting) {
@@ -229,7 +233,10 @@ export function ShiftOfferPopup() {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.venueName} numberOfLines={1}>
-                {currentOffer.venue_name ?? "Venue"}
+                {eventName}
+              </Text>
+              <Text style={styles.venueEventMeta} numberOfLines={1}>
+                {venueName}
               </Text>
               {currentOffer.venue_address ? (
                 <Text style={styles.venueAddr} numberOfLines={1}>
@@ -278,48 +285,42 @@ export function ShiftOfferPopup() {
           </View>
         </Animated.View>
 
-        {/* Swipe to accept */}
+        {/* Main Accept Button */}
         <View style={styles.actionArea}>
-          <Animated.View
-            style={[styles.swipeTrack, { transform: [{ scale: pulseAnim }] }]}
+          <TouchableOpacity
+            style={styles.acceptButton}
+            onPress={handleAccept}
+            disabled={accepting}
+            activeOpacity={0.8}
           >
             <LinearGradient
               colors={[colors.accent, "#1fa89e"]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
-              style={styles.swipeGradient}
+              style={styles.acceptGradient}
             >
-              <Text style={styles.swipeHint}>Swipe to Accept →</Text>
-              <Animated.View
-                {...panResponder.panHandlers}
-                style={[
-                  styles.swipeThumb,
-                  { transform: [{ translateX: slideAnim }] },
-                ]}
-              >
-                <View style={styles.thumbInner}>
-                  <Text style={styles.thumbTxt}>→</Text>
-                </View>
-              </Animated.View>
+              {accepting ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <>
+                  <Text style={styles.acceptText}>Accept Shift</Text>
+                  <Text style={styles.acceptArrow}>→</Text>
+                </>
+              )}
             </LinearGradient>
-          </Animated.View>
-
-          {/* Tap to accept fallback */}
-          <TouchableOpacity
-            style={styles.tapBtn}
-            onPress={handleAccept}
-            disabled={accepting}
-          >
-            <Text style={styles.tapTxt}>
-              {accepting ? "Accepting..." : "Or tap here to accept"}
-            </Text>
           </TouchableOpacity>
+
+          {/* Tap hint */}
+          <Text style={styles.tapHint}>
+            {accepting ? "Accepting..." : "Tap to accept this shift"}
+          </Text>
         </View>
 
         {/* Decline */}
         <TouchableOpacity
           style={[styles.declineBtn, { marginBottom: insets.bottom + 10 }]}
           onPress={declineOffer}
+          activeOpacity={0.7}
         >
           <Text style={styles.declineTxt}>Decline</Text>
         </TouchableOpacity>
@@ -407,6 +408,12 @@ const styles = StyleSheet.create({
     ...typography.title,
     color: colors.text,
   },
+  venueEventMeta: {
+    ...typography.body,
+    color: colors.accent,
+    marginTop: 2,
+    fontWeight: "700",
+  },
   venueAddr: {
     ...typography.caption,
     color: colors.textMuted,
@@ -461,50 +468,45 @@ const styles = StyleSheet.create({
   totalLabel: { ...typography.body, color: colors.text, fontWeight: "600" },
   totalVal: { ...typography.title, color: colors.accent, fontSize: 24 },
 
-  // Swipe area
+  // Action area
   actionArea: {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.lg,
   },
-  swipeTrack: {
-    height: 64,
-    borderRadius: 32,
+  acceptButton: {
+    height: 60,
+    borderRadius: 30,
     overflow: "hidden",
+    shadowColor: colors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
   },
-  swipeGradient: {
+  acceptGradient: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 6,
-  },
-  swipeHint: {
-    flex: 1,
-    textAlign: "center",
-    ...typography.body,
-    color: "rgba(255,255,255,0.7)",
-    fontWeight: "600",
-  },
-  swipeThumb: {
-    position: "absolute",
-    left: 6,
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    overflow: "hidden",
-  },
-  thumbInner: {
-    flex: 1,
-    backgroundColor: "#fff",
-    borderRadius: 26,
     justifyContent: "center",
-    alignItems: "center",
+    paddingHorizontal: spacing.xl,
   },
-  thumbTxt: { fontSize: 24, fontWeight: "700", color: colors.accent },
-  tapBtn: { alignItems: "center", marginTop: spacing.md },
-  tapTxt: {
+  acceptText: {
+    ...typography.body,
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 18,
+    marginRight: spacing.sm,
+  },
+  acceptArrow: {
+    fontSize: 24,
+    fontWeight: "700",
+    color: "#fff",
+  },
+  tapHint: {
     ...typography.caption,
     color: colors.textMuted,
-    textDecorationLine: "underline",
+    textAlign: "center",
+    marginTop: spacing.md,
   },
 
   // Decline

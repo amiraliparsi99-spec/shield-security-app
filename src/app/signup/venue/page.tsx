@@ -61,7 +61,6 @@ export default function VenueSignUp() {
     try {
       const supabase = createClient();
       
-      // Create auth user
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.contactEmail,
         password: formData.password,
@@ -79,7 +78,6 @@ export default function VenueSignUp() {
       }
       if (!authData.user) throw new Error("Failed to create account");
 
-      // Create profile first (required for foreign key)
       const { error: profileError } = await supabase.from("profiles").insert({
         id: authData.user.id,
         role: "venue",
@@ -94,7 +92,6 @@ export default function VenueSignUp() {
         console.error("Profile creation error:", JSON.stringify(profileError, null, 2));
       }
 
-      // Create the venue record
       const { error: venueError } = await supabase.from("venues").insert({
         user_id: authData.user.id,
         name: formData.businessName,
@@ -113,7 +110,6 @@ export default function VenueSignUp() {
         console.error("Venue creation error:", JSON.stringify(venueError, null, 2));
       }
 
-      // Redirect directly to dashboard (email confirmation is disabled)
       router.push("/d/venue");
     } catch (err: any) {
       setError(err.message || "Something went wrong");
@@ -142,19 +138,14 @@ export default function VenueSignUp() {
             Back to role selection
           </Link>
 
-          <motion.div
-            className="glass rounded-2xl p-8"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2, duration: 0.5 }}
-          >
+          <div className="glass rounded-2xl p-8">
             <div className="flex items-center gap-3 mb-6">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-purple-500 to-purple-600 text-2xl">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 text-2xl">
                 🏢
               </div>
               <div>
-                <h1 className="font-display text-2xl font-semibold text-white">Register your Venue</h1>
-                <p className="text-zinc-400 text-sm">Find security professionals for your events</p>
+                <h1 className="font-display text-2xl font-semibold text-white">Register Your Venue</h1>
+                <p className="text-zinc-400 text-sm">Add your business and start booking verified security</p>
               </div>
             </div>
 
@@ -223,7 +214,7 @@ export default function VenueSignUp() {
                 </div>
               </div>
 
-              {/* Address */}
+              {/* Venue Address */}
               <div>
                 <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
                   <span className="w-6 h-6 rounded-full bg-shield-500/20 text-shield-500 text-xs flex items-center justify-center">2</span>
@@ -391,15 +382,13 @@ export default function VenueSignUp() {
                 </div>
               </div>
 
-              <motion.button
+              <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full rounded-lg bg-gradient-to-r from-shield-500 to-shield-600 px-4 py-3.5 font-semibold text-white transition hover:from-shield-600 hover:to-shield-700 focus:outline-none focus:ring-2 focus:ring-shield-500 focus:ring-offset-2 focus:ring-offset-zinc-900 disabled:opacity-50 disabled:cursor-not-allowed"
-                whileHover={{ scale: 1.01 }}
-                whileTap={{ scale: 0.99 }}
+                className="w-full rounded-lg bg-gradient-to-r from-shield-500 to-shield-600 px-4 py-3.5 font-semibold text-white transition hover:from-shield-600 hover:to-shield-700 focus:outline-none focus:ring-2 focus:ring-shield-500 focus:ring-offset-2 focus:ring-offset-zinc-900 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.99]"
               >
                 {isLoading ? "Creating account..." : "Create Venue Account"}
-              </motion.button>
+              </button>
             </form>
 
             <p className="mt-6 text-center text-sm text-zinc-500">
@@ -408,7 +397,7 @@ export default function VenueSignUp() {
                 Log in
               </Link>
             </p>
-          </motion.div>
+          </div>
         </div>
       </FadeIn>
     </div>

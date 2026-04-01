@@ -21,6 +21,11 @@ type LiveShift = {
   check_in_latitude: number | null;
   check_in_longitude: number | null;
   booking_id: string;
+  venue_confirmed?: boolean;
+  venue_confirmed_at?: string | null;
+  dispute_status?: string | null;
+  hours_worked?: number | null;
+  total_pay?: number | null;
   personnel?: {
     id: string;
     user_id: string;
@@ -94,6 +99,11 @@ export function LiveCheckIn() {
           check_in_latitude,
           check_in_longitude,
           booking_id,
+          venue_confirmed,
+          venue_confirmed_at,
+          dispute_status,
+          hours_worked,
+          total_pay,
           personnel:personnel_id (
             id,
             user_id,
@@ -244,7 +254,7 @@ export function LiveCheckIn() {
 
   // Mark as no-show
   const handleMarkNoShow = async (shiftId: string) => {
-    if (!confirm('Are you sure you want to mark this staff as a no-show? This will affect their Shield Score.')) {
+    if (!confirm('Are you sure you want to mark this staff as a no-show? This will affect their Shield HQ Score.')) {
       return;
     }
     
@@ -276,6 +286,145 @@ export function LiveCheckIn() {
   const handleFindReplacement = (bookingId: string) => {
     // Navigate to find replacement flow
     window.location.href = `/d/venue/bookings/${bookingId}?action=find-replacement`;
+  };
+
+  // Cancel shift by venue
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelShift, setCancelShift] = useState<LiveShift | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+
+  const handleOpenCancel = (shift: LiveShift) => {
+    setCancelShift(shift);
+    setCancelReason('');
+    setShowCancelModal(true);
+  };
+
+  const handleSubmitCancel = async () => {
+    if (!cancelShift || cancelReason.trim().length < 5) {
+      alert('Please provide a reason (at least 5 characters)');
+      return;
+    }
+    
+    setActionLoading(cancelShift.id);
+    
+    try {
+      const res = await fetch('/api/shifts/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          shift_id: cancelShift.id,
+          reason: cancelReason.trim(),
+          cancelled_by: 'venue',
+        }),
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        alert(data.error || 'Failed to cancel shift');
+      } else {
+        const message = data.cancellation_note 
+          ? `Shift cancelled. ${data.cancellation_note}`
+          : 'Shift cancelled successfully.';
+        alert(message);
+        setShowCancelModal(false);
+        setCancelShift(null);
+        fetchBookings();
+      }
+    } catch (err) {
+      console.error('Cancel shift error:', err);
+      alert('Failed to cancel shift. Please try again.');
+    }
+    
+    setActionLoading(null);
+  };
+
+  // Confirm shift and release payment
+  const handleConfirmShift = async (shift: LiveShift) => {
+    const staffName = shift.personnel?.users?.full_name || "this guard";
+    const hours = shift.actual_start && shift.actual_end
+      ? Math.round((new Date(shift.actual_end).getTime() - new Date(shift.actual_start).getTime()) / 3600000 * 10) / 10
+      : null;
+    const pay = hours && shift.hourly_rate ? (hours * shift.hourly_rate).toFixed(2) : null;
+    
+    const confirmMsg = pay 
+      ? `Confirm ${staffName}'s shift?\n\nHours worked: ${hours}h\nPayment: £${pay}\n\nThis will release the payment from escrow.`
+      : `Confirm ${staffName}'s shift?\n\nThis will release the payment from escrow.`;
+    
+    if (!confirm(confirmMsg)) {
+      return;
+    }
+    
+    setActionLoading(shift.id);
+    
+    try {
+      const res = await fetch('/api/shifts/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shift_id: shift.id }),
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        alert(data.error || 'Failed to confirm shift');
+      } else {
+        alert('✅ Shift confirmed! Payment has been released.');
+        fetchBookings(); // Refresh data
+      }
+    } catch (err) {
+      console.error('Confirm shift error:', err);
+      alert('Failed to confirm shift. Please try again.');
+    }
+    
+    setActionLoading(null);
+  };
+
+  // Dispute shift
+  const [showDisputeModal, setShowDisputeModal] = useState(false);
+  const [disputeShift, setDisputeShift] = useState<LiveShift | null>(null);
+  const [disputeReason, setDisputeReason] = useState('');
+
+  const handleOpenDispute = (shift: LiveShift) => {
+    setDisputeShift(shift);
+    setDisputeReason('');
+    setShowDisputeModal(true);
+  };
+
+  const handleSubmitDispute = async () => {
+    if (!disputeShift || disputeReason.trim().length < 10) {
+      alert('Please provide a detailed reason (at least 10 characters)');
+      return;
+    }
+    
+    setActionLoading(disputeShift.id);
+    
+    try {
+      const res = await fetch('/api/shifts/dispute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          shift_id: disputeShift.id,
+          reason: disputeReason.trim(),
+        }),
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        alert(data.error || 'Failed to raise dispute');
+      } else {
+        alert('⚠️ Dispute raised. Our team will review within 24-48 hours.');
+        setShowDisputeModal(false);
+        setDisputeShift(null);
+        fetchBookings();
+      }
+    } catch (err) {
+      console.error('Dispute error:', err);
+      alert('Failed to raise dispute. Please try again.');
+    }
+    
+    setActionLoading(null);
   };
 
   const formatTime = (dateStr: string) => {
@@ -533,6 +682,17 @@ export function LiveCheckIn() {
                       </div>
                     )}
 
+                    {/* Cancel button for pending/accepted shifts */}
+                    {(shift.status === "pending" || shift.status === "accepted") && !shift.actual_start && (
+                      <button
+                        onClick={() => handleOpenCancel(shift)}
+                        disabled={actionLoading === shift.id}
+                        className="mt-2 w-full text-xs bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 disabled:opacity-50 px-3 py-2 rounded-lg transition"
+                      >
+                        Cancel Shift
+                      </button>
+                    )}
+
                     {displayStatus === "late" && (
                       <button
                         onClick={() => handleMarkNoShow(shift.id)}
@@ -541,6 +701,63 @@ export function LiveCheckIn() {
                       >
                         Mark as No-Show
                       </button>
+                    )}
+
+                    {/* Payment Confirmation for completed shifts */}
+                    {shift.status === "checked_out" && !shift.venue_confirmed && !shift.dispute_status && (
+                      <div className="mt-3 pt-3 border-t border-white/5">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-amber-400">💰</span>
+                          <span className="text-sm text-amber-400 font-medium">Payment Pending</span>
+                        </div>
+                        <p className="text-xs text-zinc-500 mb-3">
+                          Confirm to release payment. Auto-confirms in 48h.
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleConfirmShift(shift)}
+                            disabled={actionLoading === shift.id}
+                            className="flex-1 text-xs bg-emerald-500 hover:bg-emerald-600 text-white disabled:opacity-50 px-3 py-2 rounded-lg transition font-medium"
+                          >
+                            {actionLoading === shift.id ? "..." : "✓ Confirm & Pay"}
+                          </button>
+                          <button
+                            onClick={() => handleOpenDispute(shift)}
+                            disabled={actionLoading === shift.id}
+                            className="text-xs bg-red-500/20 text-red-400 hover:bg-red-500/30 disabled:opacity-50 px-3 py-2 rounded-lg transition"
+                          >
+                            Dispute
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Already confirmed */}
+                    {shift.venue_confirmed && (
+                      <div className="mt-3 pt-3 border-t border-white/5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-400">✓</span>
+                          <span className="text-sm text-emerald-400 font-medium">Payment Released</span>
+                        </div>
+                        {shift.venue_confirmed_at && (
+                          <p className="text-xs text-zinc-500 mt-1">
+                            Confirmed {new Date(shift.venue_confirmed_at).toLocaleDateString()}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Disputed */}
+                    {shift.dispute_status && shift.dispute_status !== 'none' && (
+                      <div className="mt-3 pt-3 border-t border-white/5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-amber-400">⚠️</span>
+                          <span className="text-sm text-amber-400 font-medium">Under Review</span>
+                        </div>
+                        <p className="text-xs text-zinc-500 mt-1">
+                          Our team is reviewing this dispute.
+                        </p>
+                      </div>
                     )}
                   </motion.div>
                 );
@@ -593,7 +810,6 @@ export function LiveCheckIn() {
             <motion.button
               onClick={() => fetchBookings()}
               className="glass rounded-lg px-4 py-2 text-sm text-white hover:bg-white/10 transition flex items-center gap-2"
-              whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -622,6 +838,152 @@ export function LiveCheckIn() {
           </div>
         </>
       )}
+
+      {/* Dispute Modal */}
+      <AnimatePresence>
+        {showDisputeModal && disputeShift && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowDisputeModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="glass rounded-2xl p-6 max-w-md w-full"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-xl font-bold text-white mb-2">Dispute Shift</h3>
+              <p className="text-sm text-zinc-400 mb-4">
+                Raise a concern about {disputeShift.personnel?.users?.full_name || "this guard"}'s shift.
+                Funds will be held until our team reviews.
+              </p>
+              
+              <div className="mb-4 p-3 bg-white/5 rounded-lg">
+                <p className="text-sm text-zinc-300">
+                  <strong>Role:</strong> {disputeShift.role}
+                </p>
+                <p className="text-sm text-zinc-300">
+                  <strong>Scheduled:</strong> {formatTime(disputeShift.scheduled_start)} - {formatTime(disputeShift.scheduled_end)}
+                </p>
+                {disputeShift.actual_start && (
+                  <p className="text-sm text-zinc-300">
+                    <strong>Worked:</strong> {formatTime(disputeShift.actual_start)} - {disputeShift.actual_end ? formatTime(disputeShift.actual_end) : "N/A"}
+                  </p>
+                )}
+              </div>
+
+              <label className="block text-sm text-zinc-400 mb-2">
+                Reason for dispute *
+              </label>
+              <textarea
+                value={disputeReason}
+                onChange={(e) => setDisputeReason(e.target.value)}
+                placeholder="Please describe the issue in detail (e.g., guard left early, unprofessional behavior, did not perform duties)..."
+                className="w-full bg-white/5 border border-white/10 rounded-lg p-3 text-white placeholder-zinc-500 text-sm resize-none focus:outline-none focus:border-purple-500"
+                rows={4}
+              />
+              <p className="text-xs text-zinc-500 mt-1 mb-4">
+                Minimum 10 characters required
+              </p>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowDisputeModal(false)}
+                  className="flex-1 bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-lg transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSubmitDispute}
+                  disabled={actionLoading === disputeShift.id || disputeReason.trim().length < 10}
+                  className="flex-1 bg-red-500 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg transition font-medium"
+                >
+                  {actionLoading === disputeShift.id ? "Submitting..." : "Submit Dispute"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Cancel Shift Modal */}
+      <AnimatePresence>
+        {showCancelModal && cancelShift && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowCancelModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="glass rounded-2xl p-6 max-w-md w-full"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-xl font-bold text-white mb-2">Cancel Shift</h3>
+              <p className="text-sm text-zinc-400 mb-4">
+                Cancel {cancelShift.personnel?.users?.full_name || "this guard"}'s shift assignment.
+                They will be notified of the cancellation.
+              </p>
+              
+              <div className="mb-4 p-3 bg-white/5 rounded-lg">
+                <p className="text-sm text-zinc-300">
+                  <strong>Role:</strong> {cancelShift.role}
+                </p>
+                <p className="text-sm text-zinc-300">
+                  <strong>Scheduled:</strong> {formatTime(cancelShift.scheduled_start)} - {formatTime(cancelShift.scheduled_end)}
+                </p>
+                <p className="text-sm text-zinc-300">
+                  <strong>Rate:</strong> £{cancelShift.hourly_rate}/hr
+                </p>
+              </div>
+
+              <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                <p className="text-xs text-amber-400">
+                  ⚠️ Cancelling less than 24 hours before the shift may require partial compensation to the guard.
+                </p>
+              </div>
+
+              <label className="block text-sm text-zinc-400 mb-2">
+                Reason for cancellation *
+              </label>
+              <textarea
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="Please provide a reason for cancelling this shift..."
+                className="w-full bg-white/5 border border-white/10 rounded-lg p-3 text-white placeholder-zinc-500 text-sm resize-none focus:outline-none focus:border-purple-500"
+                rows={3}
+              />
+              <p className="text-xs text-zinc-500 mt-1 mb-4">
+                Minimum 5 characters required
+              </p>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowCancelModal(false)}
+                  className="flex-1 bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-lg transition"
+                >
+                  Keep Shift
+                </button>
+                <button
+                  onClick={handleSubmitCancel}
+                  disabled={actionLoading === cancelShift.id || cancelReason.trim().length < 5}
+                  className="flex-1 bg-red-500 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg transition font-medium"
+                >
+                  {actionLoading === cancelShift.id ? "Cancelling..." : "Cancel Shift"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -79,23 +79,24 @@ export default function Login() {
         style={styles.keyboardView}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
-        <ScrollView 
+        <ScrollView
           contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 20 }]}
           keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
           <BackButton />
-          
+
           <View style={styles.header}>
             <View style={styles.logo}>
               <Text style={styles.logoIcon}>🛡️</Text>
             </View>
-            <Text style={styles.logoText}>Shield</Text>
+            <Text style={styles.logoText}>Shield HQ</Text>
           </View>
 
-          <View style={styles.card}>
-            <Text style={styles.title}>Log in</Text>
-            <Text style={styles.subtitle}>Use your Shield account to continue.</Text>
+          <Text style={styles.welcomeTitle}>Welcome back</Text>
+          <Text style={styles.welcomeSubtitle}>Sign in to continue to your account.</Text>
 
+          <View style={styles.card}>
             {message && (
               <View style={styles.messageBox}>
                 <Text style={styles.messageText}>{message}</Text>
@@ -134,14 +135,14 @@ export default function Login() {
               />
             </View>
 
-            <TouchableOpacity 
-              style={[styles.submitBtn, loading && styles.submitBtnDisabled]} 
-              onPress={handleSubmit} 
+            <TouchableOpacity
+              style={[styles.submitBtn, loading && styles.submitBtnDisabled]}
+              onPress={handleSubmit}
               disabled={loading}
-              activeOpacity={0.8}
+              activeOpacity={0.85}
             >
               {loading ? (
-                <ActivityIndicator color={colors.text} />
+                <ActivityIndicator color={colors.textInverse} />
               ) : (
                 <Text style={styles.submitBtnText}>Log in</Text>
               )}
@@ -150,7 +151,7 @@ export default function Login() {
 
           <TouchableOpacity style={styles.link} onPress={() => router.push("/signup")}>
             <Text style={styles.linkText}>
-              Don't have an account? <Text style={styles.linkHighlight}>Sign up</Text>
+              Don&apos;t have an account? <Text style={styles.linkHighlight}>Sign up</Text>
             </Text>
           </TouchableOpacity>
         </ScrollView>
@@ -194,12 +195,24 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontWeight: "700",
   },
+  welcomeTitle: {
+    ...typography.display,
+    fontSize: 28,
+    color: colors.text,
+    marginTop: spacing.lg,
+    marginBottom: spacing.xs,
+  },
+  welcomeSubtitle: {
+    ...typography.bodySmall,
+    color: colors.textMuted,
+    marginBottom: spacing.xl,
+  },
   card: {
     backgroundColor: colors.surface,
-    borderRadius: radius.lg,
+    borderRadius: radius.xl,
     padding: spacing.xl,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.glassBorder,
   },
   title: {
     ...typography.display,
@@ -252,19 +265,24 @@ const styles = StyleSheet.create({
   input: {
     paddingVertical: 14,
     paddingHorizontal: spacing.lg,
-    borderRadius: radius.sm,
+    borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.background,
+    borderColor: colors.glassBorder,
+    backgroundColor: colors.glass,
     color: colors.text,
     ...typography.body,
   },
   submitBtn: {
     marginTop: spacing.xl,
     paddingVertical: 16,
-    borderRadius: radius.md,
+    borderRadius: radius.xl,
     backgroundColor: colors.primaryBtn,
     alignItems: "center",
+    shadowColor: colors.accent,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 6,
   },
   submitBtnDisabled: {
     opacity: 0.6,
@@ -272,7 +290,7 @@ const styles = StyleSheet.create({
   submitBtnText: {
     ...typography.body,
     fontWeight: "600",
-    color: colors.text,
+    color: colors.textInverse,
   },
   link: {
     alignItems: "center",

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { createClient } from "@/lib/supabase/client";
 
 type Badge = {
   id: string;
@@ -33,42 +34,15 @@ type ScoreBreakdown = {
   description: string;
 };
 
-const mockBadges: Badge[] = [
-  { id: "1", name: "SIA Verified", icon: "🛡️", description: "SIA license verified", earnedDate: "2026-01-15", locked: false },
-  { id: "2", name: "100 Shifts", icon: "💯", description: "Completed 100+ shifts", earnedDate: "2026-01-10", locked: false },
-  { id: "3", name: "5-Star Performer", icon: "⭐", description: "Received 10+ five-star reviews", earnedDate: "2025-12-20", locked: false },
-  { id: "4", name: "Early Bird", icon: "🌅", description: "Always arrives early", earnedDate: "2025-11-15", locked: false },
-  { id: "5", name: "Night Owl", icon: "🦉", description: "50+ night shifts completed", earnedDate: "2025-10-01", locked: false },
+const staticBadges: Badge[] = [
+  { id: "1", name: "SIA Verified", icon: "🛡️", description: "SIA license verified", earnedDate: undefined, locked: false },
+  { id: "2", name: "100 Shifts", icon: "💯", description: "Completed 100+ shifts", locked: true },
+  { id: "3", name: "5-Star Performer", icon: "⭐", description: "Received 10+ five-star reviews", locked: true },
+  { id: "4", name: "Early Bird", icon: "🌅", description: "Always arrives early", locked: true },
+  { id: "5", name: "Night Owl", icon: "🦉", description: "50+ night shifts completed", locked: true },
   { id: "6", name: "Team Player", icon: "🤝", description: "10+ endorsements from colleagues", locked: true },
   { id: "7", name: "VIP Specialist", icon: "👑", description: "20+ VIP events", locked: true },
   { id: "8", name: "First Aider", icon: "🏥", description: "First aid certified", locked: true },
-];
-
-const mockReviews: Review[] = [
-  {
-    id: "1",
-    venueName: "The Grand Club",
-    rating: 5,
-    comment: "Excellent professional. Handled a difficult situation perfectly. Would definitely book again.",
-    date: "2026-01-26",
-    categories: { professionalism: 5, punctuality: 5, communication: 5, effectiveness: 5 },
-  },
-  {
-    id: "2",
-    venueName: "Birmingham Arena",
-    rating: 5,
-    comment: "Great crowd management skills. Very calm under pressure.",
-    date: "2026-01-18",
-    categories: { professionalism: 5, punctuality: 5, communication: 4, effectiveness: 5 },
-  },
-  {
-    id: "3",
-    venueName: "Pryzm",
-    rating: 4,
-    comment: "Good overall performance. Reliable and professional.",
-    date: "2026-01-12",
-    categories: { professionalism: 4, punctuality: 5, communication: 4, effectiveness: 4 },
-  },
 ];
 
 const scoreBreakdown: ScoreBreakdown[] = [
@@ -80,12 +54,59 @@ const scoreBreakdown: ScoreBreakdown[] = [
 ];
 
 export function ShieldScore() {
-  const [badges] = useState<Badge[]>(mockBadges);
-  const [reviews] = useState<Review[]>(mockReviews);
+  const [badges] = useState<Badge[]>(staticBadges);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const overallScore = 94; // Calculated score
+  useEffect(() => {
+    const load = async () => {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+      const { data: personnel } = await supabase.from("personnel").select("id").eq("user_id", user.id).single();
+      if (!personnel) {
+        setLoading(false);
+        return;
+      }
+      const { data: reviewRows } = await supabase
+        .from("reviews")
+        .select("id, reviewer_id, overall_rating, professionalism_rating, punctuality_rating, communication_rating, comment, created_at")
+        .eq("reviewee_id", personnel.id)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      const reviewerIds = [...new Set((reviewRows || []).map((r: { reviewer_id: string }) => r.reviewer_id))];
+      let venueNames: Record<string, string> = {};
+      if (reviewerIds.length > 0) {
+        const { data: venues } = await supabase.from("venues").select("id, user_id, name").in("user_id", reviewerIds);
+        (venues || []).forEach((v: { user_id: string; name: string }) => {
+          venueNames[v.user_id] = v.name || "Venue";
+        });
+      }
+      const list: Review[] = (reviewRows || []).map((r: any) => ({
+        id: r.id,
+        venueName: venueNames[r.reviewer_id] || "Venue",
+        rating: r.overall_rating ?? 0,
+        comment: r.comment || "",
+        date: r.created_at?.slice(0, 10) || "",
+        categories: {
+          professionalism: r.professionalism_rating ?? 0,
+          punctuality: r.punctuality_rating ?? 0,
+          communication: r.communication_rating ?? 0,
+          effectiveness: r.overall_rating ?? 0,
+        },
+      }));
+      setReviews(list);
+      setLoading(false);
+    };
+    load();
+  }, []);
+
+  const overallScore = 94;
   const reviewCount = reviews.length;
-  const avgRating = reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length;
+  const avgRating = reviewCount > 0 ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviewCount : 0;
   const earnedBadges = badges.filter(b => !b.locked).length;
 
   const getScoreColor = (score: number) => {
@@ -102,6 +123,14 @@ export function ShieldScore() {
     if (score >= 70) return "Good";
     return "Building";
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
+      </div>
+    );
+  }
 
   const DisplayStars = ({ value }: { value: number }) => (
     <div className="flex gap-0.5">

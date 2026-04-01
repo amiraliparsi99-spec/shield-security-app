@@ -14,7 +14,6 @@ import { getProfileIdAndRole, getPersonnelId, getAgencyId } from "../lib/auth";
 import { colors, typography, spacing, radius, shadows } from "../theme";
 import { VerificationDashboard } from "../components/verification/VerificationDashboard";
 import { GradientBackground, GlassCard, GlowButton, FadeInView } from "../components/ui/Glass";
-import { BackButton } from "../components/ui/BackButton";
 
 export default function VerificationScreen() {
   const insets = useSafeAreaInsets();
@@ -22,6 +21,9 @@ export default function VerificationScreen() {
   const [error, setError] = useState<string | null>(null);
   const [ownerType, setOwnerType] = useState<"personnel" | "agency" | null>(null);
   const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [profileId, setProfileId] = useState<string | null>(null);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [verificationStatus, setVerificationStatus] = useState<string | null>(null);
 
   useEffect(() => {
     loadVerificationData();
@@ -142,6 +144,16 @@ export default function VerificationScreen() {
 
       setOwnerType(profile.role as "personnel" | "agency");
       setOwnerId(foundOwnerId);
+      setProfileId(profile.profileId);
+      setAuthUserId(session.user.id);
+
+      const { data: vData } = await supabase
+        .from("verifications")
+        .select("status")
+        .eq("owner_type", profile.role)
+        .eq("owner_id", foundOwnerId)
+        .maybeSingle();
+      if (vData?.status) setVerificationStatus(vData.status);
     } catch (err: unknown) {
       console.error("Error loading verification:", err);
       setError((err as Error).message || "Failed to load verification data");
@@ -207,38 +219,55 @@ export default function VerificationScreen() {
     );
   }
 
+  if (verificationStatus === "verified") {
+    return (
+      <GradientBackground>
+        <View style={[styles.centered, { paddingTop: insets.top + 60 }]}>
+          <FadeInView>
+            <GlassCard style={styles.verifiedCard}>
+              <View style={styles.verifiedIconWrap}>
+                <Text style={styles.verifiedIcon}>{"\u2713"}</Text>
+              </View>
+              <Text style={styles.verifiedTitle}>Account Verified</Text>
+              <Text style={styles.verifiedSubtitle}>
+                Your identity and SIA licence have already been verified. No further action is needed.
+              </Text>
+              <TouchableOpacity
+                style={styles.verifiedPaymentsBtn}
+                onPress={() => router.replace("/(tabs)/payments")}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.verifiedPaymentsBtnText}>Go to Payments</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.verifiedBackBtn}
+                onPress={() => router.back()}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.verifiedBackBtnText}>{"\u2190"} Back</Text>
+              </TouchableOpacity>
+            </GlassCard>
+          </FadeInView>
+        </View>
+      </GradientBackground>
+    );
+  }
+
   return (
-    <GradientBackground>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={[styles.content, { paddingTop: insets.top + 20, paddingBottom: 100 }]}
-      >
-        <BackButton />
-        
-        <FadeInView>
-          <View style={styles.header}>
-            <Text style={styles.title}>Verification</Text>
-            <Text style={styles.subtitle}>
-              Complete your verification to start accepting bookings. All documents are securely
-              stored and reviewed by our team.
-            </Text>
-          </View>
-        </FadeInView>
-        <FadeInView delay={100}>
-          <VerificationDashboard ownerType={ownerType} ownerId={ownerId} />
-        </FadeInView>
-      </ScrollView>
-    </GradientBackground>
+    <View style={styles.dashboardWrap}>
+      <VerificationDashboard
+        ownerType={ownerType}
+        ownerId={ownerId}
+        profileId={profileId ?? undefined}
+        authUserId={authUserId ?? undefined}
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1 },
-  content: { paddingHorizontal: spacing.lg },
+  dashboardWrap: { flex: 1, backgroundColor: colors.background },
   centered: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: spacing.xl },
-  header: { marginBottom: spacing.xl },
-  title: { ...typography.display, color: colors.text, marginBottom: spacing.sm },
-  subtitle: { ...typography.bodySmall, color: colors.textMuted },
   loadingText: { ...typography.bodySmall, color: colors.textMuted, marginTop: spacing.md },
   errorCard: { alignItems: "center" },
   errorTitle: { ...typography.title, color: colors.text, marginBottom: spacing.lg },
@@ -253,4 +282,23 @@ const styles = StyleSheet.create({
   errorText: { ...typography.bodySmall, color: colors.error, textAlign: "center" },
   backBtnWrap: { marginTop: spacing.xl, width: "100%" },
   backBtnText: { ...typography.label, color: colors.text },
+  verifiedCard: { alignItems: "center", paddingVertical: spacing.xxl },
+  verifiedIconWrap: {
+    width: 72, height: 72, borderRadius: 36,
+    backgroundColor: colors.successSoft,
+    alignItems: "center", justifyContent: "center", marginBottom: spacing.lg,
+  },
+  verifiedIcon: { fontSize: 36, color: colors.success },
+  verifiedTitle: { ...typography.display, fontSize: 22, color: colors.text, marginBottom: spacing.sm },
+  verifiedSubtitle: { ...typography.body, color: colors.textMuted, textAlign: "center", marginBottom: spacing.xl, lineHeight: 22 },
+  verifiedPaymentsBtn: {
+    backgroundColor: colors.accent, borderRadius: radius.md,
+    paddingVertical: 14, paddingHorizontal: spacing.xl,
+    width: "100%", alignItems: "center", marginBottom: spacing.md,
+  },
+  verifiedPaymentsBtnText: { ...typography.body, fontWeight: "600", color: colors.textInverse },
+  verifiedBackBtn: {
+    paddingVertical: 12, width: "100%", alignItems: "center",
+  },
+  verifiedBackBtnText: { ...typography.body, color: colors.textMuted },
 });

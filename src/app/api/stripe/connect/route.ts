@@ -158,43 +158,128 @@ export async function POST(request: NextRequest) {
     // Check for existing account (using admin)
     const { data: existingAccount } = await supabaseAdmin
       .from("stripe_accounts")
-      .select("stripe_account_id")
+      .select("id, stripe_account_id")
       .eq("user_id", user.id)
       .single();
 
-    let stripeAccountId: string;
+    let stripeAccountId: string | undefined;
 
     const stripe = await getStripe();
-    
+    const isGuard = profile.role === "personnel";
+
+    // Prefill guard details from their personnel record
+    let individualPrefill: Record<string, any> | undefined;
+    if (isGuard) {
+      const { data: personnel, error: personnelError } = await supabaseAdmin
+        .from("personnel")
+        .select("first_name, last_name, address_line1, address_line2, city, postcode")
+        .eq("user_id", user.id)
+        .single();
+
+      if (personnelError) {
+        console.error("[Stripe Connect] Failed to load personnel data:", personnelError.message);
+      }
+
+      if (personnel) {
+        individualPrefill = {
+          ...(personnel.first_name ? { first_name: personnel.first_name } : {}),
+          ...(personnel.last_name ? { last_name: personnel.last_name } : {}),
+          email: user.email,
+          ...(personnel.address_line1 ? {
+            address: {
+              line1: personnel.address_line1,
+              ...(personnel.address_line2 ? { line2: personnel.address_line2 } : {}),
+              city: personnel.city || undefined,
+              postal_code: personnel.postcode || undefined,
+              country: "GB",
+            },
+          } : {}),
+        };
+        console.log("[Stripe Connect] Individual prefill:", JSON.stringify(individualPrefill));
+      } else {
+        console.warn("[Stripe Connect] No personnel data found for user:", user.id);
+      }
+    }
+
+    const capabilities = {
+      card_payments: { requested: true },
+      transfers: { requested: true },
+    };
+
     if (existingAccount) {
-      stripeAccountId = existingAccount.stripe_account_id;
-    } else {
-      // Create new Stripe Connect account
+      // Check if the existing Stripe account has individual data populated.
+      // Express accounts can't be updated with individual data after creation,
+      // so if it's missing we delete and recreate the account.
+      const existingStripeAccount = await stripe.accounts.retrieve(existingAccount.stripe_account_id);
+
+      if (
+        isGuard &&
+        individualPrefill &&
+        !existingStripeAccount.details_submitted &&
+        !existingStripeAccount.individual?.first_name
+      ) {
+        console.log("[Stripe Connect] Existing account missing individual data, recreating...");
+        try {
+          await stripe.accounts.del(existingAccount.stripe_account_id);
+          await supabaseAdmin.from("stripe_accounts").delete().eq("id", existingAccount.id);
+        } catch (e: any) {
+          console.warn("[Stripe Connect] Failed to delete incomplete account:", e.message);
+        }
+        // Fall through to create a fresh account below
+      } else {
+        stripeAccountId = existingAccount.stripe_account_id;
+
+        try {
+          await stripe.accounts.update(stripeAccountId!, {
+            business_profile: {
+              mcc: "7399",
+              product_description: "Security guard services provided through the Shield platform",
+              url: "https://shieldapp.co.uk",
+            },
+          });
+        } catch (e: any) {
+          console.warn("[Stripe Connect] Non-critical: failed to update business_profile:", e.message);
+        }
+      }
+    }
+
+    if (!stripeAccountId) {
+      console.log("[Stripe Connect] Creating new account for user:", user.id, "with individual:", !!individualPrefill);
       const account = await stripe.accounts.create({
         type: PLATFORM_CONFIG.connectAccountType,
         country: "GB",
         email: user.email,
-        capabilities: {
-          card_payments: { requested: true },
-          transfers: { requested: true },
-        },
-        business_type: profile.role === "agency" ? "company" : "individual",
+        capabilities,
+        business_type: isGuard ? "individual" : "company",
+        business_profile: isGuard
+          ? {
+              mcc: "7399",
+              product_description: "Security guard services provided through the Shield platform",
+              url: "https://shieldapp.co.uk",
+            }
+          : undefined,
+        ...(isGuard && individualPrefill ? { individual: individualPrefill } : {}),
         metadata: {
           user_id: user.id,
           role: profile.role,
         },
+        settings: isGuard
+          ? {
+              payouts: {
+                schedule: { interval: "manual" as const },
+              },
+            }
+          : undefined,
       });
 
       stripeAccountId = account.id;
 
-      // Save to database (using admin to bypass RLS)
       await supabaseAdmin.from("stripe_accounts").insert({
         user_id: user.id,
         stripe_account_id: account.id,
         account_type: profile.role as "agency" | "personnel",
       });
 
-      // Create wallet for user (using admin)
       await supabaseAdmin.from("wallets").upsert({
         user_id: user.id,
         available_balance: 0,
@@ -205,7 +290,7 @@ export async function POST(request: NextRequest) {
     // Create account link for onboarding
     // Use custom URLs if provided (for mobile), otherwise use defaults
     const accountLink = await stripe.accountLinks.create({
-      account: stripeAccountId,
+      account: stripeAccountId!,
       refresh_url: customRefreshUrl || PLATFORM_CONFIG.connectRefreshUrl,
       return_url: customReturnUrl || PLATFORM_CONFIG.connectReturnUrl,
       type: "account_onboarding",

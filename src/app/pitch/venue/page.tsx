@@ -27,7 +27,7 @@ export default function VenuePitchPage() {
         <div className="max-w-4xl mx-auto">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold print:text-2xl">Shield</h1>
+              <h1 className="text-3xl font-bold print:text-2xl">Shield HQ</h1>
               <p className="text-teal-100 mt-1">Security Staffing Platform</p>
             </div>
             <div className="text-right">
@@ -46,7 +46,7 @@ export default function VenuePitchPage() {
             Find Verified Security Staff in Minutes, Not Days
           </h2>
           <p className="text-lg text-gray-600 leading-relaxed print:text-base">
-            Shield connects your venue with SIA-licensed security professionals instantly. 
+            Shield HQ connects your venue with SIA-licensed security professionals instantly. 
             No more phone tag with agencies, no more last-minute scrambles.
           </p>
         </section>
@@ -79,7 +79,7 @@ export default function VenuePitchPage() {
         {/* The Solution */}
         <section className="mb-10 bg-teal-50 rounded-xl p-6 border border-teal-100 print:bg-teal-50">
           <h3 className="text-lg font-semibold text-teal-800 mb-3 flex items-center gap-2">
-            <span className="text-xl">✨</span> How Shield Solves This
+            <span className="text-xl">✨</span> How Shield HQ Solves This
           </h3>
           <div className="grid md:grid-cols-2 gap-4">
             <div className="bg-white rounded-lg p-4 shadow-sm">
@@ -95,7 +95,7 @@ export default function VenuePitchPage() {
             <div className="bg-white rounded-lg p-4 shadow-sm">
               <div className="text-2xl mb-2">💰</div>
               <h4 className="font-semibold text-gray-900">Transparent Pricing</h4>
-              <p className="text-sm text-gray-600">See rates upfront. 10% platform fee only when you book</p>
+              <p className="text-sm text-gray-600">No fees for venues — the 10% platform fee is deducted from the guard&apos;s earnings</p>
             </div>
             <div className="bg-white rounded-lg p-4 shadow-sm">
               <div className="text-2xl mb-2">⭐</div>
@@ -142,8 +142,8 @@ export default function VenuePitchPage() {
             </div>
             <div className="text-gray-300 text-3xl">=</div>
             <div>
-              <div className="text-lg font-semibold text-gray-900">Only pay when you book</div>
-              <p className="text-sm text-gray-500">No monthly fees, no contracts</p>
+              <div className="text-lg font-semibold text-gray-900">Venues pay nothing extra</div>
+              <p className="text-sm text-gray-500">The 10% fee comes from the guard&apos;s wage. No hidden costs for you.</p>
             </div>
           </div>
         </section>
@@ -154,7 +154,7 @@ export default function VenuePitchPage() {
           <p className="mb-4">Sign up this month and get:</p>
           <ul className="space-y-2">
             <li className="flex items-center gap-2">
-              <span>✓</span> First 3 bookings with 0% platform fee
+              <span>✓</span> First 3 bookings — guards keep 100% of their pay
             </li>
             <li className="flex items-center gap-2">
               <span>✓</span> Priority support during launch
@@ -167,7 +167,7 @@ export default function VenuePitchPage() {
 
         {/* CTA */}
         <section className="text-center py-8 border-t border-gray-200">
-          <h3 className="text-xl font-bold text-gray-900 mb-2">Ready to Try Shield?</h3>
+          <h3 className="text-xl font-bold text-gray-900 mb-2">Ready to Try Shield HQ?</h3>
           <p className="text-gray-600 mb-4">5-minute signup. No commitment.</p>
           <div className="space-y-2">
             <p className="text-lg font-semibold text-teal-600">shieldapp.co.uk/signup/venue</p>
@@ -194,7 +194,7 @@ export default function VenuePitchPage() {
           href="/why-shield"
           className="bg-gray-100 text-gray-700 px-6 py-3 rounded-lg shadow-lg hover:bg-gray-200 transition font-medium"
         >
-          Why Shield
+          Why Shield HQ
         </a>
         <a
           href="/"

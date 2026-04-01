@@ -104,7 +104,7 @@ export function InstantFill({
         </div>
         <div>
           <h2 className="font-display text-lg font-medium text-white">Instant Fill</h2>
-          <p className="text-sm text-zinc-400">Find backup staff from the Shield network in minutes</p>
+          <p className="text-sm text-zinc-400">Find backup staff from the Shield HQ network in minutes</p>
         </div>
       </div>
 

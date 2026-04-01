@@ -200,7 +200,7 @@ export const PERSONNEL_TOUR: TourStep[] = [
   {
     target: 'center',
     position: 'center',
-    title: 'Welcome to Shield! 👋',
+    title: 'Welcome to Shield HQ! 👋',
     description: 'The marketplace connecting security professionals with venues. Let\'s show you around.',
   },
   {
@@ -233,7 +233,7 @@ export const VENUE_TOUR: TourStep[] = [
   {
     target: 'center',
     position: 'center',
-    title: 'Welcome to Shield! 🏢',
+    title: 'Welcome to Shield HQ! 🏢',
     description: 'Find and book verified security professionals for your events. Let\'s get you set up.',
   },
   {
@@ -260,7 +260,7 @@ export const AGENCY_TOUR: TourStep[] = [
   {
     target: 'center',
     position: 'center',
-    title: 'Welcome to Shield! 🛡️',
+    title: 'Welcome to Shield HQ! 🛡️',
     description: 'Manage your security team and grow your client base. Let\'s explore your dashboard.',
   },
   {

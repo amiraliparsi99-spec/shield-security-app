@@ -2,6 +2,7 @@
 
 import { useUser, useQuery, useMutation } from "./useSupabase";
 import * as db from "@/lib/db";
+import { getPricingBreakdown } from "@/lib/pricing";
 import type { 
   Venue, 
   VenueUpdate, 
@@ -309,7 +310,7 @@ export function useVenueSpend() {
   const { data: bookings, loading } = useVenueBookings({ status: 'completed' });
 
   const totalSpend = bookings?.reduce((acc, booking) => {
-    return acc + (booking.final_total || booking.estimated_total || 0);
+    return acc + getPricingBreakdown(booking as any).totalGBP;
   }, 0) || 0;
 
   const totalBookings = bookings?.length || 0;

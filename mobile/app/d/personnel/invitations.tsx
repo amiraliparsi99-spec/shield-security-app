@@ -31,6 +31,7 @@ export default function InvitationsScreen() {
   }, []);
 
   const loadInvitations = async () => {
+    if (!supabase) return;
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
@@ -69,6 +70,7 @@ export default function InvitationsScreen() {
   };
 
   const subscribeToInvitations = () => {
+    if (!supabase) return;
     const channel = supabase
       .channel("personnel-invitations")
       .on(
@@ -85,11 +87,12 @@ export default function InvitationsScreen() {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      if (supabase) supabase.removeChannel(channel);
     };
   };
 
   const handleAccept = async (invitationId: string) => {
+    if (!supabase) return;
     setProcessingId(invitationId);
 
     try {
@@ -126,6 +129,7 @@ export default function InvitationsScreen() {
           text: "Decline",
           style: "destructive",
           onPress: async () => {
+            if (!supabase) return;
             setProcessingId(invitationId);
 
             try {

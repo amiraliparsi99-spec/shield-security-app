@@ -370,11 +370,10 @@ export function QuoteBuilder() {
       {/* Quotes List */}
       <div className="space-y-4">
         {quotes.map(quote => (
-          <motion.div
+          <div
             key={quote.id}
             className="glass rounded-xl p-4 hover:border-shield-500/30 transition cursor-pointer"
             onClick={() => setSelectedQuote(quote)}
-            whileHover={{ scale: 1.005 }}
           >
             <div className="flex items-start justify-between">
               <div className="flex-1">
@@ -412,7 +411,7 @@ export function QuoteBuilder() {
                 ✏️ Edit
               </button>
             </div>
-          </motion.div>
+          </div>
         ))}
       </div>
     </div>

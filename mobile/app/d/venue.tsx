@@ -1,7 +1,6 @@
 import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, RefreshControl } from "react-native";
-import { AGENCIES, AVAILABLE_PERSONNEL } from "../../data/dashboard";
 import { supabase } from "../../lib/supabase";
 import { getProfileIdAndRole, getVenueId } from "../../lib/auth";
 import { colors, typography, spacing, radius } from "../../theme";
@@ -10,22 +9,17 @@ type Tab = "personnel" | "agencies" | "bookings" | "payments";
 
 type VenueBooking = {
   id: string;
-  provider_type: string;
-  provider_id: string;
   event_date: string;
   start_time: string;
   end_time: string;
-  guards_count: number;
-  rate: number;
-  currency: string;
+  guards_count?: number;
+  rate?: number;
+  currency?: string;
   status: string;
-  payment_status: string;
+  payment_status?: string;
   event_name?: string;
-  personnel?: {
-    id: string;
-    display_name: string;
-    user_id: string;
-  };
+  estimated_total?: number | null;
+  final_total?: number | null;
 };
 
 function formatMoney(rate: number, currency: string): string {
@@ -34,28 +28,23 @@ function formatMoney(rate: number, currency: string): string {
   return `${sym}${(rate / 100).toFixed(2)}`;
 }
 
-function filterPersonnel(q: string) {
-  if (!q.trim()) return AVAILABLE_PERSONNEL;
-  const lower = q.trim().toLowerCase();
-  return AVAILABLE_PERSONNEL.filter(
-    (p) =>
-      p.display_name.toLowerCase().includes(lower) ||
-      p.location.toLowerCase().includes(lower) ||
-      (p.certs && p.certs.toLowerCase().includes(lower))
-  );
-}
+type PersonnelItem = {
+  id: string;
+  display_name: string;
+  city?: string;
+  hourly_rate?: number;
+  shield_score?: number;
+  is_available?: boolean;
+  skills?: string[];
+};
 
-function filterAgencies(q: string) {
-  if (!q.trim()) return AGENCIES;
-  const lower = q.trim().toLowerCase();
-  return AGENCIES.filter(
-    (a) =>
-      a.name.toLowerCase().includes(lower) ||
-      (a.location_name && a.location_name.toLowerCase().includes(lower)) ||
-      (a.address && a.address.toLowerCase().includes(lower)) ||
-      a.types.some((t) => t.toLowerCase().includes(lower))
-  );
-}
+type AgencyItem = {
+  id: string;
+  name: string;
+  city?: string;
+  staff_count?: number;
+  specializations?: string[];
+};
 
 function formatDate(iso: string): string {
   try {
@@ -73,6 +62,9 @@ export default function VenueDashboard() {
   const [venueId, setVenueId] = useState<string | null>(null);
   const [venueBookings, setVenueBookings] = useState<VenueBooking[]>([]);
   const [loadingBookings, setLoadingBookings] = useState(false);
+  const [personnelList, setPersonnelList] = useState<PersonnelItem[]>([]);
+  const [agencyList, setAgencyList] = useState<AgencyItem[]>([]);
+  const [loadingLists, setLoadingLists] = useState(true);
 
   const loadVenue = useCallback(async () => {
     if (!supabase) return;
@@ -82,18 +74,52 @@ export default function VenueDashboard() {
     if (!profile) return;
     const vId = await getVenueId(supabase, profile.profileId);
     setVenueId(vId ?? null);
-    if (!vId) return;
+
+    // Load personnel from Supabase
+    setLoadingLists(true);
+    const { data: pRows } = await supabase
+      .from("personnel")
+      .select("id, display_name, city, hourly_rate, shield_score, is_available, skills")
+      .eq("is_active", true)
+      .order("shield_score", { ascending: false })
+      .limit(50);
+    setPersonnelList(pRows || []);
+
+    // Load agencies from Supabase
+    const { data: aRows } = await supabase
+      .from("agencies")
+      .select("id, name, city, staff_count, specializations")
+      .eq("is_active", true)
+      .order("name")
+      .limit(50);
+    setAgencyList(aRows || []);
+    setLoadingLists(false);
+
+    if (!vId) { setRefreshing(false); return; }
     setLoadingBookings(true);
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("bookings")
       .select(`
-        id, provider_type, provider_id, event_date, start_time, end_time, 
-        guards_count, rate, currency, status, payment_status, event_name,
-        personnel:provider_id (id, display_name, user_id)
+        id, event_name, event_date, start_time, end_time,
+        status, estimated_total, final_total
       `)
       .eq("venue_id", vId)
       .order("event_date", { ascending: false });
-    setVenueBookings((data as VenueBooking[]) || []);
+    if (error) {
+      console.error("[d/venue] bookings load error:", error);
+      setVenueBookings([]);
+      setLoadingBookings(false);
+      setRefreshing(false);
+      return;
+    }
+    const normalized = ((data as any[]) || []).map((b) => ({
+      ...b,
+      guards_count: 0,
+      rate: b.final_total ?? b.estimated_total ?? 0,
+      currency: "GBP",
+      payment_status: (b.final_total ?? 0) > 0 ? "paid" : "pending",
+    })) as VenueBooking[];
+    setVenueBookings(normalized);
     setLoadingBookings(false);
     setRefreshing(false);
   }, []);
@@ -107,13 +133,28 @@ export default function VenueDashboard() {
     loadVenue();
   }, [loadVenue]);
 
-  const filteredPersonnel = useMemo(() => filterPersonnel(search), [search]);
-  const filteredAgencies = useMemo(() => filterAgencies(search), [search]);
+  const filteredPersonnel = useMemo(() => {
+    if (!search.trim()) return personnelList;
+    const lower = search.trim().toLowerCase();
+    return personnelList.filter((p) =>
+      p.display_name.toLowerCase().includes(lower) ||
+      (p.city && p.city.toLowerCase().includes(lower))
+    );
+  }, [search, personnelList]);
+
+  const filteredAgencies = useMemo(() => {
+    if (!search.trim()) return agencyList;
+    const lower = search.trim().toLowerCase();
+    return agencyList.filter((a) =>
+      a.name.toLowerCase().includes(lower) ||
+      (a.city && a.city.toLowerCase().includes(lower))
+    );
+  }, [search, agencyList]);
   const filteredBookings = useMemo(() => {
     if (!search.trim()) return venueBookings;
     const lower = search.trim().toLowerCase();
-    return venueBookings.filter(
-      (b) => b.provider_type.toLowerCase().includes(lower) || formatDate(b.event_date).toLowerCase().includes(lower)
+      return venueBookings.filter(
+      (b) => (b.event_name || "").toLowerCase().includes(lower) || formatDate(b.event_date).toLowerCase().includes(lower)
     );
   }, [search, venueBookings]);
 
@@ -127,7 +168,7 @@ export default function VenueDashboard() {
       ? "Search by name, location or certs…"
       : tab === "agencies"
         ? "Search agencies, type, or location…"
-        : "Search by provider or date…";
+        : "Search by event or date…";
 
   return (
     <View style={styles.container}>
@@ -145,9 +186,9 @@ export default function VenueDashboard() {
           <Text style={styles.quickActionIcon}>➕</Text>
           <Text style={styles.quickActionText}>Book</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.push("/analytics")} style={styles.quickAction} activeOpacity={0.7}>
-          <Text style={styles.quickActionIcon}>📊</Text>
-          <Text style={styles.quickActionText}>Analytics</Text>
+        <TouchableOpacity onPress={() => router.push("/preferred-staff")} style={styles.quickAction} activeOpacity={0.7}>
+          <Text style={styles.quickActionIcon}>⭐</Text>
+          <Text style={styles.quickActionText}>Preferred</Text>
         </TouchableOpacity>
       </View>
       <View style={styles.tabs}>
@@ -175,22 +216,24 @@ export default function VenueDashboard() {
         <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
           <Text style={styles.sectionTitle}>Available for work</Text>
           <Text style={styles.sectionSubtitle}>Tap a profile to view details and book.</Text>
-          {filteredPersonnel.length === 0 ? (
+          {loadingLists ? (
+            <ActivityIndicator size="small" color={colors.accent} style={{ marginTop: spacing.xl }} />
+          ) : filteredPersonnel.length === 0 ? (
             <Text style={styles.noResults}>No personnel match your search.</Text>
           ) : (
             filteredPersonnel.map((p) => (
-              <TouchableOpacity key={p.id} style={styles.card} onPress={() => router.push(`/personnel/${p.id}`)} activeOpacity={0.7}>
+              <TouchableOpacity key={p.id} style={styles.card} onPress={() => router.push(`/explore/personnel/${p.id}` as any)} activeOpacity={0.7}>
                 <View style={styles.personRow}>
                   <View style={styles.avatar}>
-                    <Text style={styles.avatarText}>{p.display_name[0]}</Text>
+                    <Text style={styles.avatarText}>{(p.display_name || "?")[0]}</Text>
                   </View>
                   <View style={styles.personInfo}>
                     <Text style={styles.cardTitle}>{p.display_name}</Text>
-                    <View style={[styles.badge, p.status === "available" && styles.badgeAvail]}>
-                      <Text style={[styles.badgeText, p.status === "available" && styles.badgeTextAvail]}>{p.status === "available" ? "Available" : "Looking"}</Text>
+                    <View style={[styles.badge, p.is_available && styles.badgeAvail]}>
+                      <Text style={[styles.badgeText, p.is_available && styles.badgeTextAvail]}>{p.is_available ? "Available" : "Active"}</Text>
                     </View>
-                    <Text style={styles.cardMeta}>{p.location}</Text>
-                    <Text style={styles.highlight}>{p.rate}</Text>
+                    {p.city ? <Text style={styles.cardMeta}>{p.city}</Text> : null}
+                    {p.hourly_rate ? <Text style={styles.highlight}>£{p.hourly_rate}/hr</Text> : null}
                   </View>
                   <Text style={styles.chevron}>→</Text>
                 </View>
@@ -201,35 +244,22 @@ export default function VenueDashboard() {
       )}
 
       {tab === "agencies" && (
-        <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-          <Text style={styles.sectionTitle}>Security agencies</Text>
-          <Text style={styles.sectionSubtitle}>Browse and tap for details.</Text>
-          {filteredAgencies.length === 0 ? (
-            <Text style={styles.noResults}>No agencies match your search.</Text>
-          ) : (
-            filteredAgencies.map((a) => (
-              <TouchableOpacity key={a.id} style={styles.card} onPress={() => router.push(`/agency/${a.id}`)} activeOpacity={0.7}>
-                <Text style={styles.cardTitle}>{a.name}</Text>
-                <View style={styles.agencyTypes}>
-                  {a.types.map((t) => (
-                    <View key={t} style={styles.agencyTypeBadge}>
-                      <Text style={styles.agencyTypeText}>{t}</Text>
-                    </View>
-                  ))}
-                </View>
-                <Text style={styles.cardMeta}>{a.address || a.location_name}</Text>
-                <Text style={styles.highlight}>{a.staff_range && `${a.staff_range} staff`}{a.staff_range && a.rate_from && " · "}{a.rate_from}</Text>
-                <Text style={styles.tapHint}>Tap for full details</Text>
-              </TouchableOpacity>
-            ))
-          )}
-        </ScrollView>
+        <View style={styles.comingSoonContainer}>
+          <Text style={styles.comingSoonIcon}>🏛️</Text>
+          <Text style={styles.comingSoonTitle}>Agencies Coming Soon</Text>
+          <Text style={styles.comingSoonSubtitle}>
+            We're building agency partnerships so you can book entire teams. Stay tuned for updates.
+          </Text>
+          <View style={styles.comingSoonBadge}>
+            <Text style={styles.comingSoonBadgeText}>Coming Soon</Text>
+          </View>
+        </View>
       )}
 
       {tab === "bookings" && (
         <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
           <Text style={styles.sectionTitle}>Your bookings</Text>
-          <Text style={styles.sectionSubtitle}>Confirmed shifts. Tap to view that provider’s profile.</Text>
+          <Text style={styles.sectionSubtitle}>Tap to manage the booking.</Text>
           {loadingBookings ? (
             <ActivityIndicator size="small" color={colors.accent} style={{ marginTop: spacing.xl }} />
           ) : filteredBookings.length === 0 ? (
@@ -241,19 +271,26 @@ export default function VenueDashboard() {
               <TouchableOpacity
                 key={b.id}
                 style={styles.card}
-                onPress={() => router.push(b.provider_type === "personnel" ? `/personnel/${b.provider_id}` : `/agency/${b.provider_id}`)}
+                onPress={() => router.push(`/booking-manage?id=${b.id}`)}
                 activeOpacity={0.7}
               >
-                <Text style={styles.cardTitle}>{b.provider_type === "personnel" ? "Personnel" : "Agency"}</Text>
+                <Text style={styles.cardTitle}>{b.event_name || "Booking"}</Text>
                 <View style={[styles.badge, styles.badgeBooking]}>
-                  <Text style={styles.badgeText}>{b.provider_type === "personnel" ? "Personnel" : "Agency"}</Text>
+                  <Text style={styles.badgeText}>{b.status || "pending"}</Text>
                 </View>
-                <Text style={styles.cardMeta}>{formatDate(b.event_date)} · {b.guards_count} guard{b.guards_count !== 1 ? "s" : ""}</Text>
-                <Text style={styles.highlight}>{formatMoney(b.rate, b.currency)}</Text>
-                <Text style={styles.tapHint}>View profile →</Text>
+                <Text style={styles.cardMeta}>{formatDate(b.event_date)}</Text>
+                <Text style={styles.highlight}>{formatMoney(b.rate || 0, b.currency || "GBP")}</Text>
+                <Text style={styles.tapHint}>Tap to manage booking</Text>
               </TouchableOpacity>
             ))
           )}
+          <TouchableOpacity
+            style={[styles.payNowButton, { marginTop: spacing.md }]}
+            onPress={() => router.push("/booking/new")}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.payNowButtonText}>+ New booking</Text>
+          </TouchableOpacity>
         </ScrollView>
       )}
 
@@ -308,9 +345,6 @@ export default function VenueDashboard() {
                     <View>
                       <Text style={styles.paymentCardTitle}>{b.event_name || "Security Shift"}</Text>
                       <Text style={styles.paymentCardMeta}>{formatDate(b.event_date)}</Text>
-                      {b.personnel && (
-                        <Text style={styles.paymentCardProvider}>Guard: {b.personnel.display_name}</Text>
-                      )}
                     </View>
                     <View style={styles.paymentCardRight}>
                       <Text style={styles.paymentCardAmount}>{formatMoney(b.rate, b.currency)}</Text>
@@ -429,6 +463,42 @@ const styles = StyleSheet.create({
   agencyTypes: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: spacing.sm },
   agencyTypeBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.accentSoft },
   agencyTypeText: { ...typography.captionMuted, color: colors.textSecondary },
+  comingSoonContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.xxl,
+  },
+  comingSoonIcon: {
+    fontSize: 48,
+    marginBottom: spacing.md,
+  },
+  comingSoonTitle: {
+    ...typography.title,
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  comingSoonSubtitle: {
+    ...typography.bodySmall,
+    color: colors.textMuted,
+    textAlign: "center" as const,
+    maxWidth: 280,
+    marginBottom: spacing.lg,
+  },
+  comingSoonBadge: {
+    backgroundColor: "rgba(59, 130, 246, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(59, 130, 246, 0.2)",
+    borderRadius: radius.full,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+  },
+  comingSoonBadgeText: {
+    ...typography.caption,
+    color: "rgba(96, 165, 250, 1)",
+    fontWeight: "600" as const,
+  },
   // Payment styles
   paymentStats: {
     flexDirection: "row",

@@ -52,6 +52,7 @@ export default function PayBookingScreen() {
   }, [id]);
 
   const fetchBookingDetails = async () => {
+    if (!supabase) return;
     try {
       const { data, error } = await supabase
         .from("bookings")
@@ -66,7 +67,7 @@ export default function PayBookingScreen() {
         .single();
 
       if (error) throw error;
-      setBooking(data as BookingDetails);
+      setBooking(data as unknown as BookingDetails);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -100,6 +101,7 @@ export default function PayBookingScreen() {
       return;
     }
 
+    if (!supabase) return;
     setIsProcessing(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();

@@ -13,6 +13,8 @@ Notifications.setNotificationHandler({
     shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
   }),
 });
 
@@ -76,6 +78,7 @@ export async function registerForPushNotifications(): Promise<string | null> {
  * Save push token to Supabase
  */
 async function savePushToken(token: string): Promise<void> {
+  if (!supabase) return;
   try {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
@@ -107,6 +110,7 @@ async function savePushToken(token: string): Promise<void> {
  * Remove push token (on logout)
  */
 export async function removePushToken(): Promise<void> {
+  if (!supabase) return;
   try {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
@@ -188,6 +192,15 @@ export function setupNotificationDeepLinks(
     // Shift claimed / confirmed — go to calendar
     if (data.type === "shift_claimed" || data.type === "urgent_shift_confirmed") {
       navigate("/(tabs)/account");
+      return;
+    }
+
+    // Incoming call notification — handled by CallContext
+    // The app will show the incoming call modal automatically via Supabase Realtime
+    // This is just for when the user taps the notification
+    if (data.type === "incoming_call" && data.call_id) {
+      // The call modal will be shown automatically if the call is still active
+      // No navigation needed - the CallContext handles this
       return;
     }
 

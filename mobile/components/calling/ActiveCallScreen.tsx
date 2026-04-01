@@ -15,9 +15,12 @@ export function ActiveCallScreen() {
     callState, 
     remoteParticipant, 
     isMuted, 
+    isSpeakerOn,
     callDuration,
     isIncomingCall,
+    isAgoraConnected,
     toggleMute, 
+    toggleSpeaker,
     endCall 
   } = useCall();
 
@@ -93,7 +96,7 @@ export function ActiveCallScreen() {
           {/* Call status/duration */}
           {callState === 'connected' ? (
             <View style={styles.durationContainer}>
-              <View style={styles.liveDot} />
+              <View style={[styles.liveDot, isAgoraConnected && styles.liveDotConnected]} />
               <Text style={styles.duration}>{formatCallDuration(callDuration)}</Text>
             </View>
           ) : (
@@ -106,8 +109,17 @@ export function ActiveCallScreen() {
                 })}
               ]}
             >
-              {callState === 'calling' ? 'Ringing...' : 'Establishing connection...'}
+              {callState === 'calling' ? 'Ringing...' : 'Establishing voice connection...'}
             </Animated.Text>
+          )}
+
+          {/* Voice connection status */}
+          {callState === 'connected' && (
+            <View style={styles.voiceStatus}>
+              <Text style={styles.voiceStatusText}>
+                {isAgoraConnected ? '🎙️ Voice Connected' : '⏳ Connecting voice...'}
+              </Text>
+            </View>
           )}
         </View>
 
@@ -132,10 +144,11 @@ export function ActiveCallScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.controlButton}
+            style={[styles.controlButton, isSpeakerOn && styles.controlButtonActive]}
+            onPress={toggleSpeaker}
             activeOpacity={0.7}
           >
-            <Text style={styles.controlIcon}>🔊</Text>
+            <Text style={styles.controlIcon}>{isSpeakerOn ? '🔊' : '🔈'}</Text>
             <Text style={styles.controlLabel}>Speaker</Text>
           </TouchableOpacity>
         </View>
@@ -184,10 +197,10 @@ const styles = StyleSheet.create({
     width: 140,
     height: 140,
     borderRadius: 70,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: colors.primary,
+    shadowColor: colors.accent,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 12,
@@ -219,7 +232,21 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
+    backgroundColor: colors.warning,
+  },
+  liveDotConnected: {
     backgroundColor: colors.success,
+  },
+  voiceStatus: {
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 12,
+  },
+  voiceStatusText: {
+    fontSize: 12,
+    color: colors.textMuted,
   },
   duration: {
     fontSize: 20,

@@ -189,10 +189,8 @@ export function InsuranceVerification({ userType = 'personnel' }: { userType?: '
             const typeInfo = INSURANCE_TYPES.find(t => t.value === record.insurance_type);
 
             return (
-              <motion.div
+              <div
                 key={record.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
                 className="glass rounded-xl p-4"
               >
                 <div className="flex items-start justify-between">
@@ -229,7 +227,7 @@ export function InsuranceVerification({ userType = 'personnel' }: { userType?: '
                     )}
                   </div>
                 </div>
-              </motion.div>
+              </div>
             );
           })}
         </div>
@@ -244,12 +242,7 @@ export function InsuranceVerification({ userType = 'personnel' }: { userType?: '
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
-            <motion.div
-              className="w-full max-w-lg glass rounded-2xl p-6"
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-            >
+            <div className="w-full max-w-lg glass rounded-2xl p-6">
               <div className="flex items-center justify-between mb-6">
                 <h3 className="text-xl font-bold text-white">Add Insurance</h3>
                 <button
@@ -373,7 +366,7 @@ export function InsuranceVerification({ userType = 'personnel' }: { userType?: '
                   </button>
                 </div>
               </form>
-            </motion.div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
