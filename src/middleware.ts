@@ -39,6 +39,37 @@ function siteGateResponse(request: NextRequest): NextResponse | null {
   return NextResponse.redirect(gateUrl);
 }
 
+type AppRole = "venue" | "personnel" | "agency" | "admin";
+
+function dashboardPathForRole(role: AppRole | undefined): string | null {
+  switch (role) {
+    case "venue":
+      return "/d/venue";
+    case "personnel":
+      return "/d/personnel";
+    case "agency":
+      return "/d/agency";
+    case "admin":
+      return "/admin";
+    default:
+      return null;
+  }
+}
+
+/**
+ * The `shield_guest_role` cookie lets unauthenticated visitors preview the
+ * dashboards in demo mode. This is NOT an authorization boundary — actual data
+ * access is governed by Supabase RLS. It is disabled in production by default
+ * so a hand-set cookie can't reach dashboard shells; set
+ * `ALLOW_GUEST_DASHBOARDS=true` to opt back in (e.g. for a public demo build).
+ */
+function isGuestDashboardAccessAllowed(): boolean {
+  return (
+    process.env.NODE_ENV !== "production" ||
+    process.env.ALLOW_GUEST_DASHBOARDS === "true"
+  );
+}
+
 export async function middleware(request: NextRequest) {
   const gateRedirect = siteGateResponse(request);
   if (gateRedirect) return gateRedirect;
@@ -47,6 +78,7 @@ export async function middleware(request: NextRequest) {
 
   const isProtected = PROTECTED_PREFIXES.some((p) => pathname.startsWith(p));
   const guestRole = request.cookies.get("shield_guest_role")?.value;
+  const guestAllowed = isGuestDashboardAccessAllowed();
 
   let response = NextResponse.next({ request });
 
@@ -73,96 +105,55 @@ export async function middleware(request: NextRequest) {
     }
   );
 
+  // Validate the user against the Supabase auth server. Do NOT use getSession()
+  // for auth decisions in server code — it only decodes the cookie locally and
+  // can be stale or spoofed. getUser() verifies the token with Supabase.
   const {
-    data: { session },
-  } = await supabase.auth.getSession();
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  // If /signup is opened while role is already known, send user straight to dashboard.
+  // If /signup is opened while the role is already known, route to the dashboard.
   if (pathname === "/signup") {
-    let role:
-      | "venue"
-      | "personnel"
-      | "agency"
-      | "admin"
-      | undefined;
+    let role: AppRole | undefined;
 
-    if (session?.user?.id) {
-      const userId = session.user.id;
+    if (user?.id) {
       const { data: profileByUser } = await supabase
         .from("profiles")
         .select("role")
-        .eq("user_id", userId)
+        .eq("user_id", user.id)
         .maybeSingle();
       const { data: profileById } = profileByUser?.role
         ? { data: null }
-        : await supabase.from("profiles").select("role").eq("id", userId).maybeSingle();
-      role = (profileByUser?.role || profileById?.role || session.user.user_metadata?.role) as
-        | "venue"
-        | "personnel"
-        | "agency"
-        | "admin"
+        : await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
+      role = (profileByUser?.role || profileById?.role || user.user_metadata?.role) as
+        | AppRole
         | undefined;
-    } else if (guestRole && ["venue", "personnel", "agency", "admin"].includes(guestRole)) {
-      role = guestRole as "venue" | "personnel" | "agency" | "admin";
+    } else if (
+      guestAllowed &&
+      guestRole &&
+      ["venue", "personnel", "agency", "admin"].includes(guestRole)
+    ) {
+      role = guestRole as AppRole;
     }
 
-    const dashboardPath =
-      role === "venue"
-        ? "/d/venue"
-        : role === "personnel"
-          ? "/d/personnel"
-          : role === "agency"
-            ? "/d/agency"
-            : role === "admin"
-              ? "/admin"
-              : null;
+    const dashboardPath = dashboardPathForRole(role);
     if (dashboardPath) {
       return NextResponse.redirect(new URL(dashboardPath, request.url));
     }
-  }
-
-  // If a signed-in user hits /signup, send them straight to their dashboard.
-  if (pathname === "/signup" && session?.user?.id) {
-    const userId = session.user.id;
-    const { data: profileByUser } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("user_id", userId)
-      .maybeSingle();
-    const { data: profileById } = profileByUser?.role
-      ? { data: null }
-      : await supabase.from("profiles").select("role").eq("id", userId).maybeSingle();
-    const role = (profileByUser?.role || profileById?.role || session.user.user_metadata?.role) as
-      | "venue"
-      | "personnel"
-      | "agency"
-      | "admin"
-      | undefined;
-    const dashboardPath =
-      role === "venue"
-        ? "/d/venue"
-        : role === "personnel"
-          ? "/d/personnel"
-          : role === "agency"
-            ? "/d/agency"
-            : role === "admin"
-              ? "/admin"
-              : null;
-    if (dashboardPath) {
-      return NextResponse.redirect(new URL(dashboardPath, request.url));
-    }
-    // If signed-in but role unresolved, prefer dashboard over signup loop.
-    if (session?.user?.id) {
+    // Signed in but role unresolved — prefer the dashboard over a signup loop.
+    if (user?.id) {
       return NextResponse.redirect(new URL("/dashboard", request.url));
     }
   }
 
-  if (!isProtected) return NextResponse.next();
+  // Always return the cookie-bearing `response` (not a fresh NextResponse.next())
+  // so refreshed Supabase auth cookies are persisted to the browser.
+  if (!isProtected) return response;
 
-  // Allow guest demo via cookie
-  if (guestRole) return NextResponse.next();
+  // Guest demo preview (gated; not an auth boundary — RLS still governs data).
+  if (guestAllowed && guestRole) return response;
 
-  if (!session) {
+  if (!user) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("redirect", pathname);
     return NextResponse.redirect(loginUrl);
