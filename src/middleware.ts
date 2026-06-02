@@ -46,11 +46,7 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   const isProtected = PROTECTED_PREFIXES.some((p) => pathname.startsWith(p));
-  if (!isProtected) return NextResponse.next();
-
-  // Allow guest demo via cookie
   const guestRole = request.cookies.get("shield_guest_role")?.value;
-  if (guestRole) return NextResponse.next();
 
   let response = NextResponse.next({ request });
 
@@ -78,6 +74,91 @@ export async function middleware(request: NextRequest) {
   const {
     data: { session },
   } = await supabase.auth.getSession();
+
+  // If /signup is opened while role is already known, send user straight to dashboard.
+  if (pathname === "/signup") {
+    let role:
+      | "venue"
+      | "personnel"
+      | "agency"
+      | "admin"
+      | undefined;
+
+    if (session?.user?.id) {
+      const userId = session.user.id;
+      const { data: profileByUser } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("user_id", userId)
+        .maybeSingle();
+      const { data: profileById } = profileByUser?.role
+        ? { data: null }
+        : await supabase.from("profiles").select("role").eq("id", userId).maybeSingle();
+      role = (profileByUser?.role || profileById?.role || session.user.user_metadata?.role) as
+        | "venue"
+        | "personnel"
+        | "agency"
+        | "admin"
+        | undefined;
+    } else if (guestRole && ["venue", "personnel", "agency", "admin"].includes(guestRole)) {
+      role = guestRole as "venue" | "personnel" | "agency" | "admin";
+    }
+
+    const dashboardPath =
+      role === "venue"
+        ? "/d/venue"
+        : role === "personnel"
+          ? "/d/personnel"
+          : role === "agency"
+            ? "/d/agency"
+            : role === "admin"
+              ? "/admin"
+              : null;
+    if (dashboardPath) {
+      return NextResponse.redirect(new URL(dashboardPath, request.url));
+    }
+  }
+
+  // If a signed-in user hits /signup, send them straight to their dashboard.
+  if (pathname === "/signup" && session?.user?.id) {
+    const userId = session.user.id;
+    const { data: profileByUser } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("user_id", userId)
+      .maybeSingle();
+    const { data: profileById } = profileByUser?.role
+      ? { data: null }
+      : await supabase.from("profiles").select("role").eq("id", userId).maybeSingle();
+    const role = (profileByUser?.role || profileById?.role || session.user.user_metadata?.role) as
+      | "venue"
+      | "personnel"
+      | "agency"
+      | "admin"
+      | undefined;
+    const dashboardPath =
+      role === "venue"
+        ? "/d/venue"
+        : role === "personnel"
+          ? "/d/personnel"
+          : role === "agency"
+            ? "/d/agency"
+            : role === "admin"
+              ? "/admin"
+              : null;
+    if (dashboardPath) {
+      return NextResponse.redirect(new URL(dashboardPath, request.url));
+    }
+    // If signed-in but role unresolved, prefer dashboard over signup loop.
+    if (session?.user?.id) {
+      return NextResponse.redirect(new URL("/dashboard", request.url));
+    }
+  }
+
+  if (!isProtected) return NextResponse.next();
+
+  // Allow guest demo via cookie
+  if (guestRole) return NextResponse.next();
 
   if (!session) {
     const loginUrl = new URL("/login", request.url);

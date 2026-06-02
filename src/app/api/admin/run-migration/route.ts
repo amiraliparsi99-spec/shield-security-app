@@ -1,8 +1,56 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { createServerClient } from "@supabase/ssr";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const adminApiSecret = process.env.ADMIN_API_SECRET;
+
+/**
+ * Auth gate for this admin/debug route. Requires either:
+ *   - ADMIN_API_SECRET bearer token (server-to-server), OR
+ *   - a logged-in user whose `profiles.role` is "admin".
+ * Returns null on success, NextResponse on failure.
+ */
+async function requireAdmin(request: NextRequest): Promise<NextResponse | null> {
+  const authHeader = request.headers.get("authorization");
+  if (
+    adminApiSecret &&
+    authHeader &&
+    authHeader === `Bearer ${adminApiSecret}`
+  ) {
+    return null;
+  }
+
+  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookies: {
+      getAll() {
+        return request.cookies
+          .getAll()
+          .map((c) => ({ name: c.name, value: c.value }));
+      },
+      setAll() {},
+    },
+  });
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const admin = createClient(supabaseUrl, supabaseServiceKey);
+  const { data: profile } = await admin
+    .from("profiles")
+    .select("role")
+    .or(`id.eq.${user.id},user_id.eq.${user.id}`)
+    .maybeSingle();
+  if (profile?.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  return null;
+}
 
 /**
  * Creates shift_offers for all verified guards for a given booking.
@@ -50,7 +98,7 @@ async function createOffersForBooking(bookingId: string) {
     .eq("is_active", true);
   if (!guards || guards.length === 0) return { error: "No active verified guards" };
 
-  const expiresAt = new Date(Date.now() + 60_000).toISOString();
+  const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
   const label = `${booking.event_name || "Security Shift"} @ ${venue.name || "Venue"}`;
   const address = [venue.address_line1, venue.city, venue.postcode].filter(Boolean).join(", ");
 
@@ -79,9 +127,16 @@ async function createOffersForBooking(bookingId: string) {
     expires_at: expiresAt,
   }));
 
+  await supabase
+    .from("shift_offers")
+    .delete()
+    .eq("shift_id", representativeShift.id)
+    .in("personnel_id", guards.map((g) => g.id))
+    .neq("status", "accepted");
+
   const { data: inserted, error: insertErr } = await supabase
     .from("shift_offers")
-    .upsert(offerRows, { onConflict: "shift_id,personnel_id", ignoreDuplicates: true })
+    .insert(offerRows)
     .select("id");
 
   return {
@@ -95,6 +150,9 @@ async function createOffersForBooking(bookingId: string) {
 }
 
 export async function POST(request: NextRequest) {
+  const denied = await requireAdmin(request);
+  if (denied) return denied;
+
   const body = await request.json().catch(() => ({}));
 
   if (body.action === "create_offers" && body.booking_id) {

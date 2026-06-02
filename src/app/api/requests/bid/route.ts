@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { sendPushNotification } from "@/lib/notifications/push-service";
 
 export async function POST(request: NextRequest) {
   try {
@@ -115,20 +116,12 @@ export async function POST(request: NextRequest) {
         .eq("id", agency.id)
         .single();
       if (venueRow?.user_id) {
-        const base = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_VERCEL_URL || "http://localhost:3000";
-        await fetch(`${base}/api/notifications/send`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(process.env.SUPABASE_SERVICE_ROLE_KEY && { "x-service-key": process.env.SUPABASE_SERVICE_ROLE_KEY }),
-          },
-          body: JSON.stringify({
-            userId: venueRow.user_id,
-            type: "new_message",
-            title: "New bid on your request",
-            body: `${agencyRow?.name ?? "An agency"} submitted a bid`,
-            data: { type: "request_bid", request_id: request_id, bid_id: bid.id },
-          }),
+        await sendPushNotification({
+          userId: venueRow.user_id,
+          type: "new_message",
+          title: "New bid on your request",
+          body: `${agencyRow?.name ?? "An agency"} submitted a bid`,
+          data: { type: "request_bid", request_id: request_id, bid_id: bid.id },
         });
       }
     } catch (pushErr) {

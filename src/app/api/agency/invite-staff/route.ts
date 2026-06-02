@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { sendPushNotification } from "@/lib/notifications/push-service";
 
 export async function POST(request: NextRequest) {
   try {
@@ -95,37 +96,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Send push notification to personnel
     try {
-      const { data: pushTokens } = await supabase
-        .from("push_tokens")
-        .select("token")
-        .eq("user_id", personnel.user_id);
-
-      if (pushTokens && pushTokens.length > 0) {
-        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
-        await fetch(`${baseUrl}/api/notifications/send`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-service-key": process.env.SUPABASE_SERVICE_ROLE_KEY || "",
-          },
-          body: JSON.stringify({
-            userId: personnel.user_id,
-            type: "agency_invitation",
-            title: "Agency Invitation",
-            body: `${agency.name} has invited you to join their team`,
-            data: {
-              type: "agency_invitation",
-              invitation_id: invitation.id,
-              agency_id: agency.id,
-            },
-          }),
-        });
-      }
+      await sendPushNotification({
+        userId: personnel.user_id,
+        type: "agency_invitation",
+        title: "Agency Invitation",
+        body: `${agency.name} has invited you to join their team`,
+        data: {
+          type: "agency_invitation",
+          invitation_id: invitation.id,
+          agency_id: agency.id,
+        },
+      });
     } catch (pushError) {
       console.error("Push notification error:", pushError);
-      // Don't fail the request if push fails
     }
 
     return NextResponse.json({

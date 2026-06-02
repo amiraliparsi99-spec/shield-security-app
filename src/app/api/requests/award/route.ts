@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { sendPushNotification } from "@/lib/notifications/push-service";
 
 export async function POST(request: NextRequest) {
   try {
@@ -141,20 +142,12 @@ export async function POST(request: NextRequest) {
         .eq("id", venue.id)
         .single();
       if (agencyRow?.user_id) {
-        const base = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_VERCEL_URL || "http://localhost:3000";
-        await fetch(`${base}/api/notifications/send`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(process.env.SUPABASE_SERVICE_ROLE_KEY && { "x-service-key": process.env.SUPABASE_SERVICE_ROLE_KEY }),
-          },
-          body: JSON.stringify({
-            userId: agencyRow.user_id,
-            type: "new_message",
-            title: "You won the bid",
-            body: `${venueRow?.name ?? "A venue"} awarded your bid`,
-            data: { type: "request_awarded", request_id: request_id, bid_id: bid_id, booking_id: booking?.id },
-          }),
+        await sendPushNotification({
+          userId: agencyRow.user_id,
+          type: "new_message",
+          title: "You won the bid",
+          body: `${venueRow?.name ?? "A venue"} awarded your bid`,
+          data: { type: "request_awarded", request_id: request_id, bid_id: bid_id, booking_id: booking?.id },
         });
       }
     } catch (pushErr) {

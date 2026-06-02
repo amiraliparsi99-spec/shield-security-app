@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { sendPushNotification } from "@/lib/notifications/push-service";
 
 export async function POST(request: NextRequest) {
   try {
@@ -115,20 +116,12 @@ export async function POST(request: NextRequest) {
         senderName = agencyRow?.name ?? "An agency";
       }
       if (targetUserId) {
-        const base = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_VERCEL_URL || "http://localhost:3000";
-        await fetch(`${base}/api/notifications/send`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(process.env.SUPABASE_SERVICE_ROLE_KEY && { "x-service-key": process.env.SUPABASE_SERVICE_ROLE_KEY }),
-          },
-          body: JSON.stringify({
-            userId: targetUserId,
-            type: "new_message",
-            title: "Partnership request",
-            body: `${senderName} sent you a partnership request`,
-            data: { type: "partnership_request", partnership_id: partnership.id },
-          }),
+        await sendPushNotification({
+          userId: targetUserId,
+          type: "new_message",
+          title: "Partnership request",
+          body: `${senderName} sent you a partnership request`,
+          data: { type: "partnership_request", partnership_id: partnership.id },
         });
       }
     } catch (pushErr) {

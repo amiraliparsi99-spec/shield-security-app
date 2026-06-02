@@ -1,10 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createServerClient } from "@supabase/ssr";
 
 const SIA_API_URL = "https://api.siachecker.co.uk/v1/licences/verify";
 const SIA_API_KEY = process.env.SIA_CHECKER_API_KEY;
 
 export async function POST(request: NextRequest) {
   try {
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return request.cookies
+              .getAll()
+              .map((c) => ({ name: c.name, value: c.value }));
+          },
+          setAll() {},
+        },
+      },
+    );
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json(
+        { valid: false, message: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
     const { sia_number } = await request.json();
 
     const digits = (sia_number || "").replace(/\D/g, "");

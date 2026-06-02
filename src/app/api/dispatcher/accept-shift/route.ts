@@ -11,6 +11,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { assignReplacement } from "@/lib/dispatcher";
+import { validateClaimProximity } from "@/lib/shifts/claimProximity";
+import { resolvePersonnelByAuthUser } from "@/lib/auth/resolvePersonnel";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -49,7 +51,11 @@ export async function POST(request: NextRequest) {
 
     // --- Parse request body ---
     const body = await request.json();
-    const { shift_id } = body as { shift_id?: string };
+    const { shift_id, latitude, longitude } = body as {
+      shift_id?: string;
+      latitude?: number;
+      longitude?: number;
+    };
 
     if (!shift_id || typeof shift_id !== "string") {
       return NextResponse.json(
@@ -57,15 +63,26 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    if (latitude == null || longitude == null) {
+      return NextResponse.json(
+        { error: "latitude and longitude are required to accept this shift" },
+        { status: 400 }
+      );
+    }
 
     // --- Look up the guard's personnel record ---
-    const { data: personnel, error: personnelErr } = await supabase
-      .from("personnel")
-      .select("id, is_standby, is_active, is_available, verification_status, sia_verified")
-      .eq("user_id", user.id)
-      .single();
+    const personnel = (await resolvePersonnelByAuthUser(
+      supabase as any,
+      user.id,
+      "id, is_standby, is_active, is_available",
+    )) as {
+      id: string;
+      is_standby?: boolean | null;
+      is_active?: boolean | null;
+      is_available?: boolean | null;
+    } | null;
 
-    if (personnelErr || !personnel) {
+    if (!personnel) {
       return NextResponse.json(
         { error: "Personnel profile not found for this user" },
         { status: 404 }
@@ -79,10 +96,48 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (personnel.verification_status !== "verified" && personnel.sia_verified !== true) {
+    const { data: verificationRow } = await supabase
+      .from("verifications")
+      .select("status")
+      .eq("owner_type", "personnel")
+      .eq("owner_id", personnel.id)
+      .maybeSingle();
+    if (verificationRow && (verificationRow as any).status !== "verified") {
       return NextResponse.json(
         { error: "You must complete verification before accepting shifts." },
         { status: 403 }
+      );
+    }
+
+    const { data: shift } = await supabase
+      .from("shifts")
+      .select("id, booking_id, status")
+      .eq("id", shift_id)
+      .single();
+
+    if (!shift) {
+      return NextResponse.json(
+        { error: "Shift not found" },
+        { status: 404 }
+      );
+    }
+
+    const proximity = await validateClaimProximity({
+      supabase: supabase as any,
+      bookingId: shift.booking_id,
+      personnelId: personnel.id,
+      guardLatitude: Number(latitude),
+      guardLongitude: Number(longitude),
+    });
+    if (!proximity.ok) {
+      return NextResponse.json(
+        {
+          error: proximity.error,
+          distance_meters: proximity.distance_meters ?? null,
+          max_distance_meters: proximity.max_distance_meters ?? null,
+          location_restricted: true,
+        },
+        { status: 422 }
       );
     }
 
@@ -101,6 +156,8 @@ export async function POST(request: NextRequest) {
       message: result.message,
       shift_id: result.shiftId,
       guard_id: result.newGuardId,
+      distance_meters: proximity.distance_meters,
+      max_distance_meters: proximity.max_distance_meters,
     });
   } catch (error) {
     console.error("[ACCEPT-SHIFT] Error:", error);
