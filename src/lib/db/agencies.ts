@@ -97,8 +97,9 @@ export async function getAgencyStaff(
     return [];
   }
 
-  // Extract personnel from joined data
-  return (data?.map(d => d.personnel).filter(Boolean) as Personnel[]) || [];
+  // Extract personnel from joined data. The join column is typed loosely by
+  // postgrest, so narrow through unknown to the known Personnel shape.
+  return (data?.map(d => d.personnel).filter(Boolean) as unknown as Personnel[]) || [];
 }
 
 export async function addStaffToAgency(

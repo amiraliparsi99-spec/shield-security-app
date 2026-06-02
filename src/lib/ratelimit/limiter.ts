@@ -4,7 +4,7 @@
  * Falls back to in-memory limiting if Redis is not configured
  */
 
-import { Ratelimit } from '@upstash/ratelimit';
+import { Ratelimit, type Duration } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 import { NextRequest, NextResponse } from 'next/server';
 
@@ -43,7 +43,7 @@ export type RateLimitType =
   | 'messaging'     // Messages/notifications
   | 'booking';      // Booking operations
 
-const RATE_LIMITS: Record<RateLimitType, { requests: number; window: string }> = {
+const RATE_LIMITS: Record<RateLimitType, { requests: number; window: Duration }> = {
   api: { requests: 100, window: '1 m' },        // 100 requests per minute
   auth: { requests: 10, window: '1 m' },        // 10 auth attempts per minute
   sensitive: { requests: 5, window: '15 m' },   // 5 sensitive ops per 15 min

@@ -15,3 +15,7 @@ export * from './payments';
 export * from './reviews';
 export * from './agency-shifts';
 export * from './cancellation';
+
+// `assignment` and `agency-shifts` both export `AssignmentResult`; the explicit
+// re-export below disambiguates the wildcard conflict in favour of `assignment`.
+export type { AssignmentResult } from './assignment';

@@ -90,7 +90,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     body: string,
     data?: Record<string, any>
   ) => {
-    showLocalNotification(title, { body, data });
+    showLocalNotification(title, body, { data });
   }, []);
 
   const value: NotificationContextValue = {

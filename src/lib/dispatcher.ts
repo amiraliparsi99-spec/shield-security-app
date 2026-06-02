@@ -436,7 +436,7 @@ export async function assignReplacement(
     //    This prevents the race condition where two guards tap "Accept" at once.
     //    Also clears the cover-search audit columns so the venue's "Sourcing
     //    cover" banner immediately becomes "Replacement found".
-    const { data: updated, error: updateErr } = await supabase
+    const { data: updated, error: updateErr } = await (supabase as any)
       .from("shifts")
       .update({
         personnel_id: newGuardId,

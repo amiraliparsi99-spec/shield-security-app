@@ -178,7 +178,7 @@ export function createErrorTracker(defaultCategory: ErrorCategory, defaultContex
   return {
     track: (
       error: Error | string,
-      options: Omit<Parameters<typeof trackError>[1], 'category'> & { category?: ErrorCategory } = {}
+      options: Omit<NonNullable<Parameters<typeof trackError>[1]>, 'category'> & { category?: ErrorCategory } = {}
     ) => trackError(error, {
       ...options,
       category: options.category || defaultCategory,

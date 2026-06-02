@@ -263,7 +263,7 @@ export async function suggestStaffForBooking(
     start: booking.start,
     end: booking.end,
     venue_id: booking.venue_id,
-    certs_required: booking.request?.certs_required,
+    certs_required: (booking.request as { certs_required?: string[] } | undefined)?.certs_required,
   };
 
   // Get available staff

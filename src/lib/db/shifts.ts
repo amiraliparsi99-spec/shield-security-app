@@ -393,7 +393,7 @@ async function createPaymentForShift(
     return;
   }
 
-  const venue = (booking as { venues?: { id: string; user_id: string } }).venues;
+  const venue = (booking as unknown as { venues?: { id: string; user_id: string } }).venues;
   if (!venue) {
     console.error('Could not find venue for shift payment');
     return;

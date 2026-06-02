@@ -88,7 +88,9 @@ export async function createShiftPayment(
       personnel_net: personnelNet,
       currency: PLATFORM_CONFIG.currency,
       status: 'awaiting_payment',
-      stripe_payment_intent_id: stripePaymentIntentId ?? null,
+      // No Stripe PaymentIntent exists yet at record creation; it is attached
+      // later when the venue is charged.
+      stripe_payment_intent_id: null,
     })
     .select()
     .single();

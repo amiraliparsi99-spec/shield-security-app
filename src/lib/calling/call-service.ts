@@ -225,7 +225,7 @@ export class CallService {
         return;
       }
 
-      await this.peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+      await this.peerConnection!.setRemoteDescription(new RTCSessionDescription(answer));
       this.onStateChange?.('connecting');
     } catch (error) {
       console.error('Failed to handle answer:', error);
