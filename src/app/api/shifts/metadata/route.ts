@@ -1,47 +1,129 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { createServerClient } from "@supabase/ssr";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 /**
- * Returns event_name + venue_name for a list of booking IDs.
- * Uses service role so RLS doesn't block personnel from seeing booking details.
+ * Returns event_name + venue_name for a list of booking IDs that the caller
+ * has access to (via shifts they've been offered/assigned, or venues they
+ * own/manage). Requires an authenticated user; the service role is only used
+ * internally to resolve display strings after the caller's access is proven.
  */
 export async function POST(request: NextRequest) {
   try {
-    const { booking_ids } = (await request.json()) as { booking_ids?: string[] };
+    const supabaseAuth = createServerClient(supabaseUrl, supabaseAnonKey, {
+      cookies: {
+        getAll() {
+          return request.cookies
+            .getAll()
+            .map((c) => ({ name: c.name, value: c.value }));
+        },
+        setAll() {},
+      },
+    });
+    const {
+      data: { user },
+    } = await supabaseAuth.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { booking_ids } = (await request.json()) as {
+      booking_ids?: string[];
+    };
     if (!booking_ids || !Array.isArray(booking_ids) || booking_ids.length === 0) {
       return NextResponse.json({ data: {} });
     }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    const requestedIds = booking_ids.slice(0, 50);
+
+    // Only return metadata for bookings the user can legitimately see:
+    //   - venue owner/manager whose venue owns the booking, OR
+    //   - personnel assigned to a shift under the booking, OR
+    //   - personnel offered a shift under the booking.
+    const { data: personnelRow } = await supabase
+      .from("personnel")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    const personnelId = personnelRow?.id ?? null;
+
+    const allowedBookingIds = new Set<string>();
+
+    const { data: venueBookings } = await supabase
+      .from("bookings")
+      .select("id, venues!inner(user_id)")
+      .in("id", requestedIds);
+    if (venueBookings) {
+      for (const row of venueBookings as Array<{
+        id: string;
+        venues?: { user_id?: string } | Array<{ user_id?: string }>;
+      }>) {
+        const venueRel = Array.isArray(row.venues) ? row.venues[0] : row.venues;
+        if (venueRel?.user_id === user.id) allowedBookingIds.add(row.id);
+      }
+    }
+
+    if (personnelId) {
+      const { data: assignedShifts } = await supabase
+        .from("shifts")
+        .select("booking_id")
+        .eq("personnel_id", personnelId)
+        .in("booking_id", requestedIds);
+      assignedShifts?.forEach((s) => {
+        if (s.booking_id) allowedBookingIds.add(s.booking_id);
+      });
+
+      const { data: offeredShifts } = await supabase
+        .from("shift_offers")
+        .select("shift_id, shifts!inner(booking_id)")
+        .eq("personnel_id", personnelId);
+      offeredShifts?.forEach((row: any) => {
+        const b = Array.isArray(row.shifts)
+          ? row.shifts[0]?.booking_id
+          : row.shifts?.booking_id;
+        if (b && requestedIds.includes(b)) allowedBookingIds.add(b);
+      });
+    }
+
+    if (allowedBookingIds.size === 0) {
+      return NextResponse.json({ data: {} });
+    }
+
+    const idList = Array.from(allowedBookingIds);
+
     const { data: bookings } = await supabase
       .from("bookings")
       .select("id, event_name, venue_id")
-      .in("id", booking_ids.slice(0, 50));
+      .in("id", idList);
 
     if (!bookings || bookings.length === 0) {
       return NextResponse.json({ data: {} });
     }
 
-    const venueIds = [...new Set(bookings.map((b) => b.venue_id).filter(Boolean))];
-    let venuesMap: Record<string, { name: string; city: string }> = {};
-
+    const venueIds = [
+      ...new Set(bookings.map((b) => b.venue_id).filter(Boolean)),
+    ];
+    const venuesMap: Record<string, { name: string; city: string }> = {};
     if (venueIds.length > 0) {
       const { data: venues } = await supabase
         .from("venues")
         .select("id, name, city")
         .in("id", venueIds);
-      if (venues) {
-        venues.forEach((v) => {
-          venuesMap[v.id] = { name: v.name, city: v.city || "" };
-        });
-      }
+      venues?.forEach((v) => {
+        venuesMap[v.id] = { name: v.name, city: v.city || "" };
+      });
     }
 
-    const result: Record<string, { event_name: string; venue_name: string; venue_city: string }> = {};
+    const result: Record<
+      string,
+      { event_name: string; venue_name: string; venue_city: string }
+    > = {};
     for (const b of bookings) {
       const venue = venuesMap[b.venue_id] || { name: "Venue", city: "" };
       result[b.id] = {

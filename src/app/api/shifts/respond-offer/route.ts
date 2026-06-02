@@ -8,6 +8,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendPushNotification } from "@/lib/notifications/push-service";
+import { validateClaimProximity } from "@/lib/shifts/claimProximity";
+import { resolvePersonnelByAuthOrProvidedId } from "@/lib/auth/resolvePersonnel";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -35,9 +37,12 @@ export async function POST(request: NextRequest) {
 
     // --- Parse body ---
     const body = await request.json();
-    const { shift_offer_id, response } = body as {
+    const { shift_offer_id, response, latitude, longitude, personnel_id } = body as {
       shift_offer_id?: string;
       response?: "accepted" | "declined";
+      latitude?: number;
+      longitude?: number;
+      personnel_id?: string;
     };
 
     if (!shift_offer_id || typeof shift_offer_id !== "string") {
@@ -65,25 +70,33 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify this offer belongs to the requesting user
-    const { data: personnel } = await supabase
-      .from("personnel")
-      .select("id, display_name, verification_status, sia_verified")
-      .eq("user_id", user.id)
-      .single();
+    const personnel = (await resolvePersonnelByAuthOrProvidedId(
+      supabase as any,
+      user.id,
+      "id, display_name",
+      personnel_id ?? null,
+    )) as {
+      id: string;
+      display_name: string | null;
+    } | null;
 
     if (!personnel || personnel.id !== offer.personnel_id) {
       return NextResponse.json({ error: "This offer does not belong to you" }, { status: 403 });
     }
 
-    if (
-      response === "accepted" &&
-      personnel.verification_status !== "verified" &&
-      personnel.sia_verified !== true
-    ) {
-      return NextResponse.json(
-        { error: "You must complete verification before accepting shifts." },
-        { status: 403 }
-      );
+    if (response === "accepted") {
+      const { data: verificationRow } = await supabase
+        .from("verifications")
+        .select("status")
+        .eq("owner_type", "personnel")
+        .eq("owner_id", personnel.id)
+        .maybeSingle();
+      if (verificationRow && (verificationRow as any).status !== "verified") {
+        return NextResponse.json(
+          { error: "You must complete verification before accepting shifts." },
+          { status: 403 }
+        );
+      }
     }
 
     // Check offer hasn't expired or already been responded to
@@ -126,6 +139,25 @@ export async function POST(request: NextRequest) {
     const shift = (offer as any).shifts;
     if (!shift) {
       return NextResponse.json({ error: "Associated shift not found" }, { status: 404 });
+    }
+
+    const proximity = await validateClaimProximity({
+      supabase: supabase as any,
+      bookingId: shift.booking_id,
+      personnelId: personnel.id,
+      guardLatitude: latitude != null ? Number(latitude) : null,
+      guardLongitude: longitude != null ? Number(longitude) : null,
+    });
+    if (!proximity.ok) {
+      return NextResponse.json(
+        {
+          error: proximity.error,
+          distance_meters: proximity.distance_meters ?? null,
+          max_distance_meters: proximity.max_distance_meters ?? null,
+          location_restricted: true,
+        },
+        { status: 422 },
+      );
     }
 
     // Atomic: claim the shift only if it's still unassigned (or pending)
@@ -216,6 +248,8 @@ export async function POST(request: NextRequest) {
       shift_offer_id,
       shift_id: shift.id,
       guard_name: guardName,
+      distance_meters: proximity.distance_meters,
+      max_distance_meters: proximity.max_distance_meters,
     });
   } catch (error) {
     console.error("[RESPOND-OFFER] Error:", error);

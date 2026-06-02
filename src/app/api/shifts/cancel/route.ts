@@ -8,9 +8,110 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { notifyGuardsForBooking } from "@/lib/notifications/notify-guards";
+import { insertMissionControlSystemMessage } from "@/lib/mission-control/shiftReminders";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+type ServiceClient = ReturnType<typeof createClient>;
+
+/**
+ * Reopen a shift for cover: clear guard assignment and return to board.
+ * Tries progressively smaller patches so one bad column/trigger path cannot
+ * block the core release (personnel cleared + status pending).
+ */
+async function reopenShiftForGuardCover(
+  supabase: ServiceClient,
+  shiftId: string,
+  params: {
+    previousPersonnelId: string | null;
+    reason: string;
+    now: Date;
+    penaltyApplied: boolean;
+  }
+): Promise<{ strategy: number } | { error: unknown }> {
+  const { previousPersonnelId, reason, now, penaltyApplied } = params;
+
+  const strategies: Record<string, unknown>[] = [
+    {
+      personnel_id: null,
+      status: "pending",
+      accepted_at: null,
+      declined_at: null,
+      decline_reason: null,
+      is_urgent: true,
+      dispatcher_status: "searching",
+      original_personnel_id: previousPersonnelId,
+      surge_rate: null,
+      withdrawal_reason: reason.trim(),
+      withdrawal_at: now.toISOString(),
+      cover_search_wave: 1,
+      cover_search_started_at: now.toISOString(),
+      cover_search_last_wave_at: now.toISOString(),
+      cancelled_at: null,
+      cancelled_by: null,
+    },
+    {
+      personnel_id: null,
+      status: "pending",
+      accepted_at: null,
+      declined_at: null,
+      decline_reason: null,
+      cancelled_at: null,
+      cancelled_by: null,
+    },
+    {
+      personnel_id: null,
+      status: "pending",
+    },
+  ];
+
+  let lastError: unknown = null;
+
+  for (let i = 0; i < strategies.length; i++) {
+    const { data, error } = await (supabase as any)
+      .from("shifts")
+      .update(strategies[i])
+      .eq("id", shiftId)
+      .select("id");
+
+    const rowTouched = !error && Array.isArray(data) && data.length > 0;
+      if (rowTouched) {
+      if (i > 0) {
+        const enrich = {
+          is_urgent: true,
+          dispatcher_status: "searching",
+          withdrawal_reason: reason.trim(),
+          withdrawal_at: now.toISOString(),
+          cover_search_wave: 1,
+          cover_search_started_at: now.toISOString(),
+          cover_search_last_wave_at: now.toISOString(),
+          original_personnel_id: previousPersonnelId,
+          surge_rate: null,
+        };
+        const { error: enrichErr } = await (supabase as any)
+          .from("shifts")
+          .update(enrich)
+          .eq("id", shiftId);
+        if (enrichErr) {
+          console.warn("[cancel] optional enrich after fallback failed:", enrichErr);
+        }
+      }
+      return { strategy: i };
+    }
+
+    if (error) {
+      lastError = error;
+      console.error(`[cancel] guard reopen strategy ${i} failed:`, error);
+    } else {
+      lastError = { code: "NO_ROWS_UPDATED", message: "Shift update matched no rows" };
+      console.error(`[cancel] guard reopen strategy ${i}: no rows updated for shift`, shiftId);
+    }
+  }
+
+  return { error: lastError };
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -66,41 +167,80 @@ export async function POST(request: NextRequest) {
     // Use service role for database operations
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Get the shift with related booking and venue info
+    // Load shift without nested embeds — broken PostgREST relationships previously
+    // surfaced as false "Shift not found" (entire select failed).
     const { data: shift, error: shiftError } = await supabase
       .from("shifts")
-      .select(`
-        id,
-        booking_id,
-        personnel_id,
-        status,
-        scheduled_start,
-        scheduled_end,
-        hourly_rate,
-        booking:bookings (
-          id,
-          venue_id,
-          event_name,
-          venues (
-            id,
-            name,
-            user_id
-          )
-        ),
-        personnel (
-          id,
-          user_id,
-          display_name
-        )
-      `)
+      .select(
+        "id, booking_id, personnel_id, status, scheduled_start, scheduled_end, hourly_rate"
+      )
       .eq("id", shift_id)
       .single();
 
-    if (shiftError || !shift) {
+    if (shiftError) {
+      if (shiftError.code === "PGRST116") {
+        return NextResponse.json({ error: "Shift not found" }, { status: 404 });
+      }
+      console.error("[cancel] shift lookup failed:", shiftError.code, shiftError.message);
       return NextResponse.json(
-        { error: "Shift not found" },
-        { status: 404 }
+        {
+          error:
+            process.env.NODE_ENV === "development"
+              ? `Shift lookup failed: ${shiftError.message}`
+              : "Unable to look up this shift. Please try again.",
+        },
+        { status: 500 }
       );
+    }
+
+    if (!shift) {
+      return NextResponse.json({ error: "Shift not found" }, { status: 404 });
+    }
+
+    const { data: bookingRow, error: bookingError } = await supabase
+      .from("bookings")
+      .select("id, venue_id")
+      .eq("id", shift.booking_id)
+      .single();
+
+    if (bookingError || !bookingRow) {
+      console.error("[cancel] booking for shift missing:", shift.booking_id, bookingError);
+      return NextResponse.json(
+        { error: "Shift data is inconsistent. Please contact support." },
+        { status: 500 }
+      );
+    }
+
+    const { data: venueRow, error: venueError } = await supabase
+      .from("venues")
+      .select("id, name, user_id")
+      .eq("id", bookingRow.venue_id)
+      .single();
+
+    if (venueError || !venueRow) {
+      console.error("[cancel] venue for booking missing:", bookingRow.venue_id, venueError);
+      return NextResponse.json(
+        { error: "Shift data is inconsistent. Please contact support." },
+        { status: 500 }
+      );
+    }
+
+    let personnelRow: { id: string; user_id: string; display_name: string | null } | null =
+      null;
+    if (shift.personnel_id) {
+      const { data: p, error: personnelError } = await supabase
+        .from("personnel")
+        .select("id, user_id, display_name")
+        .eq("id", shift.personnel_id)
+        .single();
+      if (personnelError || !p) {
+        console.error("[cancel] personnel for shift missing:", shift.personnel_id, personnelError);
+        return NextResponse.json(
+          { error: "Shift assignment data is missing. Please contact support." },
+          { status: 500 }
+        );
+      }
+      personnelRow = p;
     }
 
     // Check if shift can be cancelled
@@ -112,22 +252,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify the user has permission to cancel
-    const booking = shift.booking as any;
-    const personnel = shift.personnel as any;
-    const venue = booking?.venues;
-
     if (cancelled_by === "venue") {
-      // Venue must own the booking
-      if (venue?.user_id !== user.id) {
+      if (venueRow.user_id !== user.id) {
         return NextResponse.json(
           { error: "You don't have permission to cancel this shift as a venue" },
           { status: 403 }
         );
       }
     } else if (cancelled_by === "guard") {
-      // Guard must be assigned to the shift
-      if (personnel?.user_id !== user.id) {
+      if (personnelRow?.user_id !== user.id) {
         return NextResponse.json(
           { error: "You don't have permission to cancel this shift" },
           { status: 403 }
@@ -154,17 +287,184 @@ export async function POST(request: NextRequest) {
       cancellationNote = "Cancellation with less than 48 hours notice.";
     }
 
-    // Update the shift status
-    const { error: updateError } = await supabase
+    const previousPersonnelId = shift.personnel_id as string | null;
+
+    /**
+     * Reopen accepted future shifts to board + urgent replacement search
+     * (for both guard and venue initiated release). This keeps the slot live.
+     */
+    if (hoursUntilShift > 0 && shift.personnel_id) {
+      const { error: offersErr } = await supabase
+        .from("shift_offers")
+        .delete()
+        .eq("shift_id", shift_id);
+      if (offersErr) {
+        console.warn("[cancel] shift_offers delete (non-fatal):", offersErr);
+      }
+
+      const reopenResult = await reopenShiftForGuardCover(supabase as any, shift_id, {
+        previousPersonnelId,
+        reason: reason.trim(),
+        now,
+        penaltyApplied,
+      });
+
+      if ("error" in reopenResult) {
+        const e = reopenResult.error as { code?: string; message?: string } | null;
+        console.error("Error reopening shift for cover (all strategies):", reopenResult.error);
+        return NextResponse.json(
+          {
+            error: "Failed to release shift for replacement",
+            ...(process.env.NODE_ENV === "development" && e?.message
+              ? { debug: `${e.code ?? ""} ${e.message}`.trim() }
+              : {}),
+          },
+          { status: 500 }
+        );
+      }
+
+      const reopenUsedFallback = reopenResult.strategy > 0;
+
+      let notifyResult: Awaited<ReturnType<typeof notifyGuardsForBooking>> | null = null;
+      try {
+        // Wave 1 cover offers: tighter 5-mile radius via env (the legacy
+        // URGENT_COVER_RADIUS_MILES is broader and is now used by the
+        // wave-broadening cron as a fallback).
+        const wave1RadiusMiles = Number(process.env.COVER_WAVE_1_RADIUS_MILES) > 0
+          ? Number(process.env.COVER_WAVE_1_RADIUS_MILES)
+          : 5;
+        notifyResult = await notifyGuardsForBooking(shift.booking_id, wave1RadiusMiles, {
+          urgent: true,
+          excludePersonnelIds: previousPersonnelId ? [previousPersonnelId] : [],
+        });
+
+        // Audit the wave (best-effort — table may not exist on older schema).
+        await (supabase as any).from("shift_cover_waves").insert({
+          shift_id,
+          wave: 1,
+          radius_miles: wave1RadiusMiles,
+          trigger: cancelled_by === "guard" ? "guard_withdrawal" : "venue_release",
+          guards_notified: notifyResult?.guards_notified ?? 0,
+          offers_created: notifyResult?.offers_created ?? 0,
+          metadata: { reason: reason.trim() },
+        });
+      } catch (notifyErr) {
+        console.error("[cancel] notifyGuardsForBooking failed:", notifyErr);
+      }
+
+      if (venueRow.user_id) {
+        const releasedByLabel =
+          cancelled_by === "guard"
+            ? personnelRow?.display_name || "A guard"
+            : "The venue";
+        await supabase.from("notifications").insert({
+          user_id: venueRow.user_id,
+          type: "shift_needs_cover",
+          title: "Guard released shift — finding cover",
+          body: `${releasedByLabel} released this shift. We're notifying nearby guards (${notifyResult?.guards_notified ?? 0} alerted).`,
+          data: {
+            shift_id,
+            booking_id: shift.booking_id,
+            reason: reason.trim(),
+            released_by: cancelled_by,
+          },
+        });
+      }
+
+      // Post operational visibility in Mission Control for venue teams.
+      const { data: groupChat } = await supabase
+        .from("group_chats")
+        .select("id")
+        .eq("booking_id", shift.booking_id)
+        .eq("chat_type", "mission_control")
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (groupChat?.id && venueRow.user_id && cancelled_by === "guard") {
+        const guardName = personnelRow?.display_name || "The guard";
+        await insertMissionControlSystemMessage({
+          supabase: supabase as any,
+          groupChatId: groupChat.id,
+          senderId: venueRow.user_id,
+          content:
+            `⚠️ **Guard released this shift**\n\n` +
+            `${guardName} selected “I can’t confirm” and released the shift.\n` +
+            `**Reason:** ${reason.trim()}`,
+          metadata: {
+            type: "shift_released_by_guard_2h_confirmation",
+            shift_id,
+            booking_id: shift.booking_id,
+            released_by: "guard",
+            release_reason: reason.trim(),
+          },
+        });
+      }
+
+      if (cancelled_by === "venue" && personnelRow?.user_id) {
+        await supabase.from("notifications").insert({
+          user_id: personnelRow.user_id,
+          type: "shift_cancelled",
+          title: "Shift released by venue",
+          body: `${venueRow.name || "The venue"} released your shift and is re-posting it for urgent cover.`,
+          data: {
+            shift_id,
+            booking_id: shift.booking_id,
+            cancelled_by,
+            reason: reason.trim(),
+            reopened_for_cover: true,
+          },
+        });
+      }
+
+      return NextResponse.json({
+        success: true,
+        mode: "reopened_for_cover",
+        message:
+          cancelled_by === "venue"
+            ? "Shift released by venue. We're searching for nearby cover."
+            : "Shift released. We're searching for nearby cover.",
+        cancellation_note: cancellationNote || undefined,
+        penalty_applied: penaltyApplied,
+        schema_fallback_used: reopenUsedFallback || undefined,
+        replacement_search: notifyResult
+          ? {
+              guards_notified: notifyResult.guards_notified,
+              offers_created: notifyResult.offers_created ?? 0,
+            }
+          : null,
+      });
+    }
+
+    // Venue: cancel the shift entirely
+    const cancelledByForDb = cancelled_by === "guard" ? "personnel" : cancelled_by;
+    let { error: updateError } = await supabase
       .from("shifts")
       .update({
         status: "cancelled",
         cancelled_at: now.toISOString(),
-        cancelled_by: cancelled_by,
-        cancellation_reason: reason.trim(),
-        cancellation_penalty: penaltyApplied,
+        cancelled_by: cancelledByForDb,
       })
       .eq("id", shift_id);
+
+    if (updateError && cancelled_by === "guard") {
+      const retry = await supabase
+        .from("shifts")
+        .update({
+          status: "cancelled",
+          cancelled_at: now.toISOString(),
+          cancelled_by: "guard",
+        })
+        .eq("id", shift_id);
+      updateError = retry.error;
+    }
+
+    if (updateError) {
+      let { error: minimalErr } = await supabase
+        .from("shifts")
+        .update({ status: "cancelled" })
+        .eq("id", shift_id);
+      updateError = minimalErr;
+    }
 
     if (updateError) {
       console.error("Error updating shift:", updateError);
@@ -175,9 +475,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Send notification to the other party
-    const notificationRecipient = cancelled_by === "venue" 
-      ? personnel?.user_id 
-      : venue?.user_id;
+    const notificationRecipient =
+      cancelled_by === "venue" ? personnelRow?.user_id : venueRow.user_id;
 
     if (notificationRecipient) {
       const notificationTitle = cancelled_by === "venue"
@@ -185,8 +484,8 @@ export async function POST(request: NextRequest) {
         : "Shift Cancelled by Guard";
       
       const notificationBody = cancelled_by === "venue"
-        ? `Your shift at ${venue?.name || "the venue"} has been cancelled. Reason: ${reason}`
-        : `${personnel?.display_name || "A guard"} has cancelled their shift. Reason: ${reason}`;
+        ? `Your shift at ${venueRow.name || "the venue"} has been cancelled. Reason: ${reason}`
+        : `${personnelRow?.display_name || "A guard"} has cancelled their shift. Reason: ${reason}`;
 
       await supabase.from("notifications").insert({
         user_id: notificationRecipient,
@@ -201,12 +500,6 @@ export async function POST(request: NextRequest) {
           penalty_applied: penaltyApplied,
         },
       });
-    }
-
-    // If guard cancelled, we might want to notify other available guards
-    if (cancelled_by === "guard" && hoursUntilShift > 0 && hoursUntilShift < 72) {
-      // Could trigger the notify-guards API to find a replacement
-      console.log("Guard cancelled shift - consider notifying replacement guards");
     }
 
     return NextResponse.json({

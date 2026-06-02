@@ -434,6 +434,8 @@ export async function assignReplacement(
 
     // 2. Atomic update — only succeeds if dispatcher_status hasn't changed
     //    This prevents the race condition where two guards tap "Accept" at once.
+    //    Also clears the cover-search audit columns so the venue's "Sourcing
+    //    cover" banner immediately becomes "Replacement found".
     const { data: updated, error: updateErr } = await supabase
       .from("shifts")
       .update({
@@ -444,7 +446,11 @@ export async function assignReplacement(
         status: "accepted",
         accepted_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      })
+        cover_search_wave: 0,
+        cover_search_started_at: null,
+        cover_search_last_wave_at: null,
+        cover_unfilled_at: null,
+      } as any)
       .eq("id", shiftId)
       .in("dispatcher_status" as any, ["searching", "at_risk"])
       .select("id")

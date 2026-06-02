@@ -82,6 +82,39 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const booking = shift.booking as { venue_id?: string | null } | null;
+    if (!booking?.venue_id) {
+      return NextResponse.json(
+        { error: "Booking venue not found for this shift" },
+        { status: 400 }
+      );
+    }
+
+    const { data: venue, error: venueErr } = await supabase
+      .from("venues")
+      .select("id, user_id, owner_id")
+      .eq("id", booking.venue_id)
+      .single();
+
+    if (venueErr || !venue) {
+      return NextResponse.json(
+        { error: "Venue not found" },
+        { status: 404 }
+      );
+    }
+
+    const venueOwnerId =
+      (venue as { owner_id?: string | null; user_id?: string | null }).owner_id ??
+      (venue as { user_id?: string | null }).user_id ??
+      null;
+
+    if (!venueOwnerId || venueOwnerId !== userId) {
+      return NextResponse.json(
+        { error: "Only the venue owner can dispute this shift" },
+        { status: 403 }
+      );
+    }
+
     // Validate shift can be disputed
     if (shift.status !== "checked_out") {
       return NextResponse.json(

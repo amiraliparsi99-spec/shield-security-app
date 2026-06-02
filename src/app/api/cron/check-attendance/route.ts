@@ -11,27 +11,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { checkGuardStatus, type CheckGuardStatusResult } from "@/lib/dispatcher";
+import { requireCronAuth } from "@/lib/auth/cronAuth";
 
-// ——— Environment ———
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const CRON_SECRET = process.env.CRON_SECRET; // Optional: protect the endpoint
 
-// ——— Time window ———
-const WINDOW_BEFORE_MINUTES = 15; // Check shifts starting in the next 15 min
-const WINDOW_AFTER_MINUTES = 15; // Check shifts that started up to 15 min ago
+const WINDOW_BEFORE_MINUTES = 15;
+const WINDOW_AFTER_MINUTES = 15;
 
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
 
   try {
-    // --- Auth: verify the cron caller (optional but recommended) ---
-    if (CRON_SECRET) {
-      const authHeader = request.headers.get("authorization");
-      if (authHeader !== `Bearer ${CRON_SECRET}`) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
-    }
+    const denied = requireCronAuth(request);
+    if (denied) return denied;
 
     // --- Create admin Supabase client ---
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
