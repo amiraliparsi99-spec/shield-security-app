@@ -1,20 +1,13 @@
 /**
- * Messages Tab - Redesigned with Mission Control + Direct Messages
- * 
- * Two sections:
- * 1. Mission Control - Group chats for active shifts/bookings
- * 2. Direct Messages - 1:1 conversations with venues, agencies, guards
+ * Messages Tab — Mission Control only (group chats per booking / shift).
  */
 
 import { router } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Animated,
-  Dimensions,
   FlatList,
-  Image,
   KeyboardAvoidingView,
   Platform,
   RefreshControl,
@@ -35,8 +28,7 @@ import { useCall } from "../../contexts/CallContext";
 import { useTabBar } from "../../contexts/TabBarContext";
 import { useUnreadMessages } from "../../contexts/UnreadMessagesContext";
 import { IncidentRequestCard } from "../../components/messages/IncidentRequestCard";
-
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
+import { GuestGate } from "../../components/auth/GuestGate";
 
 // ——— Types ———
 
@@ -58,24 +50,6 @@ interface GroupChat {
   last_message_sender_role?: string;
 }
 
-interface DirectConversation {
-  id: string;
-  participant_1: string;
-  participant_2: string;
-  last_message: string | null;
-  last_message_at: string | null;
-  created_at: string;
-  updated_at: string;
-  // Joined data
-  other_user?: {
-    id: string;
-    display_name: string;
-    avatar_url: string | null;
-    role: "venue" | "personnel" | "agency";
-  };
-  unread_count?: number;
-}
-
 interface ChatMember {
   id: string;
   group_chat_id: string;
@@ -87,7 +61,6 @@ interface ChatMember {
 interface ChatMessage {
   id: string;
   group_chat_id?: string;
-  conversation_id?: string;
   sender_id: string;
   content: string;
   message_type: string;
@@ -97,30 +70,110 @@ interface ChatMessage {
   read_by?: string[];
 }
 
-interface DirectMessage {
-  id: string;
-  conversation_id: string;
-  sender_id: string;
-  content: string;
-  is_read: boolean;
-  read_at?: string;
-  delivered_at?: string;
-  created_at: string;
+type GroupCallInviteMeta = {
+  type: "group_call_invite";
+  channel_name: string;
+  started_by?: string;
+  started_by_name?: string;
+  started_at?: string;
+};
+
+type MissionTimeFilter = "upcoming" | "past";
+
+/** How to order the mission list after Upcoming/Past filtering. */
+type MissionListSort =
+  | "event_asc"
+  | "event_desc"
+  | "activity_desc"
+  | "activity_asc"
+  | "name_asc"
+  | "name_desc";
+
+const MISSION_SORT_OPTIONS: { id: MissionListSort; label: string }[] = [
+  { id: "event_asc", label: "Soonest" },
+  { id: "event_desc", label: "Latest event" },
+  { id: "activity_desc", label: "Recent activity" },
+  { id: "activity_asc", label: "Oldest activity" },
+  { id: "name_asc", label: "A–Z" },
+  { id: "name_desc", label: "Z–A" },
+];
+
+function missionEventSortKey(eventDate: string | null): number | null {
+  if (!eventDate) return null;
+  const raw = eventDate.includes("T") ? eventDate : `${eventDate}T12:00:00`;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d.getTime();
 }
 
-type TabType = "mission" | "direct";
+/** Past = booking event date before today (local); undated chats stay in Upcoming. */
+function isMissionChatPast(chat: GroupChat): boolean {
+  const t = missionEventSortKey(chat.event_date);
+  if (t === null) return false;
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const ev = new Date(t);
+  ev.setHours(0, 0, 0, 0);
+  return ev.getTime() < start.getTime();
+}
+
+function compareMissionChats(a: GroupChat, b: GroupChat, sort: MissionListSort): number {
+  const ta = missionEventSortKey(a.event_date);
+  const tb = missionEventSortKey(b.event_date);
+  const ua = new Date(a.updated_at).getTime();
+  const ub = new Date(b.updated_at).getTime();
+  const nameCmp = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+
+  switch (sort) {
+    case "event_asc": {
+      if (ta === null && tb === null) return ub - ua;
+      if (ta === null) return 1;
+      if (tb === null) return -1;
+      if (ta !== tb) return ta - tb;
+      return ub - ua;
+    }
+    case "event_desc": {
+      if (ta === null && tb === null) return ub - ua;
+      if (ta === null) return 1;
+      if (tb === null) return -1;
+      if (ta !== tb) return tb - ta;
+      return ub - ua;
+    }
+    case "activity_desc":
+      return ub - ua;
+    case "activity_asc":
+      return ua - ub;
+    case "name_asc":
+      return nameCmp !== 0 ? nameCmp : ub - ua;
+    case "name_desc":
+      return nameCmp !== 0 ? -nameCmp : ub - ua;
+    default:
+      return 0;
+  }
+}
+
+function makeMissionGroupChannelName(chatId: string): string {
+  return `shield_group_${chatId}`;
+}
 
 export default function MessagesTab() {
+  return (
+    <GuestGate feature="messages" redirectAfter="/(tabs)/messages">
+      <MessagesTabContent />
+    </GuestGate>
+  );
+}
+
+function MessagesTabContent() {
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
-  const { initiateCall, callState } = useCall();
+  const { initiateCall, joinGroupVoiceChannel, callState } = useCall();
   const { hideTabBar, showTabBar } = useTabBar();
-  const tabIndicatorAnim = useRef(new Animated.Value(0)).current;
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<TabType>("mission");
+  const [missionTimeFilter, setMissionTimeFilter] = useState<MissionTimeFilter>("upcoming");
+  const [missionSort, setMissionSort] = useState<MissionListSort>("event_asc");
   const { refreshUnreadCount } = useUnreadMessages();
 
   // Mission Control (Group Chats)
@@ -132,34 +185,19 @@ export default function MessagesTab() {
   // Track completed report shift IDs
   const [completedReportShiftIds, setCompletedReportShiftIds] = useState<Set<string>>(new Set());
 
-  // Direct Messages
-  const [conversations, setConversations] = useState<DirectConversation[]>([]);
-  const [activeConversation, setActiveConversation] = useState<DirectConversation | null>(null);
-  const [directMessages, setDirectMessages] = useState<DirectMessage[]>([]);
-
   // Shared
   const [newMessage, setNewMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [showQuickActions, setShowQuickActions] = useState(false);
 
-  // Animate tab indicator
-  useEffect(() => {
-    Animated.spring(tabIndicatorAnim, {
-      toValue: activeTab === "mission" ? 0 : 1,
-      useNativeDriver: true,
-      tension: 300,
-      friction: 30,
-    }).start();
-  }, [activeTab]);
-
   // Hide/show tab bar based on active chat
   useEffect(() => {
-    if (activeChat || activeConversation) {
+    if (activeChat) {
       hideTabBar();
     } else {
       showTabBar();
     }
-  }, [activeChat, activeConversation, hideTabBar, showTabBar]);
+  }, [activeChat, hideTabBar, showTabBar]);
 
   // Ensure tab bar is shown when component unmounts
   useEffect(() => {
@@ -246,51 +284,6 @@ export default function MessagesTab() {
       );
 
       setChats(enrichedChats);
-
-      // Load direct conversations
-      const { data: convos } = await supabase
-        .from("direct_conversations")
-        .select("*")
-        .or(`participant_1.eq.${user.id},participant_2.eq.${user.id}`)
-        .order("updated_at", { ascending: false });
-
-      if (convos && convos.length > 0) {
-        // Get other user details for each conversation
-        const otherUserIds = convos.map((c: DirectConversation) =>
-          c.participant_1 === user.id ? c.participant_2 : c.participant_1
-        );
-
-        // Try to get profiles
-        const { data: profiles } = await supabase
-          .from("profiles")
-          .select("id, display_name, avatar_url, role")
-          .in("id", otherUserIds);
-
-        const profileMap = new Map(profiles?.map((p: any) => [p.id, p]) || []);
-
-        const enrichedConvos = convos.map((c: DirectConversation) => {
-          const otherId = c.participant_1 === user.id ? c.participant_2 : c.participant_1;
-          const profile = profileMap.get(otherId);
-          return {
-            ...c,
-            other_user: profile ? {
-              id: profile.id,
-              display_name: profile.display_name || "Unknown",
-              avatar_url: profile.avatar_url,
-              role: profile.role || "personnel",
-            } : {
-              id: otherId,
-              display_name: "Unknown User",
-              avatar_url: null,
-              role: "personnel" as const,
-            },
-          };
-        });
-
-        setConversations(enrichedConvos);
-      } else {
-        setConversations([]);
-      }
     } catch (e) {
       console.error("Exception loading messages:", e);
     } finally {
@@ -554,127 +547,6 @@ export default function MessagesTab() {
     setSending(false);
   };
 
-  // ——— Direct Message Functions ———
-
-  const selectConversation = async (convo: DirectConversation) => {
-    if (!supabase) return;
-    safeHaptic("selection");
-    setActiveConversation(convo);
-    setDirectMessages([]);
-
-    const { data: msgs } = await supabase
-      .from("direct_messages")
-      .select("*")
-      .eq("conversation_id", convo.id)
-      .order("created_at", { ascending: true })
-      .limit(100);
-
-    setDirectMessages(msgs || []);
-
-    // Mark as read with read_at timestamp
-    if (userId) {
-      await supabase
-        .from("direct_messages")
-        .update({ is_read: true, read_at: new Date().toISOString() })
-        .eq("conversation_id", convo.id)
-        .neq("sender_id", userId)
-        .eq("is_read", false);
-      
-      // Refresh the tab bar badge
-      refreshUnreadCount();
-    }
-
-    setTimeout(() => {
-      flatListRef.current?.scrollToEnd({ animated: false });
-    }, 200);
-  };
-
-  // Subscribe to new direct messages and updates (for read receipts)
-  useEffect(() => {
-    if (!activeConversation || !supabase) return;
-
-    const channel = supabase
-      .channel(`direct_convo:${activeConversation.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "direct_messages",
-          filter: `conversation_id=eq.${activeConversation.id}`,
-        },
-        (payload) => {
-          const newMsg = payload.new as DirectMessage;
-          setDirectMessages((prev) => {
-            if (prev.find((m) => m.id === newMsg.id)) return prev;
-            return [...prev, newMsg];
-          });
-          setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
-          
-          // Mark incoming messages as read immediately since we're viewing the chat
-          if (userId && newMsg.sender_id !== userId) {
-            supabase
-              .from("direct_messages")
-              .update({ is_read: true, read_at: new Date().toISOString() })
-              .eq("id", newMsg.id)
-              .then(() => {});
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "direct_messages",
-          filter: `conversation_id=eq.${activeConversation.id}`,
-        },
-        (payload) => {
-          // Update read status for messages (for read receipts)
-          const updatedMsg = payload.new as DirectMessage;
-          setDirectMessages((prev) =>
-            prev.map((m) => m.id === updatedMsg.id ? { ...m, is_read: updatedMsg.is_read, read_at: updatedMsg.read_at } : m)
-          );
-        }
-      )
-      .subscribe();
-
-    return () => {
-      if (supabase) supabase.removeChannel(channel);
-    };
-  }, [activeConversation, userId]);
-
-  // Send direct message
-  const handleSendDirectMessage = async () => {
-    if (!newMessage.trim() || !activeConversation || !supabase || !userId || sending) return;
-
-    safeHaptic("medium");
-    setSending(true);
-
-    const { error } = await supabase.from("direct_messages").insert({
-      conversation_id: activeConversation.id,
-      sender_id: userId,
-      content: newMessage.trim(),
-      is_read: false,
-    });
-
-    if (error) {
-      Alert.alert("Error", "Failed to send message");
-    } else {
-      setNewMessage("");
-      await supabase
-        .from("direct_conversations")
-        .update({
-          last_message: newMessage.trim(),
-          last_message_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", activeConversation.id);
-    }
-
-    setSending(false);
-  };
-
   // Quick check-in actions (Mission Control only)
   const handleQuickAction = async (status: string) => {
     if (!activeChat || !supabase || !userId) return;
@@ -772,27 +644,52 @@ export default function MessagesTab() {
     );
   };
 
-  const handleCallFromDM = () => {
-    if (!activeConversation?.other_user || callState !== "idle") return;
+  const startMissionGroupCall = async () => {
+    if (!activeChat || !supabase || !userId) return;
+    if (callState !== "idle") {
+      Alert.alert("Call in Progress", "You already have an active call");
+      return;
+    }
 
-    Alert.alert(
-      "Call",
-      `Call ${activeConversation.other_user.display_name}?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Call",
-          onPress: () => {
-            safeHaptic("medium");
-            initiateCall({
-              userId: activeConversation.other_user!.id,
-              name: activeConversation.other_user!.display_name,
-              role: activeConversation.other_user!.role,
-            });
-          },
-        },
-      ]
-    );
+    const channelName = makeMissionGroupChannelName(activeChat.id);
+    const startedAtIso = new Date().toISOString();
+    const startedByName = members.find((m) => m.user_id === userId)?.display_name || "Team member";
+    const metadata: GroupCallInviteMeta = {
+      type: "group_call_invite",
+      channel_name: channelName,
+      started_by: userId,
+      started_by_name: startedByName,
+      started_at: startedAtIso,
+    };
+
+    await supabase.from("group_chat_messages").insert({
+      group_chat_id: activeChat.id,
+      sender_id: userId,
+      content: `📞 ${startedByName} started a group call. Tap to join.`,
+      message_type: "system",
+      metadata,
+    });
+
+    await supabase
+      .from("group_chats")
+      .update({ updated_at: startedAtIso })
+      .eq("id", activeChat.id);
+
+    await joinGroupVoiceChannel(channelName, `${activeChat.name} Group Call`);
+  };
+
+  const joinMissionGroupCall = async (msg: ChatMessage) => {
+    const meta = msg.metadata as Partial<GroupCallInviteMeta> | undefined;
+    const channelName = meta?.channel_name;
+    if (!channelName) {
+      Alert.alert("Unavailable", "This group call invite is missing channel details.");
+      return;
+    }
+    if (callState !== "idle") {
+      Alert.alert("Call in Progress", "End your current call first.");
+      return;
+    }
+    await joinGroupVoiceChannel(channelName, `${activeChat?.name || "Mission"} Group Call`);
   };
 
   const formatTime = (dateStr: string) => {
@@ -846,6 +743,13 @@ export default function MessagesTab() {
     }
     return name.substring(0, 2).toUpperCase();
   };
+
+  const sortedMissionChats = useMemo(() => {
+    const filtered = chats.filter((c) =>
+      missionTimeFilter === "upcoming" ? !isMissionChatPast(c) : isMissionChatPast(c)
+    );
+    return [...filtered].sort((a, b) => compareMissionChats(a, b, missionSort));
+  }, [chats, missionTimeFilter, missionSort]);
 
   const isVenueOrAgency = (role: string) => {
     return role === "venue" || role === "agency" || role === "owner";
@@ -902,11 +806,6 @@ export default function MessagesTab() {
             <Text style={styles.backIcon}>←</Text>
           </TouchableOpacity>
           <View style={styles.chatHeaderInfo}>
-            <View style={styles.chatHeaderTitleRow}>
-              <View style={styles.missionBadge}>
-                <Text style={styles.missionBadgeText}>MISSION</Text>
-              </View>
-            </View>
             <Text style={styles.chatHeaderTitle} numberOfLines={1}>{activeChat.name}</Text>
             <Text style={styles.chatHeaderSub}>
               {members.length} team member{members.length !== 1 ? "s" : ""}
@@ -915,7 +814,7 @@ export default function MessagesTab() {
           </View>
           <TouchableOpacity
             style={[styles.headerActionBtn, callState !== "idle" && styles.headerActionBtnDisabled]}
-            onPress={handleCallFromChat}
+            onPress={startMissionGroupCall}
             disabled={callState !== "idle"}
           >
             <Text style={styles.headerActionIcon}>📞</Text>
@@ -970,6 +869,7 @@ export default function MessagesTab() {
             // Check if this is an incident report request (can be system message or contain the metadata)
             const isIncidentRequest = msg.metadata?.type === "incident_report_request" || 
               msg.content?.includes("Incident Report Requested");
+            const isGroupCallInvite = msg.metadata?.type === "group_call_invite";
             const shiftId = msg.metadata?.shift_id || (msg.metadata?.shift_ids?.[0]);
             // Get venue_id from message metadata, or fall back to the chat's venue_id
             const venueId = msg.metadata?.venue_id || activeChat?.venue_id;
@@ -983,6 +883,29 @@ export default function MessagesTab() {
                   isCompleted={msg.metadata?.completed === true || (!!shiftId && completedReportShiftIds.has(shiftId))}
                   completedIncidents={msg.metadata?.total_incidents ?? 0}
                 />
+              );
+            }
+
+            if (isGroupCallInvite) {
+              const startedBy = (msg.metadata?.started_by_name as string | undefined) || "Team member";
+              const startedAt = msg.metadata?.started_at as string | undefined;
+              return (
+                <View style={styles.groupCallCard}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.groupCallTitle}>Group Call</Text>
+                    <Text style={styles.groupCallSubtitle}>
+                      {startedBy} started a mission call
+                      {startedAt ? ` · ${formatTime(startedAt)}` : ""}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.groupCallJoinBtn, callState !== "idle" && styles.groupCallJoinBtnDisabled]}
+                    onPress={() => joinMissionGroupCall(msg)}
+                    disabled={callState !== "idle"}
+                  >
+                    <Text style={styles.groupCallJoinBtnText}>Join</Text>
+                  </TouchableOpacity>
+                </View>
               );
             }
 
@@ -1138,176 +1061,103 @@ export default function MessagesTab() {
     );
   }
 
-  // ——— Active Direct Conversation View ———
-
-  if (activeConversation) {
-    const otherUser = activeConversation.other_user;
-    
-    return (
-      <KeyboardAvoidingView
-        style={[styles.container, { paddingTop: insets.top }]}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
-      >
-        {/* DM Header */}
-        <View style={styles.chatHeader}>
-          <TouchableOpacity
-            onPress={() => { setActiveConversation(null); safeHaptic("selection"); }}
-            style={styles.backBtn}
-          >
-            <Text style={styles.backIcon}>←</Text>
-          </TouchableOpacity>
-          <View style={[
-            styles.dmHeaderAvatar,
-            { borderColor: getRoleColor(otherUser?.role || "personnel"), backgroundColor: `${getRoleColor(otherUser?.role || "personnel")}20` }
-          ]}>
-            {otherUser?.avatar_url ? (
-              <Image source={{ uri: otherUser.avatar_url }} style={styles.dmHeaderAvatarImg} />
-            ) : (
-              <Text style={[styles.dmHeaderAvatarInitials, { color: getRoleColor(otherUser?.role || "personnel") }]}>
-                {getInitials(otherUser?.display_name)}
-              </Text>
-            )}
-          </View>
-          <View style={styles.chatHeaderInfo}>
-            <Text style={styles.chatHeaderTitle} numberOfLines={1}>
-              {otherUser?.display_name || "Unknown"}
-            </Text>
-            <View style={styles.dmRoleBadge}>
-              <View style={[styles.dmRoleDot, { backgroundColor: getRoleColor(otherUser?.role || "personnel") }]} />
-              <Text style={styles.dmRoleText}>
-                {otherUser?.role === "venue" ? "Venue Manager" : otherUser?.role === "agency" ? "Agency" : "Security Guard"}
-              </Text>
-            </View>
-          </View>
-          <TouchableOpacity
-            style={[styles.headerActionBtn, callState !== "idle" && styles.headerActionBtnDisabled]}
-            onPress={handleCallFromDM}
-            disabled={callState !== "idle"}
-          >
-            <Text style={styles.headerActionIcon}>📞</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Messages */}
-        <FlatList
-          ref={flatListRef}
-          data={directMessages}
-          keyExtractor={(m) => m.id}
-          contentContainerStyle={styles.messagesList}
-          showsVerticalScrollIndicator={false}
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
-          renderItem={({ item: msg }) => {
-            const isOwn = msg.sender_id === userId;
-            const isFromVenueOrAgency = !isOwn && isVenueOrAgency(otherUser?.role || "personnel");
-            const roleColor = getRoleColor(otherUser?.role || "personnel");
-
-            // For DMs: delivered = has delivered_at, read = is_read
-            const isDelivered = !!msg.delivered_at;
-            const isRead = msg.is_read;
-
-            return (
-              <View style={[styles.msgRow, isOwn && styles.msgRowOwn]}>
-                {!isOwn && (
-                  <View style={[
-                    styles.msgAvatar,
-                    { borderColor: roleColor, backgroundColor: `${roleColor}20` }
-                  ]}>
-                    <Text style={[styles.msgAvatarInitials, { color: roleColor }]}>
-                      {getInitials(otherUser?.display_name)}
-                    </Text>
-                  </View>
-                )}
-                <View style={[
-                  styles.msgBubble,
-                  isOwn ? styles.msgBubbleOwn : styles.msgBubbleOther,
-                  isFromVenueOrAgency && styles.msgBubbleVenue
-                ]}>
-                  <Text style={[styles.msgContent, isOwn && styles.msgContentOwn]}>{msg.content}</Text>
-                  <View style={styles.msgMeta}>
-                    <Text style={[styles.msgTime, isOwn && styles.msgTimeOwn]}>
-                      {formatTime(msg.created_at)}
-                    </Text>
-                    {isOwn && (
-                      <Text style={[
-                        styles.msgReadStatus,
-                        isRead && styles.msgReadStatusRead,
-                        isDelivered && !isRead && styles.msgReadStatusPartial,
-                      ]}>
-                        {isRead ? "✓✓" : isDelivered ? "✓✓" : "✓"}
-                      </Text>
-                    )}
-                  </View>
-                </View>
-              </View>
-            );
-          }}
-          ListEmptyComponent={
-            <View style={styles.emptyMessages}>
-              <Text style={{ fontSize: 48 }}>👋</Text>
-              <Text style={styles.emptyTitle}>Start a conversation</Text>
-              <Text style={styles.emptySubtitle}>Send your first message</Text>
-            </View>
-          }
-        />
-
-        {/* Input */}
-        <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-          <View style={[styles.inputWrapper, { flex: 1 }]}>
-            <TextInput
-              value={newMessage}
-              onChangeText={setNewMessage}
-              placeholder="Type a message..."
-              placeholderTextColor={colors.textMuted}
-              style={styles.input}
-              multiline
-              maxLength={2000}
-            />
-          </View>
-          <TouchableOpacity
-            style={[styles.sendBtn, (!newMessage.trim() || sending) && styles.sendBtnDisabled]}
-            onPress={handleSendDirectMessage}
-            disabled={!newMessage.trim() || sending}
-          >
-            {sending ? (
-              <ActivityIndicator size="small" color="#000" />
-            ) : (
-              <Text style={styles.sendBtnIcon}>↑</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-    );
-  }
-
   // ——— Main Chat List View ———
-
-  const tabIndicatorTranslate = tabIndicatorAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, (SCREEN_WIDTH - 32) / 2],
-  });
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Messages</Text>
-        <View style={{ width: 40 }} />
+        <Text style={styles.headerTitle}>Mission Control</Text>
       </View>
 
-      {/* Content */}
+      <View style={styles.missionSubFilterRow}>
+          <TouchableOpacity
+            style={[
+              styles.missionSubFilterBtn,
+              missionTimeFilter === "upcoming" && styles.missionSubFilterBtnActive,
+            ]}
+            onPress={() => {
+              setMissionTimeFilter("upcoming");
+              safeHaptic("selection");
+            }}
+          >
+            <Text
+              style={[
+                styles.missionSubFilterText,
+                missionTimeFilter === "upcoming" && styles.missionSubFilterTextActive,
+              ]}
+            >
+              Upcoming
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.missionSubFilterBtn,
+              missionTimeFilter === "past" && styles.missionSubFilterBtnActive,
+            ]}
+            onPress={() => {
+              setMissionTimeFilter("past");
+              safeHaptic("selection");
+            }}
+          >
+            <Text
+              style={[
+                styles.missionSubFilterText,
+                missionTimeFilter === "past" && styles.missionSubFilterTextActive,
+              ]}
+            >
+              Past
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+      <View style={styles.sortSection}>
+        <Text style={styles.sortSectionLabel}>Sort</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.missionSortChipScroll}
+        >
+          {MISSION_SORT_OPTIONS.map((opt) => (
+            <TouchableOpacity
+              key={opt.id}
+              style={[
+                styles.missionSortChip,
+                missionSort === opt.id && styles.missionSortChipActive,
+              ]}
+              onPress={() => {
+                setMissionSort(opt.id);
+                safeHaptic("selection");
+              }}
+              activeOpacity={0.85}
+            >
+              <Text
+                style={[
+                  styles.missionSortChipText,
+                  missionSort === opt.id && styles.missionSortChipTextActive,
+                ]}
+              >
+                {opt.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
       <ScrollView
         style={styles.chatList}
         contentContainerStyle={styles.chatListContent}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => { setRefreshing(true); loadData(); }}
+            onRefresh={() => {
+              setRefreshing(true);
+              loadData();
+            }}
             tintColor={colors.accent}
           />
         }
       >
-        {/* Mission Control List */}
         {chats.length === 0 ? (
             <View style={styles.emptyState}>
               <LinearGradient
@@ -1317,23 +1167,34 @@ export default function MessagesTab() {
               <View style={styles.emptyIconContainer}>
                 <Text style={{ fontSize: 56 }}>🎯</Text>
               </View>
-              <Text style={styles.emptyTitle}>No Active Missions</Text>
+              <Text style={styles.emptyTitle}>No missions yet</Text>
               <Text style={styles.emptySubtitle}>
                 When you claim a shift, Mission Control will connect you with the venue team here.
               </Text>
-              <TouchableOpacity
-                style={styles.primaryBtn}
-                onPress={() => router.push("/jobs")}
-              >
+              <TouchableOpacity style={styles.primaryBtn} onPress={() => router.push("/jobs")}>
                 <Text style={styles.primaryBtnText}>Find Jobs</Text>
               </TouchableOpacity>
             </View>
+          ) : sortedMissionChats.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={{ fontSize: 48 }}>📋</Text>
+              <Text style={styles.emptyTitle}>
+                {missionTimeFilter === "upcoming" ? "No upcoming missions" : "No past missions"}
+              </Text>
+              <Text style={styles.emptySubtitle}>
+                {missionTimeFilter === "upcoming"
+                  ? "Completed jobs move to Past."
+                  : "Upcoming and in-progress jobs stay under Upcoming."}
+              </Text>
+            </View>
           ) : (
-            chats.map((chat, index) => {
+            sortedMissionChats.map((chat, index) => {
               const venueName = chat.metadata?.venue_name || chat.name;
               const hasUnread = (chat.unread_count || 0) > 0;
-              const isFromVenue = chat.last_message_sender_role === "owner" || chat.last_message_sender_role === "venue";
-              
+              const isFromVenue =
+                chat.last_message_sender_role === "owner" ||
+                chat.last_message_sender_role === "venue";
+
               return (
                 <TouchableOpacity
                   key={chat.id}
@@ -1347,9 +1208,11 @@ export default function MessagesTab() {
                 >
                   <View style={styles.chatCardIconContainer}>
                     <LinearGradient
-                      colors={hasUnread 
-                        ? ["rgba(168, 85, 247, 0.4)", "rgba(168, 85, 247, 0.2)"]
-                        : ["rgba(168, 85, 247, 0.25)", "rgba(168, 85, 247, 0.1)"]}
+                      colors={
+                        hasUnread
+                          ? ["rgba(168, 85, 247, 0.4)", "rgba(168, 85, 247, 0.2)"]
+                          : ["rgba(168, 85, 247, 0.25)", "rgba(168, 85, 247, 0.1)"]
+                      }
                       style={styles.chatCardIconBg}
                     />
                     <Text style={styles.chatCardInitials}>{getInitials(venueName)}</Text>
@@ -1357,7 +1220,10 @@ export default function MessagesTab() {
                   </View>
                   <View style={styles.chatCardInfo}>
                     <View style={styles.chatCardHeader}>
-                      <Text style={[styles.chatCardName, hasUnread && styles.chatCardNameUnread]} numberOfLines={1}>
+                      <Text
+                        style={[styles.chatCardName, hasUnread && styles.chatCardNameUnread]}
+                        numberOfLines={1}
+                      >
                         {chat.name}
                       </Text>
                       <Text style={[styles.chatCardTime, hasUnread && styles.chatCardTimeUnread]}>
@@ -1371,11 +1237,14 @@ export default function MessagesTab() {
                             <Text style={styles.venueMessageIndicatorText}>Venue</Text>
                           </View>
                         )}
-                        <Text style={[
-                          styles.chatCardMeta,
-                          hasUnread && styles.chatCardMetaUnread,
-                          isFromVenue && styles.chatCardMetaVenue,
-                        ]} numberOfLines={1}>
+                        <Text
+                          style={[
+                            styles.chatCardMeta,
+                            hasUnread && styles.chatCardMetaUnread,
+                            isFromVenue && styles.chatCardMetaVenue,
+                          ]}
+                          numberOfLines={1}
+                        >
                           {chat.last_message}
                         </Text>
                       </View>
@@ -1398,8 +1267,7 @@ export default function MessagesTab() {
                 </TouchableOpacity>
               );
             })
-          )
-        }
+          )}
       </ScrollView>
     </View>
   );
@@ -1437,6 +1305,43 @@ const styles = StyleSheet.create({
     color: colors.text,
     letterSpacing: -0.5,
   },
+  sortSection: {
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  sortSectionLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: colors.textMuted,
+    marginBottom: spacing.xs,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  missionSortChipScroll: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    paddingBottom: 2,
+  },
+  missionSortChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  missionSortChipActive: {
+    borderColor: "rgba(45, 212, 191, 0.5)",
+    backgroundColor: "rgba(45, 212, 191, 0.1)",
+  },
+  missionSortChipText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.textMuted,
+  },
+  missionSortChipTextActive: {
+    color: colors.text,
+  },
   newChatBtn: {
     width: 44,
     height: 44,
@@ -1451,61 +1356,32 @@ const styles = StyleSheet.create({
     fontSize: 20,
   },
 
-  // Tab Switcher
-  tabContainer: {
+  missionSubFilterRow: {
+    flexDirection: "row",
     paddingHorizontal: spacing.md,
+    gap: spacing.sm,
     marginBottom: spacing.sm,
   },
-  tabBar: {
-    flexDirection: "row",
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    padding: 4,
-    position: "relative",
-  },
-  tabIndicator: {
-    position: "absolute",
-    top: 4,
-    left: 4,
-    width: "50%",
-    height: "100%",
-    backgroundColor: "rgba(45, 212, 191, 0.15)",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "rgba(45, 212, 191, 0.3)",
-  },
-  tab: {
+  missionSubFilterBtn: {
     flex: 1,
-    flexDirection: "row",
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
     alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 12,
-    gap: 6,
-    zIndex: 1,
   },
-  tabIcon: {
-    fontSize: 16,
+  missionSubFilterBtnActive: {
+    borderColor: "rgba(45, 212, 191, 0.45)",
+    backgroundColor: "rgba(45, 212, 191, 0.08)",
   },
-  tabText: {
-    fontSize: 14,
+  missionSubFilterText: {
+    fontSize: 13,
     fontWeight: "600",
     color: colors.textMuted,
   },
-  tabTextActive: {
+  missionSubFilterTextActive: {
     color: colors.text,
-  },
-  tabBadge: {
-    backgroundColor: colors.accent,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 10,
-    minWidth: 20,
-    alignItems: "center",
-  },
-  tabBadgeText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#000",
   },
 
   // Chat List
@@ -1782,23 +1658,6 @@ const styles = StyleSheet.create({
   chatHeaderInfo: {
     flex: 1,
   },
-  chatHeaderTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 2,
-  },
-  missionBadge: {
-    backgroundColor: "rgba(45, 212, 191, 0.15)",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  missionBadgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: colors.accent,
-    letterSpacing: 1,
-  },
   chatHeaderTitle: {
     fontSize: 17,
     fontWeight: "700",
@@ -1824,44 +1683,6 @@ const styles = StyleSheet.create({
   },
   headerActionIcon: {
     fontSize: 20,
-  },
-
-  // DM Header
-  dmHeaderAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.surface,
-    borderWidth: 2,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  dmHeaderAvatarImg: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-  },
-  dmHeaderAvatarText: {
-    fontSize: 22,
-  },
-  dmHeaderAvatarInitials: {
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  dmRoleBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 2,
-  },
-  dmRoleDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  dmRoleText: {
-    fontSize: 12,
-    color: colors.textMuted,
   },
 
   // Members Bar
@@ -1942,6 +1763,43 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textMuted,
     textAlign: "center",
+  },
+  groupCallCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(45, 212, 191, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(45, 212, 191, 0.35)",
+    borderRadius: 14,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginVertical: spacing.sm,
+    marginHorizontal: spacing.sm,
+    gap: spacing.md,
+  },
+  groupCallTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  groupCallSubtitle: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  groupCallJoinBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: colors.accent,
+  },
+  groupCallJoinBtnDisabled: {
+    opacity: 0.5,
+  },
+  groupCallJoinBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#02120e",
   },
   msgRow: {
     flexDirection: "row",

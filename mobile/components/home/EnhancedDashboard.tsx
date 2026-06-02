@@ -92,6 +92,8 @@ interface QuickActionProps {
   badge?: string | number;
   gradient?: [string, string];
   delay?: number;
+  /** Number of columns in the row (default 4). Use 2 for a 2x2 grid. */
+  columns?: number;
 }
 
 export function QuickActionButton({
@@ -101,6 +103,7 @@ export function QuickActionButton({
   badge,
   gradient,
   delay = 0,
+  columns = 4,
 }: QuickActionProps) {
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
@@ -144,10 +147,15 @@ export function QuickActionButton({
     onPress();
   };
 
+  const colGap = spacing.sm;
+  const containerWidth =
+    (width - spacing.lg * 2 - colGap * (columns - 1)) / columns;
+
   return (
     <Animated.View
       style={[
         styles.quickActionContainer,
+        { width: containerWidth },
         {
           opacity: opacityAnim,
           transform: [{ scale: scaleAnim }],
@@ -276,6 +284,7 @@ export function EnhancedStats({ earnings, completed, upcoming, onPress }: Enhanc
 interface TodayShiftProps {
   venueName: string;
   eventName: string;
+  date: string;
   startTime: string;
   endTime: string;
   role: string;
@@ -288,6 +297,7 @@ interface TodayShiftProps {
 export function EnhancedTodayShift({
   venueName,
   eventName,
+  date,
   startTime,
   endTime,
   role,
@@ -297,7 +307,6 @@ export function EnhancedTodayShift({
   onCheckIn,
 }: TodayShiftProps) {
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
-  const glowAnim = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
     Animated.spring(scaleAnim, {
@@ -306,36 +315,21 @@ export function EnhancedTodayShift({
       friction: 8,
       useNativeDriver: true,
     }).start();
-
-    if (isActive) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(glowAnim, {
-            toValue: 0.6,
-            duration: 1500,
-            useNativeDriver: false,
-          }),
-          Animated.timing(glowAnim, {
-            toValue: 0.3,
-            duration: 1500,
-            useNativeDriver: false,
-          }),
-        ])
-      ).start();
-    }
-  }, [isActive]);
+  }, []);
 
   return (
-    <Animated.View
+    <View
       style={[
         styles.todayShiftContainer,
         {
-          transform: [{ scale: scaleAnim }],
           shadowColor: isActive ? colors.successGlow : colors.accentGlow,
-          shadowOpacity: glowAnim,
+          shadowOpacity: isActive ? 0.5 : 0.3,
+          shadowOffset: { width: 0, height: 4 },
+          shadowRadius: 12,
         },
       ]}
     >
+      <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
       <TouchableOpacity activeOpacity={0.9} onPress={onPress}>
         <LinearGradient
           colors={isActive ? gradients.successSoft : gradients.accentSoft}
@@ -360,6 +354,10 @@ export function EnhancedTodayShift({
           </View>
 
           <View style={styles.todayShiftDetails}>
+            <View style={styles.todayShiftDate}>
+              <Text style={styles.todayShiftDateLabel}>Date</Text>
+              <Text style={styles.todayShiftDateValue}>{date}</Text>
+            </View>
             <View style={styles.todayShiftTime}>
               <Text style={styles.todayShiftTimeLabel}>Time</Text>
               <Text style={styles.todayShiftTimeValue}>{startTime} - {endTime}</Text>
@@ -392,7 +390,8 @@ export function EnhancedTodayShift({
           )}
         </LinearGradient>
       </TouchableOpacity>
-    </Animated.View>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -490,9 +489,9 @@ const styles = StyleSheet.create({
     borderColor: colors.success,
   },
 
-  // Quick Actions
+  // Quick Actions (default width overridden by inline width from columns prop)
   quickActionContainer: {
-    width: (width - spacing.lg * 2 - spacing.sm * 3) / 4,
+    minWidth: 0,
   },
   quickActionButton: {
     alignItems: "center",
@@ -645,9 +644,22 @@ const styles = StyleSheet.create({
   todayShiftDetails: {
     flexDirection: "row",
     justifyContent: "space-between",
+    flexWrap: "wrap",
+    rowGap: spacing.sm,
     paddingTop: spacing.md,
     borderTopWidth: 1,
     borderTopColor: colors.glassBorder,
+  },
+  todayShiftDate: {},
+  todayShiftDateLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  todayShiftDateValue: {
+    ...typography.body,
+    color: colors.text,
+    fontWeight: "600",
+    marginTop: 2,
   },
   todayShiftTime: {},
   todayShiftTimeLabel: {

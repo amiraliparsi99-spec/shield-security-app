@@ -16,13 +16,22 @@ import { LinearGradient } from "expo-linear-gradient";
 import { BIRMINGHAM_CENTER, BIRMINGHAM_VENUES } from "../../../data/dashboard";
 import type { Venue, VenueRequest } from "../../../data/dashboard";
 import { VenuesMap } from "../../../components/VenuesMap";
-import { colors, typography, spacing, radius } from "../../../theme";
+import { colors, typography, spacing, radius, gradients, shadows } from "../../../theme";
 import { supabase } from "../../../lib/supabase";
 import { getProfileIdAndRole, getPersonnelId, getVenueId, isPersonnelVerified, isPersonnelBankConnected } from "../../../lib/auth";
 import { safeHaptic } from "../../../lib/haptics";
 import { getApiBaseUrl } from "../../../lib/api";
-
-type Tab = "venues" | "jobs";
+import { getClaimAvailabilityWarning } from "../../../lib/shiftAvailabilityClaimCheck";
+import { getLatestShieldBlogPost } from "../../../data/shield-blog";
+import { COURSES } from "../../training";
+import { claimShiftWithLocation } from "../../../lib/shiftClaim";
+import { ShiftsMapView } from "../../../components/shifts/ShiftsMapView";
+import { GuestShiftFeed } from "../../../components/guest/GuestShiftFeed";
+import {
+  SAMPLE_SHIFTS_CENTER,
+  sampleShiftsAroundCenter,
+} from "../../../data/sample-shifts";
+import { useGuestLocation } from "../../../lib/guestLocation";
 
 interface AvailableShift {
   id: string;
@@ -31,9 +40,13 @@ interface AvailableShift {
   hourly_rate: number;
   scheduled_start: string;
   scheduled_end: string;
+  created_at?: string;
   venue_name: string;
   venue_city: string;
   event_name: string;
+  /** Site (booking) coords first, falling back to venue coords. Either may be null. */
+  latitude: number | null;
+  longitude: number | null;
 }
 
 // Grouped job (multiple shifts for same booking/role)
@@ -48,6 +61,8 @@ interface GroupedJob {
   event_name: string;
   positions_available: number;
   shift_ids: string[];
+  latitude: number | null;
+  longitude: number | null;
 }
 
 interface VenueBookingItem {
@@ -66,6 +81,9 @@ interface RecommendedStaffItem {
   shifts_count: number;
 }
 
+/** Number of course tiles on Explore (grid of compact cards) */
+const EXPLORE_TRAINING_TILE_COUNT = 4;
+
 function filterVenues(venues: Venue[], q: string): Venue[] {
   if (!q.trim()) return venues;
   const lower = q.trim().toLowerCase();
@@ -80,9 +98,53 @@ function filterVenues(venues: Venue[], q: string): Venue[] {
 
 export default function ExploreTab() {
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<Tab>("jobs"); // Default to jobs tab
   const [search, setSearch] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [viewMode, setViewMode] = useState<"list" | "map">("list");
+  // null = checking; true = signed in; false = guest (show sample shifts)
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (!supabase) {
+      setIsAuthenticated(false);
+      return;
+    }
+    const sb = supabase;
+    let mounted = true;
+    sb.auth.getSession().then(({ data }) => {
+      if (mounted) setIsAuthenticated(!!data.session?.user?.id);
+    });
+    const { data: sub } = sb.auth.onAuthStateChange((_event, session) => {
+      if (mounted) setIsAuthenticated(!!session?.user?.id);
+    });
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
+
+  const goSignup = useCallback(() => {
+    safeHaptic("selection");
+    router.push("/signup?next=/(tabs)/explore");
+  }, []);
+
+  // Pull device location only for guests so we can scatter sample shifts
+  // around them. Signed-in users use real data and don't need this prompt.
+  const guestLocation = useGuestLocation({ skip: isAuthenticated !== false });
+
+  // Sample jobs to show on the map / feed for signed-out guests. Centred on
+  // the device's coords when available, otherwise on Central London.
+  const sampleMapJobs = useMemo(() => {
+    const center = guestLocation
+      ? { lat: guestLocation.lat, lng: guestLocation.lng }
+      : SAMPLE_SHIFTS_CENTER;
+    return sampleShiftsAroundCenter(center, guestLocation?.label ?? null);
+  }, [guestLocation]);
+
+  const guestMapFallbackCenter = guestLocation
+    ? { lat: guestLocation.lat, lng: guestLocation.lng }
+    : SAMPLE_SHIFTS_CENTER;
+
 
   // Job board state
   const [availableShifts, setAvailableShifts] = useState<AvailableShift[]>([]);
@@ -211,9 +273,10 @@ export default function ExploreTab() {
       // Fetch available shifts (unclaimed, future only)
       const { data: available } = await supabase
         .from("shifts")
-        .select("id, booking_id, role, hourly_rate, scheduled_start, scheduled_end")
+        .select("id, booking_id, role, hourly_rate, scheduled_start, scheduled_end, created_at")
         .is("personnel_id", null)
-        .gte("scheduled_start", new Date().toISOString());
+        .gte("scheduled_end", new Date().toISOString())
+        .in("status", ["pending", "accepted", "checked_in"]);
 
       if (!available || available.length === 0) {
         setAvailableShifts([]);
@@ -228,7 +291,7 @@ export default function ExploreTab() {
         // Try direct Supabase query first (works if RLS allows it)
         const { data: bookings } = await supabase
           .from("bookings")
-          .select("id, event_name, venue_id")
+          .select("id, event_name, venue_id, site_latitude, site_longitude")
           .in("id", bookingIds);
 
         if (bookings && bookings.length > 0) {
@@ -238,17 +301,20 @@ export default function ExploreTab() {
           if (venueIds.length > 0) {
             const { data: venues } = await supabase
               .from("venues")
-              .select("id, name, city")
+              .select("id, name, city, latitude, longitude")
               .in("id", venueIds);
             if (venues) {
               venues.forEach((v) => { venuesMap[v.id] = v; });
             }
           }
 
-          bookings.forEach((b) => {
+          bookings.forEach((b: any) => {
+            const venue = venuesMap[b.venue_id] || { name: "Venue", city: "", latitude: null, longitude: null };
             bookingsMap[b.id] = {
               event_name: b.event_name,
-              venue: venuesMap[b.venue_id] || { name: "Venue", city: "" },
+              venue: { name: venue.name, city: venue.city },
+              latitude: b.site_latitude ?? venue.latitude ?? null,
+              longitude: b.site_longitude ?? venue.longitude ?? null,
             };
           });
         }
@@ -273,6 +339,8 @@ export default function ExploreTab() {
                   bookingsMap[id] = {
                     event_name: meta.event_name,
                     venue: { name: meta.venue_name, city: meta.venue_city },
+                    latitude: meta.site_latitude ?? meta.venue_latitude ?? null,
+                    longitude: meta.site_longitude ?? meta.venue_longitude ?? null,
                   };
                 }
               }
@@ -292,13 +360,23 @@ export default function ExploreTab() {
           hourly_rate: s.hourly_rate,
           scheduled_start: s.scheduled_start,
           scheduled_end: s.scheduled_end,
+          created_at: s.created_at,
           venue_name: booking.venue?.name || "Venue",
           venue_city: booking.venue?.city || "",
           event_name: booking.event_name || "Event",
+          latitude: booking.latitude ?? null,
+          longitude: booking.longitude ?? null,
         };
       });
 
-      // Deduplicate
+      shifts.sort((a, b) => {
+        if (b.hourly_rate !== a.hourly_rate) return b.hourly_rate - a.hourly_rate;
+        const bCreated = b.created_at ? new Date(b.created_at).getTime() : 0;
+        const aCreated = a.created_at ? new Date(a.created_at).getTime() : 0;
+        if (bCreated !== aCreated) return bCreated - aCreated;
+        return new Date(a.scheduled_start).getTime() - new Date(b.scheduled_start).getTime();
+      });
+
       const seen = new Set<string>();
       setAvailableShifts(shifts.filter((s) => {
         if (seen.has(s.id)) return false;
@@ -383,91 +461,104 @@ export default function ExploreTab() {
 
     const hours = getHours(job.scheduled_start, job.scheduled_end);
     const pay = (job.hourly_rate * parseFloat(hours)).toFixed(0);
-    
-    // Pick the first available shift from this group
+
     const shiftId = job.shift_ids[0];
 
-    Alert.alert(
-      "Claim This Shift?",
-      `📍 ${job.venue_name}\n📅 ${formatDate(job.scheduled_start)}\n🕐 ${formatTime(job.scheduled_start)} - ${formatTime(job.scheduled_end)}\n💰 £${pay}\n\nYou're committing to this shift.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Claim It!",
-          style: "default",
-          onPress: async () => {
-            safeHaptic("medium");
-            setClaiming(shiftId);
+    const showClaimConfirmation = () => {
+      Alert.alert(
+        "Claim This Shift?",
+        `📍 ${job.venue_name}\n📅 ${formatDate(job.scheduled_start)}\n🕐 ${formatTime(job.scheduled_start)} - ${formatTime(job.scheduled_end)}\n💰 £${pay}\n\nYou're committing to this shift.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Claim It!",
+            style: "default",
+            onPress: async () => {
+              safeHaptic("medium");
+              setClaiming(shiftId);
 
-            if (!supabase) return;
-            try {
-              const { data: result, error } = await supabase.rpc("claim_shift", {
-                p_shift_id: shiftId,
-                p_personnel_id: personnel.id,
-              });
-
-              if (error || !result?.success) {
-                safeHaptic("error");
-                if (result?.error === "ALREADY_CLAIMED") {
-                  Alert.alert("Too Slow!", "This shift was just claimed by another guard.");
-                } else {
-                  Alert.alert("Error", result?.message || "Failed to claim. Try again.");
-                }
-                // Remove the claimed shift from available shifts
-                setAvailableShifts((prev) => prev.filter((s) => s.id !== shiftId));
-                setClaiming(null);
-                return;
-              }
-
-              safeHaptic("success");
-
-              // Create Mission Control chat
               if (!supabase) return;
               try {
-                await supabase.rpc("create_mission_control_chat", { p_booking_id: job.booking_id });
-              } catch (chatErr) {
-                console.log("Mission Control chat (non-critical):", chatErr);
-              }
+                await claimShiftWithLocation(shiftId, personnel.id);
 
-              // Notify venue
-              if (!supabase) return;
-              const { data: booking } = await supabase
-                .from("bookings")
-                .select("venue_id")
-                .eq("id", job.booking_id)
-                .single();
+                safeHaptic("success");
 
-              if (booking?.venue_id && supabase) {
-                const { data: venue } = await supabase
-                  .from("venues")
-                  .select("user_id")
-                  .eq("id", booking.venue_id)
+                if (!supabase) return;
+                try {
+                  await supabase.rpc("create_mission_control_chat", { p_booking_id: job.booking_id });
+                } catch (chatErr) {
+                  console.log("Mission Control chat (non-critical):", chatErr);
+                }
+
+                if (!supabase) return;
+                const { data: booking } = await supabase
+                  .from("bookings")
+                  .select("venue_id")
+                  .eq("id", job.booking_id)
                   .single();
 
-                if (venue?.user_id && supabase) {
-                  await supabase.from("notifications").insert({
-                    user_id: venue.user_id,
-                    type: "shift",
-                    title: "✅ Shift Confirmed!",
-                    body: `${personnel.display_name} accepted the ${job.role} shift for ${job.event_name}`,
-                    data: { booking_id: job.booking_id },
-                  });
+                if (booking?.venue_id && supabase) {
+                  const { data: venue } = await supabase
+                    .from("venues")
+                    .select("user_id")
+                    .eq("id", booking.venue_id)
+                    .single();
+
+                  if (venue?.user_id && supabase) {
+                    await supabase.from("notifications").insert({
+                      user_id: venue.user_id,
+                      type: "shift",
+                      title: "✅ Shift Confirmed!",
+                      body: `${personnel.display_name} accepted the ${job.role} shift for ${job.event_name}`,
+                      data: { booking_id: job.booking_id },
+                    });
+                  }
                 }
+
+                setAvailableShifts((prev) => prev.filter((s) => s.id !== shiftId));
+                Alert.alert("✅ Shift Claimed!", "You're confirmed for this job. Check Mission Control for team updates.");
+              } catch (e: any) {
+                const msg = String(e?.message || "");
+                if (msg.toLowerCase().includes("already been claimed")) {
+                  safeHaptic("error");
+                  Alert.alert("Too Slow!", "This shift was just claimed by another guard.");
+                  setAvailableShifts((prev) => prev.filter((s) => s.id !== shiftId));
+                  setClaiming(null);
+                  return;
+                }
+                console.error("Claim error:", e);
+                if (e?.debug) {
+                  console.log("[claim] debug:", JSON.stringify(e.debug, null, 2));
+                }
+                Alert.alert("Error", msg || "Something went wrong. Try again.");
               }
 
-              // Remove just the claimed shift (others in group may still be available)
-              setAvailableShifts((prev) => prev.filter((s) => s.id !== shiftId));
-              Alert.alert("✅ Shift Claimed!", "You're confirmed for this job. Check Mission Control for team updates.");
-            } catch (e) {
-              console.error("Claim error:", e);
-              Alert.alert("Error", "Something went wrong. Try again.");
-            }
-
-            setClaiming(null);
+              setClaiming(null);
+            },
           },
-        },
-      ]
-    );
+        ]
+      );
+    };
+
+    try {
+      const warning = await getClaimAvailabilityWarning(
+        supabase,
+        personnel.id,
+        job.scheduled_start,
+        job.scheduled_end
+      );
+      if (warning.shouldWarn) {
+        Alert.alert(warning.title, warning.message, [
+          { text: "Cancel", style: "cancel" },
+          { text: "Claim anyway", onPress: showClaimConfirmation },
+        ]);
+        return;
+      }
+    } catch (e) {
+      console.warn("Availability check (non-blocking):", e);
+    }
+
+    showClaimConfirmation();
   };
 
   // Group shifts by booking + role (so 2 Door Security shifts show as "2 positions")
@@ -489,6 +580,8 @@ export default function ExploreTab() {
           event_name: shift.event_name,
           positions_available: 1,
           shift_ids: [shift.id],
+          latitude: shift.latitude,
+          longitude: shift.longitude,
         };
       } else {
         groups[key].positions_available += 1;
@@ -512,17 +605,110 @@ export default function ExploreTab() {
     );
   }, [groupedJobs, search]);
 
+  const featuredJobs = useMemo(() => {
+    if (filteredJobs.length < 2) return [];
+    return [...filteredJobs]
+      .sort((a, b) => {
+        if (b.hourly_rate !== a.hourly_rate) return b.hourly_rate - a.hourly_rate;
+        return new Date(a.scheduled_start).getTime() - new Date(b.scheduled_start).getTime();
+      })
+      .slice(0, 5);
+  }, [filteredJobs]);
+
+  const latestBlogPost = useMemo(() => getLatestShieldBlogPost(), []);
+
+  const exploreTrainingCourses = useMemo(
+    () => COURSES.slice(0, EXPLORE_TRAINING_TILE_COUNT),
+    []
+  );
+
+  const topJob = filteredJobs.length > 0 ? filteredJobs[0] : null;
+  const remainingJobs = topJob ? filteredJobs.slice(1) : [];
+
+  const renderJobCard = (job: GroupedJob, keyPrefix = "") => {
+    const hours = getHours(job.scheduled_start, job.scheduled_end);
+    const pay = (job.hourly_rate * parseFloat(hours)).toFixed(0);
+    const firstShiftId = job.shift_ids[0];
+    return (
+      <View key={`${keyPrefix}${job.booking_id}-${job.role}`} style={styles.shiftCardOuter}>
+        <LinearGradient
+          colors={["rgba(0,212,170,0.14)", "rgba(255,255,255,0.04)", "rgba(255,255,255,0.02)"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.shiftCard}
+        >
+          <TouchableOpacity
+            style={styles.shiftContent}
+            activeOpacity={0.9}
+            onPress={() => router.push(`/job/${firstShiftId}`)}
+          >
+            <View style={styles.shiftHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.shiftTitle}>{job.event_name}</Text>
+                <Text style={styles.shiftVenue}>
+                  {job.venue_name}
+                  {job.venue_city ? ` · ${job.venue_city}` : ""}
+                </Text>
+              </View>
+              <View style={styles.payContainer}>
+                <Text style={styles.payAmount}>£{pay}</Text>
+                <Text style={styles.payRate}>
+                  {hours}h · £{job.hourly_rate}/hr
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.shiftDetails}>
+              <View style={styles.detailChip}>
+                <Text style={styles.detailChipText}>{formatDate(job.scheduled_start)}</Text>
+              </View>
+              <View style={styles.detailChip}>
+                <Text style={styles.detailChipText}>
+                  {formatTime(job.scheduled_start)} – {formatTime(job.scheduled_end)}
+                </Text>
+              </View>
+              <View style={styles.detailChip}>
+                <Text style={styles.detailChipText}>{job.role}</Text>
+              </View>
+              {job.positions_available > 1 && (
+                <View style={[styles.detailChip, styles.positionsChip]}>
+                  <Text style={styles.positionsChipText}>
+                    {job.positions_available} spots
+                  </Text>
+                </View>
+              )}
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.claimButtonWrap, claiming === firstShiftId && styles.claimButtonDisabled]}
+            onPress={() => claimShift(job)}
+            disabled={claiming === firstShiftId}
+            activeOpacity={0.88}
+          >
+            <LinearGradient
+              colors={gradients.accent}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.claimButton}
+            >
+              {claiming === firstShiftId ? (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <ActivityIndicator size="small" color="#03120f" />
+                  <Text style={styles.claimButtonText}>Claiming…</Text>
+                </View>
+              ) : (
+                <Text style={styles.claimButtonText}>Claim this shift</Text>
+              )}
+            </LinearGradient>
+          </TouchableOpacity>
+        </LinearGradient>
+      </View>
+    );
+  };
+
   const isVenueRole = role === "venue";
   const roleResolved = role !== null;
-  const filteredVenueBookings = useMemo(() => {
-    if (!search.trim()) return venueBookings;
-    const lower = search.trim().toLowerCase();
-    return venueBookings.filter(
-      (b) =>
-        (b.event_name || "").toLowerCase().includes(lower) ||
-        (b.status || "").toLowerCase().includes(lower)
-    );
-  }, [venueBookings, search]);
 
   if (loadingJobs && !roleResolved) {
     return (
@@ -594,133 +780,152 @@ export default function ExploreTab() {
   }
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={styles.container}>
+      <LinearGradient
+        colors={["#0a1614", colors.background, colors.background]}
+        locations={[0, 0.35, 1]}
+        style={StyleSheet.absoluteFillObject}
+        pointerEvents="none"
+      />
+
+      <View style={[styles.screenBody, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>{tab === "jobs" ? "Find Shifts" : "Explore"}</Text>
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={() =>
+            isAuthenticated === false ? goSignup() : router.push("/jobs")
+          }
+        >
+          <Text style={styles.headerEyebrow}>Open shifts</Text>
+          <Text style={styles.headerTitle}>Find work</Text>
           <Text style={styles.headerSubtitle}>
-            {tab === "jobs" 
-              ? `${groupedJobs.length} job${groupedJobs.length !== 1 ? 's' : ''} available`
-              : "Birmingham"}
+            {isAuthenticated === false
+              ? `${sampleMapJobs.length} roles open near ${
+                  guestLocation?.label?.trim() || "you"
+                } · sign up to claim`
+              : `${groupedJobs.length} role${groupedJobs.length !== 1 ? "s" : ""} open near you`}
           </Text>
-        </View>
+        </TouchableOpacity>
         <View style={{ width: 40 }} />
       </View>
 
-      {/* Tabs: Jobs + Venues */}
-      <View style={styles.tabsContainer}>
-        <View style={styles.tabs}>
+      {/* Search */}
+      <View style={styles.searchWrap}>
+        <View style={styles.searchInner}>
+          <Text style={styles.searchGlyph} accessibilityElementsHidden>
+            ⌕
+          </Text>
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Event, venue, city, role…"
+            placeholderTextColor={colors.textMuted}
+            style={styles.searchInput}
+          />
+        </View>
+      </View>
+
+      {/* List ↔ Map toggle */}
+      <View style={styles.viewToggleWrap}>
+        <View style={styles.viewToggle}>
           <TouchableOpacity
-            style={[styles.tab, tab === "jobs" && styles.tabActiveJobs]}
-            onPress={() => { setTab("jobs"); safeHaptic("selection"); }}
+            style={[styles.viewToggleBtn, viewMode === "list" && styles.viewToggleBtnActive]}
+            onPress={() => {
+              safeHaptic("selection");
+              setViewMode("list");
+            }}
+            activeOpacity={0.85}
           >
-            <View style={styles.jobsTabContent}>
-              <Text style={[styles.tabText, tab === "jobs" && styles.tabTextActiveJobs]}>
-                🔍 Available Jobs
-              </Text>
-              {groupedJobs.length > 0 && (
-                <View style={styles.jobsBadge}>
-                  <Text style={styles.jobsBadgeText}>{groupedJobs.length}</Text>
-                </View>
-              )}
-            </View>
+            <Text style={[styles.viewToggleText, viewMode === "list" && styles.viewToggleTextActive]}>
+              ☰  List
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.tab, tab === "venues" && styles.tabActive]}
-            onPress={() => setTab("venues")}
+            style={[styles.viewToggleBtn, viewMode === "map" && styles.viewToggleBtnActive]}
+            onPress={() => {
+              safeHaptic("selection");
+              setViewMode("map");
+            }}
+            activeOpacity={0.85}
           >
-            <Text style={[styles.tabText, tab === "venues" && styles.tabTextActive]}>
-              📍 Venues
+            <Text style={[styles.viewToggleText, viewMode === "map" && styles.viewToggleTextActive]}>
+              ◉  Map
             </Text>
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Search */}
-      <View style={styles.searchWrap}>
-        <TextInput
-          value={search}
-          onChangeText={setSearch}
-          placeholder={
-            tab === "venues"
-              ? "Search venues, address, type or request…"
-              : "Search jobs by event, venue, role…"
-          }
-          placeholderTextColor={colors.textMuted}
-          style={styles.searchInput}
-        />
-      </View>
-
-      {/* Venues Tab */}
-      {tab === "venues" && (
-        <View style={styles.venuesContainer}>
-          <View style={styles.mapSection}>
-            <Text style={styles.mapTitle}>Birmingham venues that are hiring</Text>
-            <Text style={styles.mapSubtitle}>Tap a marker for details</Text>
-            <View style={styles.mapWrapper}>
-              <VenuesMap venues={filteredVenues} center={BIRMINGHAM_CENTER} />
-            </View>
-          </View>
-          <ScrollView
-            style={styles.venuesList}
-            contentContainerStyle={styles.scrollContent}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
-            }
-          >
-            <Text style={styles.sectionTitle}>LIST BY NAME</Text>
-            {filteredVenues.length === 0 ? (
-              <Text style={styles.noResults}>No venues match your search.</Text>
-            ) : (
-              filteredVenues.map((v) => {
-                const totalGuards = v.openRequests.reduce((s, r) => s + r.guardsCount, 0);
-                return (
-                  <TouchableOpacity
-                    key={v.id}
-                    style={styles.card}
-                    onPress={() => router.push(`/(tabs)/explore/venue/${v.id}`)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.cardTitle}>{v.name}</Text>
-                    <Text style={styles.cardMeta}>{v.address}</Text>
-                    <Text style={styles.highlight}>
-                      {v.openRequests.length} open request{v.openRequests.length !== 1 ? "s" : ""} · {totalGuards} guards needed
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })
-            )}
-          </ScrollView>
-        </View>
-      )}
-
-      {/* Jobs Tab */}
-      {tab === "jobs" && (
-        <ScrollView
-          style={styles.jobsScroll}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#10B981" />
-          }
-        >
-          {/* Live banner */}
-          {availableShifts.length > 0 && (
-            <View style={styles.liveBanner}>
-              <View style={styles.liveDot} />
-              <Text style={styles.liveText}>
-                {availableShifts.length} shift{availableShifts.length !== 1 ? "s" : ""} available - claim now!
-              </Text>
-            </View>
-          )}
-
-          {loadingJobs ? (
+      {viewMode === "map" ? (
+        <View style={styles.mapWrap}>
+          {isAuthenticated === false ? (
+            <ShiftsMapView
+              jobs={sampleMapJobs}
+              fallbackCenter={guestMapFallbackCenter}
+              bottomInset={insets.bottom + 72}
+              onPressClaim={goSignup}
+              onPressDetails={goSignup}
+            />
+          ) : loadingJobs ? (
             <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#10B981" />
+              <ActivityIndicator size="large" color={colors.accent} />
+              <Text style={styles.loadingText}>Finding available shifts…</Text>
+            </View>
+          ) : (
+            <ShiftsMapView
+              jobs={filteredJobs}
+              fallbackCenter={BIRMINGHAM_CENTER}
+              bottomInset={insets.bottom + 72}
+              onPressClaim={(job) => claimShift(job as GroupedJob)}
+              onPressDetails={(job) => router.push(`/job/${job.shift_ids[0]}`)}
+            />
+          )}
+        </View>
+      ) : (
+      <ScrollView
+        style={styles.jobsScroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        contentInsetAdjustmentBehavior="never"
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
+        }
+      >
+          {isAuthenticated === false ? (
+            <GuestShiftFeed
+              onClaim={goSignup}
+              locationLabel={guestLocation?.label}
+              userLocation={
+                guestLocation
+                  ? { lat: guestLocation.lat, lng: guestLocation.lng }
+                  : null
+              }
+            />
+          ) : loadingJobs ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={colors.accent} />
               <Text style={styles.loadingText}>Finding available shifts...</Text>
             </View>
-          ) : filteredJobs.length === 0 ? (
+          ) : topJob ? (
+            <>
+              {availableShifts.length > 0 && (
+                <View style={styles.liveBanner}>
+                  <View style={styles.liveDot} />
+                  <Text style={styles.liveText}>
+                    {availableShifts.length} shift{availableShifts.length !== 1 ? "s" : ""} available – claim now!
+                  </Text>
+                </View>
+              )}
+              {renderJobCard(topJob, "top-")}
+              <TouchableOpacity
+                style={styles.exploreMoreBtn}
+                onPress={() => router.push("/jobs")}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.exploreMoreBtnText}>Explore more jobs</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>📋</Text>
               <Text style={styles.emptyTitle}>No shifts available</Text>
@@ -728,85 +933,143 @@ export default function ExploreTab() {
                 {search.trim() ? "Try a different search" : "Check back soon for new opportunities"}
               </Text>
             </View>
-          ) : (
-            filteredJobs.map((job) => {
-              const hours = getHours(job.scheduled_start, job.scheduled_end);
-              const pay = (job.hourly_rate * parseFloat(hours)).toFixed(0);
-              const firstShiftId = job.shift_ids[0];
-
-              return (
-                <View key={`${job.booking_id}-${job.role}`} style={styles.shiftCard}>
-                  <View style={styles.shiftContent}>
-                    <View style={styles.shiftHeader}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.shiftTitle}>{job.event_name}</Text>
-                        <Text style={styles.shiftVenue}>
-                          {job.venue_name}{job.venue_city ? ` · ${job.venue_city}` : ""}
-                        </Text>
-                      </View>
-                      <View style={styles.payContainer}>
-                        <Text style={styles.payAmount}>£{pay}</Text>
-                        <Text style={styles.payRate}>{hours}h @ £{job.hourly_rate}/hr</Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.shiftDetails}>
-                      <View style={styles.detailChip}>
-                        <Text style={styles.detailChipText}>📅 {formatDate(job.scheduled_start)}</Text>
-                      </View>
-                      <View style={styles.detailChip}>
-                        <Text style={styles.detailChipText}>
-                          🕐 {formatTime(job.scheduled_start)} - {formatTime(job.scheduled_end)}
-                        </Text>
-                      </View>
-                      <View style={styles.detailChip}>
-                        <Text style={styles.detailChipText}>{job.role}</Text>
-                      </View>
-                      {job.positions_available > 1 && (
-                        <View style={[styles.detailChip, styles.positionsChip]}>
-                          <Text style={styles.positionsChipText}>
-                            👥 {job.positions_available} positions
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  </View>
-
-                  <TouchableOpacity
-                    style={[styles.claimButton, claiming === firstShiftId && styles.claimButtonDisabled]}
-                    onPress={() => claimShift(job)}
-                    disabled={claiming === firstShiftId}
-                    activeOpacity={0.8}
-                  >
-                    {claiming === firstShiftId ? (
-                      <ActivityIndicator size="small" color="#000" />
-                    ) : (
-                      <Text style={styles.claimButtonText}>Claim This Shift</Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              );
-            })
           )}
 
-          {/* Quick link to full Jobs page */}
+          {featuredJobs.length > 0 && (
+            <View style={styles.featuredSection}>
+              <View style={styles.inlineSectionHeader}>
+                <Text style={styles.inlineSectionTitle}>Featured shifts</Text>
+                <Text style={styles.inlineSectionSub}>Top pay first</Text>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.featuredScroll}>
+                {featuredJobs.map((job, idx) => {
+                  const hours = getHours(job.scheduled_start, job.scheduled_end);
+                  const pay = (job.hourly_rate * parseFloat(hours)).toFixed(0);
+                  return (
+                    <TouchableOpacity
+                      key={`${job.booking_id}-${job.role}-featured`}
+                      activeOpacity={0.9}
+                      onPress={() => router.push(`/job/${job.shift_ids[0]}`)}
+                    >
+                      <LinearGradient
+                        colors={idx % 2 === 0 ? gradients.premium : gradients.success}
+                        style={styles.featuredCard}
+                      >
+                        <Text style={styles.featuredVenue}>{job.venue_name}</Text>
+                        <Text style={styles.featuredEvent}>{job.event_name}</Text>
+                        <Text style={styles.featuredMeta}>
+                          {formatDate(job.scheduled_start)} · {formatTime(job.scheduled_start)}
+                        </Text>
+                        <Text style={styles.featuredPay}>£{pay}</Text>
+                        <TouchableOpacity style={styles.featuredClaimBtn} onPress={() => claimShift(job)} activeOpacity={0.85}>
+                          <Text style={styles.featuredClaimText}>Claim</Text>
+                        </TouchableOpacity>
+                      </LinearGradient>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+
+          {latestBlogPost ? (
+            <TouchableOpacity
+              style={styles.blogCard}
+              activeOpacity={0.9}
+              onPress={() => router.push(`/blog/${latestBlogPost.slug}`)}
+            >
+              <View style={styles.inlineSectionHeader}>
+                <Text style={styles.inlineSectionTitle}>Shield Weekly</Text>
+                <Text style={styles.inlineSectionSub}>Editorial</Text>
+              </View>
+              <Text style={styles.blogCardTitle}>{latestBlogPost.title}</Text>
+              <Text style={styles.blogCardExcerpt} numberOfLines={3}>
+                {latestBlogPost.excerpt}
+              </Text>
+              <Text style={styles.blogCardLink}>Read article →</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          <View style={styles.trainingSection}>
+            <View style={styles.trainingSectionHeader}>
+              <Text style={styles.inlineSectionTitle}>Keep your edge</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  safeHaptic("light");
+                  router.push("/training");
+                }}
+                hitSlop={8}
+                activeOpacity={0.75}
+              >
+                <Text style={styles.viewAllTraining}>View all training</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.trainingGrid}>
+              {exploreTrainingCourses.map((course) => (
+                <TouchableOpacity
+                  key={course.id}
+                  style={styles.trainingMiniCard}
+                  onPress={() => {
+                    safeHaptic("selection");
+                    router.push("/training");
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.trainingMiniBadge}>{course.badge}</Text>
+                  <Text style={styles.trainingMiniTitle} numberOfLines={2}>
+                    {course.title}
+                  </Text>
+                  <Text style={styles.trainingMiniMeta}>
+                    {course.duration} min · {course.points} pts
+                  </Text>
+                  {course.progress != null ? (
+                    <View style={styles.trainingMiniTrack}>
+                      <View style={[styles.trainingMiniFill, { width: `${course.progress}%` }]} />
+                    </View>
+                  ) : (
+                    <View style={styles.trainingMiniTrackPlaceholder} />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {remainingJobs.map((job) => renderJobCard(job, "rest-"))}
+
           <TouchableOpacity
-            style={styles.viewAllBtn}
-            onPress={() => router.push("/jobs")}
-            activeOpacity={0.8}
+            style={styles.viewAllBtnOuter}
+            onPress={() => {
+              safeHaptic("medium");
+              router.push("/jobs");
+            }}
+            activeOpacity={0.88}
           >
-            <Text style={styles.viewAllText}>View All Jobs & My Shifts →</Text>
+            <LinearGradient
+              colors={["rgba(0,212,170,0.18)", "rgba(13,148,136,0.12)"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.viewAllBtn}
+            >
+              <Text style={styles.viewAllBtnTitle}>All jobs & my shifts</Text>
+              <Text style={styles.viewAllBtnSub}>Browse listings, upcoming work, and history</Text>
+              <View style={styles.viewAllBtnRow}>
+                <Text style={styles.viewAllBtnCta}>Open jobs</Text>
+                <Text style={styles.viewAllBtnArrow}>→</Text>
+              </View>
+            </LinearGradient>
           </TouchableOpacity>
 
           <View style={{ height: insets.bottom + 20 }} />
-        </ScrollView>
+      </ScrollView>
       )}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
+  screenBody: { flex: 1, zIndex: 1 },
   header: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
@@ -814,6 +1077,16 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    zIndex: 1,
+  },
+  headerEyebrow: {
+    ...typography.caption,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 2,
+    textTransform: "uppercase",
+    color: colors.accent,
+    marginBottom: 4,
   },
   incidentBtn: {
     backgroundColor: "rgba(239, 68, 68, 0.15)",
@@ -831,11 +1104,13 @@ const styles = StyleSheet.create({
   headerTitle: {
     ...typography.display,
     color: colors.text,
+    letterSpacing: -0.6,
   },
   headerSubtitle: {
     ...typography.caption,
     color: colors.textMuted,
-    marginTop: 2,
+    marginTop: 4,
+    fontSize: 13,
   },
   tabsContainer: {
     paddingHorizontal: spacing.md,
@@ -882,22 +1157,73 @@ const styles = StyleSheet.create({
     color: "#000",
   },
   searchWrap: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.md,
+    zIndex: 1,
+  },
+  searchInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.glassBorderAccent,
+    borderRadius: radius.lg,
+    paddingLeft: spacing.md,
+    paddingRight: spacing.sm,
+    ...shadows.subtle,
+  },
+  searchGlyph: {
+    fontSize: 18,
+    color: colors.accent,
+    marginRight: spacing.sm,
+    opacity: 0.85,
   },
   searchInput: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 12,
+    flex: 1,
+    backgroundColor: "transparent",
+    borderWidth: 0,
+    paddingVertical: 14,
+    paddingRight: spacing.sm,
     ...typography.bodySmall,
     color: colors.text,
   },
   noResults: { ...typography.label, color: colors.textMuted, paddingVertical: spacing.xl },
+  viewToggleWrap: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.sm,
+    zIndex: 1,
+  },
+  viewToggle: {
+    flexDirection: "row",
+    backgroundColor: colors.surface,
+    borderRadius: radius.full,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+  },
+  viewToggleBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.full,
+  },
+  viewToggleBtnActive: {
+    backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: "rgba(0,212,170,0.45)",
+  },
+  viewToggleText: {
+    ...typography.bodySmall,
+    color: colors.textMuted,
+    fontWeight: "600",
+    letterSpacing: 0.3,
+  },
+  viewToggleTextActive: {
+    color: colors.accentLight,
+    fontWeight: "700",
+  },
+  mapWrap: { flex: 1, zIndex: 1 },
   venueMapContainer: {
     ...StyleSheet.absoluteFillObject,
   },
@@ -1002,7 +1328,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   venuesList: { flex: 1 },
-  scrollContent: { padding: spacing.md, paddingBottom: 100 },
+  scrollContent: { paddingHorizontal: spacing.lg, paddingTop: spacing.xs, paddingBottom: 100 },
   sectionTitle: {
     ...typography.captionMuted,
     color: colors.textMuted,
@@ -1023,14 +1349,15 @@ const styles = StyleSheet.create({
   highlight: { ...typography.caption, color: colors.accent, marginTop: 6, fontWeight: "500" },
 
   // Jobs styles
-  jobsScroll: { flex: 1 },
+  jobsScroll: { flex: 1, zIndex: 1 },
   liveBanner: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(16, 185, 129, 0.1)",
+    backgroundColor: colors.successSoft,
     borderWidth: 1,
-    borderColor: "rgba(16, 185, 129, 0.3)",
-    padding: spacing.md,
+    borderColor: "rgba(34, 197, 94, 0.35)",
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
     borderRadius: radius.lg,
     gap: spacing.sm,
     marginBottom: spacing.md,
@@ -1039,11 +1366,12 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: "#10B981",
+    backgroundColor: colors.success,
   },
   liveText: {
+    flex: 1,
     ...typography.body,
-    color: "#10B981",
+    color: colors.successLight,
     fontWeight: "600",
     fontSize: 14,
   },
@@ -1059,10 +1387,12 @@ const styles = StyleSheet.create({
   emptyState: {
     alignItems: "center",
     paddingVertical: spacing.xl * 2,
+    paddingHorizontal: spacing.md,
   },
   emptyIcon: {
-    fontSize: 48,
+    fontSize: 44,
     marginBottom: spacing.md,
+    opacity: 0.85,
   },
   emptyTitle: {
     ...typography.title,
@@ -1074,13 +1404,21 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     textAlign: "center",
   },
-  shiftCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.xl,
+  shiftCardOuter: {
     marginBottom: spacing.md,
+    borderRadius: radius.xl,
+    ...shadows.subtle,
+    shadowColor: colors.accent,
+    shadowOpacity: 0.12,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 10,
+  },
+  shiftCard: {
+    borderRadius: radius.xl,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.glassBorderAccent,
   },
   shiftContent: {
     padding: spacing.lg,
@@ -1106,8 +1444,9 @@ const styles = StyleSheet.create({
   },
   payAmount: {
     fontSize: 24,
-    fontWeight: "bold",
-    color: "#10B981",
+    fontWeight: "800",
+    color: colors.accentLight,
+    letterSpacing: -0.5,
   },
   payRate: {
     ...typography.caption,
@@ -1120,10 +1459,12 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   detailChip: {
-    backgroundColor: "rgba(255,255,255,0.05)",
-    paddingVertical: spacing.sm,
+    backgroundColor: colors.glassStrong,
+    paddingVertical: 8,
     paddingHorizontal: spacing.md,
     borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.borderMuted,
   },
   detailChipText: {
     ...typography.body,
@@ -1131,41 +1472,250 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   positionsChip: {
-    backgroundColor: "rgba(16, 185, 129, 0.15)",
+    backgroundColor: colors.accentSoft,
     borderWidth: 1,
-    borderColor: "rgba(16, 185, 129, 0.3)",
+    borderColor: "rgba(0,212,170,0.35)",
   },
   positionsChipText: {
     ...typography.body,
-    color: "#10B981",
+    color: colors.accentLight,
     fontSize: 13,
     fontWeight: "600",
   },
+  featuredSection: {
+    marginBottom: spacing.lg,
+  },
+  inlineSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: spacing.sm,
+  },
+  inlineSectionTitle: {
+    ...typography.body,
+    color: colors.text,
+    fontWeight: "700",
+    letterSpacing: -0.2,
+  },
+  inlineSectionSub: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  inlineSectionLink: {
+    ...typography.caption,
+    color: colors.accent,
+    fontWeight: "700",
+  },
+  featuredScroll: {
+    paddingRight: spacing.md,
+  },
+  featuredCard: {
+    width: 236,
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    marginRight: spacing.md,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.22)",
+    ...shadows.subtle,
+  },
+  featuredVenue: {
+    ...typography.caption,
+    color: "rgba(255,255,255,0.88)",
+  },
+  featuredEvent: {
+    ...typography.title,
+    color: colors.text,
+    marginTop: 4,
+    fontSize: 18,
+  },
+  featuredMeta: {
+    ...typography.caption,
+    color: "rgba(255,255,255,0.9)",
+    marginTop: 4,
+  },
+  featuredPay: {
+    ...typography.title,
+    color: colors.text,
+    marginTop: spacing.sm,
+    fontWeight: "800",
+  },
+  featuredClaimBtn: {
+    marginTop: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  featuredClaimText: {
+    ...typography.body,
+    color: colors.text,
+    fontWeight: "700",
+  },
+  claimButtonWrap: {
+    overflow: "hidden",
+  },
   claimButton: {
-    backgroundColor: "#10B981",
     paddingVertical: 16,
     alignItems: "center",
+    justifyContent: "center",
   },
   claimButtonDisabled: {
-    opacity: 0.7,
+    opacity: 0.65,
   },
   claimButtonText: {
-    fontSize: 17,
-    fontWeight: "bold",
-    color: "#000",
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#03120f",
+    letterSpacing: 0.2,
   },
-  viewAllBtn: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
+  exploreMoreBtn: {
+    marginTop: spacing.xs,
+    marginBottom: spacing.lg,
     borderRadius: radius.lg,
-    paddingVertical: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.glassBorderAccent,
+    backgroundColor: colors.accentSoft,
+    paddingVertical: 14,
     alignItems: "center",
+  },
+  exploreMoreBtnText: {
+    ...typography.body,
+    color: colors.accentLight,
+    fontWeight: "700",
+    fontSize: 15,
+  },
+  blogCard: {
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: colors.glassBorderLight,
+    padding: spacing.lg,
+    ...shadows.subtle,
+  },
+  blogCardTitle: {
+    ...typography.titleCard,
+    color: colors.text,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  blogCardExcerpt: {
+    ...typography.body,
+    color: colors.textSecondary,
+    lineHeight: 22,
+  },
+  blogCardLink: {
+    ...typography.caption,
+    color: colors.accent,
+    fontWeight: "700",
     marginTop: spacing.sm,
   },
-  viewAllText: {
-    ...typography.body,
+  trainingSection: {
+    marginBottom: spacing.md,
+  },
+  trainingSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: spacing.sm,
+    paddingHorizontal: 2,
+  },
+  viewAllTraining: {
+    ...typography.caption,
     color: colors.accent,
     fontWeight: "600",
+    fontSize: 12,
+  },
+  trainingGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    rowGap: spacing.sm,
+  },
+  trainingMiniCard: {
+    width: "48%",
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: "rgba(0,212,170,0.22)",
+    padding: spacing.sm,
+    minHeight: 118,
+  },
+  trainingMiniBadge: {
+    fontSize: 22,
+    marginBottom: 4,
+  },
+  trainingMiniTitle: {
+    ...typography.bodySmall,
+    color: colors.text,
+    fontWeight: "600",
+    lineHeight: 18,
+    minHeight: 36,
+  },
+  trainingMiniMeta: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 4,
+    fontSize: 11,
+  },
+  trainingMiniTrack: {
+    marginTop: spacing.sm,
+    height: 4,
+    borderRadius: 99,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    overflow: "hidden",
+  },
+  trainingMiniFill: {
+    height: 4,
+    borderRadius: 99,
+    backgroundColor: colors.warning,
+  },
+  trainingMiniTrackPlaceholder: {
+    marginTop: spacing.sm,
+    height: 4,
+  },
+  viewAllBtnOuter: {
+    marginTop: spacing.xs,
+    marginBottom: spacing.sm,
+    borderRadius: radius.xl,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(0,212,170,0.45)",
+    ...shadows.glowSm,
+  },
+  viewAllBtn: {
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.lg,
+  },
+  viewAllBtnTitle: {
+    ...typography.title,
+    fontSize: 18,
+    color: colors.text,
+    fontWeight: "800",
+    letterSpacing: -0.3,
+  },
+  viewAllBtnSub: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 6,
+    lineHeight: 18,
+  },
+  viewAllBtnRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: spacing.md,
+    gap: 8,
+  },
+  viewAllBtnCta: {
+    ...typography.body,
+    color: colors.accentLight,
+    fontWeight: "800",
+    fontSize: 16,
+  },
+  viewAllBtnArrow: {
+    fontSize: 18,
+    color: colors.accentLight,
+    fontWeight: "700",
   },
 });

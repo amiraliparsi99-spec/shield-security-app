@@ -18,6 +18,7 @@ import { supabase } from "../lib/supabase";
 import { getProfileIdAndRole } from "../lib/auth";
 import { safeHaptic } from "../lib/haptics";
 import { SlideInView, AnimatedCard } from "../components/ui/AnimatedComponents";
+import { GuestGate } from "../components/auth/GuestGate";
 
 interface Document {
   id: string;
@@ -46,6 +47,14 @@ const DOCUMENT_TYPES = [
 ];
 
 export default function DocumentsScreen() {
+  return (
+    <GuestGate feature="documents" redirectAfter="/documents">
+      <DocumentsScreenContent />
+    </GuestGate>
+  );
+}
+
+function DocumentsScreenContent() {
   const insets = useSafeAreaInsets();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);

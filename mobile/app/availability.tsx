@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   ScrollView,
   StyleSheet,
@@ -6,14 +6,28 @@ import {
   TouchableOpacity,
   View,
   ActivityIndicator,
+  TextInput,
+  Alert,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { colors, typography, spacing, radius } from "../theme";
 import { supabase } from "../lib/supabase";
 import { getProfileIdAndRole, getPersonnelId } from "../lib/auth";
+import {
+  PickDateCalendar,
+  formatISODateUK,
+} from "../components/availability/PickDateCalendar";
+import { GuestGate } from "../components/auth/GuestGate";
 
-type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
+type DayOfWeek =
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday"
+  | "sunday";
 
 interface WeeklyAvailability {
   [key: string]: {
@@ -23,33 +37,95 @@ interface WeeklyAvailability {
   };
 }
 
-const DAYS: { key: DayOfWeek; label: string; short: string }[] = [
-  { key: 'monday', label: 'Monday', short: 'Mon' },
-  { key: 'tuesday', label: 'Tuesday', short: 'Tue' },
-  { key: 'wednesday', label: 'Wednesday', short: 'Wed' },
-  { key: 'thursday', label: 'Thursday', short: 'Thu' },
-  { key: 'friday', label: 'Friday', short: 'Fri' },
-  { key: 'saturday', label: 'Saturday', short: 'Sat' },
-  { key: 'sunday', label: 'Sunday', short: 'Sun' },
+interface DayConfig {
+  key: DayOfWeek;
+  label: string;
+  /** DB: 0 = Sunday … 6 = Saturday */
+  dow: number;
+}
+
+const DAYS: DayConfig[] = [
+  { key: "monday", label: "Monday", dow: 1 },
+  { key: "tuesday", label: "Tuesday", dow: 2 },
+  { key: "wednesday", label: "Wednesday", dow: 3 },
+  { key: "thursday", label: "Thursday", dow: 4 },
+  { key: "friday", label: "Friday", dow: 5 },
+  { key: "saturday", label: "Saturday", dow: 6 },
+  { key: "sunday", label: "Sunday", dow: 0 },
 ];
 
 const TIME_SLOTS = [
-  '06:00', '07:00', '08:00', '09:00', '10:00', '11:00',
-  '12:00', '13:00', '14:00', '15:00', '16:00', '17:00',
-  '18:00', '19:00', '20:00', '21:00', '22:00', '23:00',
+  "06:00",
+  "07:00",
+  "08:00",
+  "09:00",
+  "10:00",
+  "11:00",
+  "12:00",
+  "13:00",
+  "14:00",
+  "15:00",
+  "16:00",
+  "17:00",
+  "18:00",
+  "19:00",
+  "20:00",
+  "21:00",
+  "22:00",
+  "23:00",
 ];
 
 const DEFAULT_AVAILABILITY: WeeklyAvailability = {
-  monday: { available: false, startTime: '18:00', endTime: '23:00' },
-  tuesday: { available: false, startTime: '18:00', endTime: '23:00' },
-  wednesday: { available: false, startTime: '18:00', endTime: '23:00' },
-  thursday: { available: false, startTime: '18:00', endTime: '23:00' },
-  friday: { available: true, startTime: '18:00', endTime: '03:00' },
-  saturday: { available: true, startTime: '18:00', endTime: '03:00' },
-  sunday: { available: false, startTime: '18:00', endTime: '23:00' },
+  monday: { available: false, startTime: "18:00", endTime: "23:00" },
+  tuesday: { available: false, startTime: "18:00", endTime: "23:00" },
+  wednesday: { available: false, startTime: "18:00", endTime: "23:00" },
+  thursday: { available: false, startTime: "18:00", endTime: "23:00" },
+  friday: { available: true, startTime: "18:00", endTime: "23:00" },
+  saturday: { available: true, startTime: "18:00", endTime: "23:00" },
+  sunday: { available: false, startTime: "18:00", endTime: "23:00" },
 };
 
+type BlockedRow = { id: string; date: string; reason: string | null; isNew?: boolean };
+type SpecialRow = {
+  id: string;
+  date: string;
+  start_time: string;
+  end_time: string;
+  note: string | null;
+  isNew?: boolean;
+};
+
+function padTime(t: string): string {
+  const s = (t || "09:00").slice(0, 5);
+  return s.length === 5 ? s : "09:00";
+}
+
+function rowsToWeekly(
+  rows: { day_of_week: number; is_available: boolean; start_time: string | null; end_time: string | null }[]
+): WeeklyAvailability {
+  const next: WeeklyAvailability = JSON.parse(JSON.stringify(DEFAULT_AVAILABILITY));
+  for (const d of DAYS) {
+    const row = rows.find((r) => r.day_of_week === d.dow);
+    if (row) {
+      next[d.key] = {
+        available: !!row.is_available,
+        startTime: padTime(row.start_time || "09:00"),
+        endTime: padTime(row.end_time || "17:00"),
+      };
+    }
+  }
+  return next;
+}
+
 export default function AvailabilityScreen() {
+  return (
+    <GuestGate feature="availability" redirectAfter="/availability">
+      <AvailabilityScreenContent />
+    </GuestGate>
+  );
+}
+
+function AvailabilityScreenContent() {
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -57,13 +133,27 @@ export default function AvailabilityScreen() {
   const [personnelId, setPersonnelId] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState<DayOfWeek | null>(null);
 
+  const [blockedDates, setBlockedDates] = useState<BlockedRow[]>([]);
+  const [removedBlockedIds, setRemovedBlockedIds] = useState<string[]>([]);
+  const [selectedBlockedDate, setSelectedBlockedDate] = useState<string | null>(null);
+  const [newBlockedReason, setNewBlockedReason] = useState("");
+
+  const [specialRows, setSpecialRows] = useState<SpecialRow[]>([]);
+  const [removedSpecialIds, setRemovedSpecialIds] = useState<string[]>([]);
+  const [selectedSpecialDate, setSelectedSpecialDate] = useState<string | null>(null);
+  const [spStart, setSpStart] = useState("18:00");
+  const [spEnd, setSpEnd] = useState("23:00");
+  const [spNote, setSpNote] = useState("");
+
   const loadAvailability = useCallback(async () => {
     if (!supabase) {
       setLoading(false);
       return;
     }
 
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) {
       setLoading(false);
       return;
@@ -83,17 +173,43 @@ export default function AvailabilityScreen() {
 
     setPersonnelId(pid);
 
-    // Load availability from database
-    const { data } = await supabase
-      .from('availability')
-      .select('*')
-      .eq('personnel_id', pid)
-      .eq('type', 'weekly')
-      .single();
+    const [{ data: availData }, { data: blockedData }, { data: specialData }] = await Promise.all([
+      supabase
+        .from("availability")
+        .select("day_of_week, is_available, start_time, end_time")
+        .eq("personnel_id", pid),
+      supabase.from("blocked_dates").select("id, date, reason").eq("personnel_id", pid),
+      supabase
+        .from("special_availability")
+        .select("id, date, start_time, end_time, note")
+        .eq("personnel_id", pid),
+    ]);
 
-    if (data?.schedule) {
-      setAvailability(data.schedule as WeeklyAvailability);
+    if (availData && availData.length > 0) {
+      setAvailability(rowsToWeekly(availData as any));
+    } else {
+      setAvailability({ ...DEFAULT_AVAILABILITY });
     }
+
+    setBlockedDates(
+      (blockedData || []).map((b: any) => ({
+        id: b.id,
+        date: b.date,
+        reason: b.reason ?? null,
+      }))
+    );
+    setRemovedBlockedIds([]);
+
+    setSpecialRows(
+      (specialData || []).map((s: any) => ({
+        id: s.id,
+        date: s.date,
+        start_time: padTime(s.start_time),
+        end_time: padTime(s.end_time),
+        note: s.note ?? null,
+      }))
+    );
+    setRemovedSpecialIds([]);
 
     setLoading(false);
   }, []);
@@ -112,7 +228,7 @@ export default function AvailabilityScreen() {
     }));
   };
 
-  const updateTime = (day: DayOfWeek, field: 'startTime' | 'endTime', value: string) => {
+  const updateTime = (day: DayOfWeek, field: "startTime" | "endTime", value: string) => {
     setAvailability((prev) => ({
       ...prev,
       [day]: {
@@ -123,29 +239,144 @@ export default function AvailabilityScreen() {
     setSelectedDay(null);
   };
 
+  const blockedDateMarkers = useMemo(
+    () => new Set(blockedDates.map((b) => b.date)),
+    [blockedDates]
+  );
+  const specialDateMarkers = useMemo(
+    () => new Set(specialRows.map((s) => s.date)),
+    [specialRows]
+  );
+
+  const addBlockedDateLocal = () => {
+    const d = selectedBlockedDate;
+    if (!d) {
+      Alert.alert("Pick a date", "Tap a day on the calendar to block it.");
+      return;
+    }
+    if (blockedDates.some((b) => b.date === d)) {
+      Alert.alert("Already added", "That date is already blocked.");
+      return;
+    }
+    setBlockedDates((prev) => [
+      ...prev,
+      { id: `new-${Date.now()}`, date: d, reason: newBlockedReason.trim() || null, isNew: true },
+    ]);
+    setSelectedBlockedDate(null);
+    setNewBlockedReason("");
+  };
+
+  const removeBlocked = (id: string) => {
+    if (id.startsWith("new-")) {
+      setBlockedDates((prev) => prev.filter((b) => b.id !== id));
+    } else {
+      setRemovedBlockedIds((prev) => [...prev, id]);
+      setBlockedDates((prev) => prev.filter((b) => b.id !== id));
+    }
+  };
+
+  const addSpecialLocal = () => {
+    const d = selectedSpecialDate;
+    if (!d) {
+      Alert.alert("Pick a date", "Tap a day on the calendar for special hours.");
+      return;
+    }
+    if (specialRows.some((s) => s.date === d)) {
+      Alert.alert("Already added", "You already have special hours for that date.");
+      return;
+    }
+    setSpecialRows((prev) => [
+      ...prev,
+      {
+        id: `new-${Date.now()}`,
+        date: d,
+        start_time: spStart,
+        end_time: spEnd,
+        note: spNote.trim() || null,
+        isNew: true,
+      },
+    ]);
+    setSelectedSpecialDate(null);
+    setSpNote("");
+  };
+
+  const removeSpecial = (id: string) => {
+    if (id.startsWith("new-")) {
+      setSpecialRows((prev) => prev.filter((s) => s.id !== id));
+    } else {
+      setRemovedSpecialIds((prev) => [...prev, id]);
+      setSpecialRows((prev) => prev.filter((s) => s.id !== id));
+    }
+  };
+
   const saveAvailability = async () => {
-    if (!supabase || !personnelId) return;
+    if (!supabase || !personnelId) {
+      Alert.alert("Error", "Not signed in as personnel.");
+      return;
+    }
 
     setSaving(true);
-
-    // Upsert availability
-    const { error } = await supabase
-      .from('availability')
-      .upsert({
-        personnel_id: personnelId,
-        type: 'weekly',
-        schedule: availability,
-        updated_at: new Date().toISOString(),
-      }, {
-        onConflict: 'personnel_id,type',
+    try {
+      const weeklyRows = DAYS.map((d) => {
+        const slot = availability[d.key];
+        return {
+          personnel_id: personnelId,
+          day_of_week: d.dow,
+          is_available: slot.available,
+          start_time: slot.available ? `${slot.startTime}:00` : null,
+          end_time: slot.available ? `${slot.endTime}:00` : null,
+        };
       });
 
-    setSaving(false);
+      const { error: weeklyErr } = await supabase.from("availability").upsert(weeklyRows, {
+        onConflict: "personnel_id,day_of_week",
+      });
+      if (weeklyErr) throw weeklyErr;
 
-    if (error) {
-      console.error('Failed to save availability:', error);
-    } else {
-      router.back();
+      for (const id of removedBlockedIds) {
+        const { error } = await supabase.from("blocked_dates").delete().eq("id", id);
+        if (error) throw error;
+      }
+
+      const toInsertBlocked = blockedDates.filter((b) => b.isNew);
+      if (toInsertBlocked.length > 0) {
+        const { error } = await supabase.from("blocked_dates").insert(
+          toInsertBlocked.map((b) => ({
+            personnel_id: personnelId,
+            date: b.date,
+            reason: b.reason,
+          }))
+        );
+        if (error) throw error;
+      }
+
+      for (const id of removedSpecialIds) {
+        const { error } = await supabase.from("special_availability").delete().eq("id", id);
+        if (error) throw error;
+      }
+
+      const toUpsertSpecial = specialRows.filter((s) => s.isNew);
+      for (const s of toUpsertSpecial) {
+        const { error } = await supabase.from("special_availability").upsert(
+          {
+            personnel_id: personnelId,
+            date: s.date,
+            start_time: `${s.start_time}:00`,
+            end_time: `${s.end_time}:00`,
+            note: s.note,
+          },
+          { onConflict: "personnel_id,date" }
+        );
+        if (error) throw error;
+      }
+
+      await loadAvailability();
+      Alert.alert("Saved", "Your availability, blocked dates, and special hours were updated.");
+    } catch (e: any) {
+      console.error("Failed to save availability:", e);
+      Alert.alert("Could not save", e?.message || "Please try again.");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -161,7 +392,6 @@ export default function AvailabilityScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
           <Text style={styles.backButton}>← Back</Text>
@@ -169,7 +399,7 @@ export default function AvailabilityScreen() {
         <Text style={styles.title}>Availability</Text>
         <TouchableOpacity onPress={saveAvailability} disabled={saving} activeOpacity={0.7}>
           <Text style={[styles.saveButton, saving && styles.saveButtonDisabled]}>
-            {saving ? 'Saving...' : 'Save'}
+            {saving ? "Saving..." : "Save"}
           </Text>
         </TouchableOpacity>
       </View>
@@ -179,17 +409,15 @@ export default function AvailabilityScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Summary */}
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryTitle}>Weekly Schedule</Text>
+          <Text style={styles.summaryTitle}>Weekly schedule</Text>
           <Text style={styles.summaryText}>
             {availableDaysCount === 0
-              ? 'No days set as available'
-              : `Available ${availableDaysCount} day${availableDaysCount !== 1 ? 's' : ''} per week`}
+              ? "No days set as available"
+              : `Available ${availableDaysCount} day${availableDaysCount !== 1 ? "s" : ""} per week`}
           </Text>
         </View>
 
-        {/* Day Cards */}
         {DAYS.map((day) => {
           const dayData = availability[day.key];
           const isExpanded = selectedDay === day.key;
@@ -203,22 +431,17 @@ export default function AvailabilityScreen() {
               >
                 <View style={styles.dayInfo}>
                   <View
-                    style={[
-                      styles.dayIndicator,
-                      dayData.available && styles.dayIndicatorActive,
-                    ]}
+                    style={[styles.dayIndicator, dayData.available && styles.dayIndicatorActive]}
                   />
                   <Text style={styles.dayLabel}>{day.label}</Text>
                 </View>
                 <View style={styles.dayActions}>
                   {dayData.available && (
                     <Text style={styles.dayTime}>
-                      {dayData.startTime} - {dayData.endTime}
+                      {dayData.startTime} – {dayData.endTime}
                     </Text>
                   )}
-                  <Text style={styles.dayToggle}>
-                    {dayData.available ? '✓' : '○'}
-                  </Text>
+                  <Text style={styles.dayToggle}>{dayData.available ? "✓" : "○"}</Text>
                 </View>
               </TouchableOpacity>
 
@@ -229,14 +452,14 @@ export default function AvailabilityScreen() {
                   activeOpacity={0.7}
                 >
                   <Text style={styles.editTimesText}>
-                    {isExpanded ? 'Hide times' : 'Edit times'}
+                    {isExpanded ? "Hide times" : "Edit times"}
                   </Text>
                 </TouchableOpacity>
               )}
 
               {isExpanded && dayData.available && (
                 <View style={styles.timeSelector}>
-                  <Text style={styles.timeSelectorLabel}>Start Time</Text>
+                  <Text style={styles.timeSelectorLabel}>Start time</Text>
                   <ScrollView
                     horizontal
                     showsHorizontalScrollIndicator={false}
@@ -249,7 +472,7 @@ export default function AvailabilityScreen() {
                           styles.timeChip,
                           dayData.startTime === time && styles.timeChipActive,
                         ]}
-                        onPress={() => updateTime(day.key, 'startTime', time)}
+                        onPress={() => updateTime(day.key, "startTime", time)}
                         activeOpacity={0.7}
                       >
                         <Text
@@ -264,34 +487,34 @@ export default function AvailabilityScreen() {
                     ))}
                   </ScrollView>
 
-                  <Text style={[styles.timeSelectorLabel, { marginTop: spacing.md }]}>
-                    End Time
-                  </Text>
+                  <Text style={[styles.timeSelectorLabel, { marginTop: spacing.md }]}>End time</Text>
                   <ScrollView
                     horizontal
                     showsHorizontalScrollIndicator={false}
                     style={styles.timeScroll}
                   >
-                    {[...TIME_SLOTS, '00:00', '01:00', '02:00', '03:00', '04:00', '05:00'].map((time) => (
-                      <TouchableOpacity
-                        key={`end-${time}`}
-                        style={[
-                          styles.timeChip,
-                          dayData.endTime === time && styles.timeChipActive,
-                        ]}
-                        onPress={() => updateTime(day.key, 'endTime', time)}
-                        activeOpacity={0.7}
-                      >
-                        <Text
+                    {[...TIME_SLOTS, "00:00", "01:00", "02:00", "03:00", "04:00", "05:00"].map(
+                      (time) => (
+                        <TouchableOpacity
+                          key={`end-${time}`}
                           style={[
-                            styles.timeChipText,
-                            dayData.endTime === time && styles.timeChipTextActive,
+                            styles.timeChip,
+                            dayData.endTime === time && styles.timeChipActive,
                           ]}
+                          onPress={() => updateTime(day.key, "endTime", time)}
+                          activeOpacity={0.7}
                         >
-                          {time}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
+                          <Text
+                            style={[
+                              styles.timeChipText,
+                              dayData.endTime === time && styles.timeChipTextActive,
+                            ]}
+                          >
+                            {time}
+                          </Text>
+                        </TouchableOpacity>
+                      )
+                    )}
                   </ScrollView>
                 </View>
               )}
@@ -299,14 +522,129 @@ export default function AvailabilityScreen() {
           );
         })}
 
-        {/* Info */}
+        <Text style={styles.sectionHeading}>Blocked dates</Text>
+        <Text style={styles.sectionHint}>
+          Whole days you cannot work (holidays, appointments). Shifts on these dates won&apos;t be
+          offered. Red dots = already blocked; purple = special hours elsewhere.
+        </Text>
+        <View style={styles.formCard}>
+          <PickDateCalendar
+            selectedDate={selectedBlockedDate}
+            onSelectDate={setSelectedBlockedDate}
+            blockedMarkers={blockedDateMarkers}
+            specialMarkers={specialDateMarkers}
+          />
+          <Text style={styles.selectedDateLine}>
+            {selectedBlockedDate
+              ? `Selected: ${formatISODateUK(selectedBlockedDate)}`
+              : "Tap a date on the calendar to block it"}
+          </Text>
+          <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>Reason (optional)</Text>
+          <TextInput
+            style={styles.textInput}
+            value={newBlockedReason}
+            onChangeText={setNewBlockedReason}
+            placeholder="Holiday"
+            placeholderTextColor={colors.textMuted}
+          />
+          <TouchableOpacity style={styles.addBtn} onPress={addBlockedDateLocal} activeOpacity={0.85}>
+            <Text style={styles.addBtnText}>Add blocked date</Text>
+          </TouchableOpacity>
+        </View>
+        {blockedDates.map((b) => (
+          <View key={b.id} style={styles.listRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.listRowTitle}>{formatISODateUK(b.date)}</Text>
+              {b.reason ? (
+                <Text style={styles.listRowSub}>{b.reason}</Text>
+              ) : null}
+            </View>
+            <TouchableOpacity onPress={() => removeBlocked(b.id)} hitSlop={8}>
+              <Text style={styles.removeText}>Remove</Text>
+            </TouchableOpacity>
+          </View>
+        ))}
+
+        <Text style={styles.sectionHeading}>Special availability</Text>
+        <Text style={styles.sectionHint}>
+          One-off hours on a specific date (overrides your usual weekly hours for that day). Dots
+          match your list below.
+        </Text>
+        <View style={styles.formCard}>
+          <PickDateCalendar
+            selectedDate={selectedSpecialDate}
+            onSelectDate={setSelectedSpecialDate}
+            blockedMarkers={blockedDateMarkers}
+            specialMarkers={specialDateMarkers}
+          />
+          <Text style={styles.selectedDateLine}>
+            {selectedSpecialDate
+              ? `Selected: ${formatISODateUK(selectedSpecialDate)}`
+              : "Tap a date for one-off availability hours"}
+          </Text>
+          <Text style={[styles.inputLabel, { marginTop: spacing.md }]}>Note (optional)</Text>
+          <TextInput
+            style={styles.textInput}
+            value={spNote}
+            onChangeText={setSpNote}
+            placeholder="Extra cover"
+            placeholderTextColor={colors.textMuted}
+          />
+          <Text style={[styles.inputLabel, { marginTop: spacing.sm }]}>Time window</Text>
+          <View style={styles.inlineRow}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
+              {TIME_SLOTS.map((t) => (
+                <TouchableOpacity
+                  key={`sp-s-${t}`}
+                  style={[styles.miniChip, spStart === t && styles.miniChipOn]}
+                  onPress={() => setSpStart(t)}
+                >
+                  <Text style={[styles.miniChipText, spStart === t && styles.miniChipTextOn]}>
+                    {t}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+          <View style={[styles.inlineRow, { marginTop: spacing.xs }]}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
+              {[...TIME_SLOTS, "00:00", "01:00", "02:00", "03:00"].map((t) => (
+                <TouchableOpacity
+                  key={`sp-e-${t}`}
+                  style={[styles.miniChip, spEnd === t && styles.miniChipOn]}
+                  onPress={() => setSpEnd(t)}
+                >
+                  <Text style={[styles.miniChipText, spEnd === t && styles.miniChipTextOn]}>
+                    {t}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+          <TouchableOpacity style={styles.addBtn} onPress={addSpecialLocal} activeOpacity={0.85}>
+            <Text style={styles.addBtnText}>Add special day</Text>
+          </TouchableOpacity>
+        </View>
+        {specialRows.map((s) => (
+          <View key={s.id} style={styles.listRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.listRowTitle}>
+                {formatISODateUK(s.date)} · {s.start_time}–{s.end_time}
+              </Text>
+              {s.note ? <Text style={styles.listRowSub}>{s.note}</Text> : null}
+            </View>
+            <TouchableOpacity onPress={() => removeSpecial(s.id)} hitSlop={8}>
+              <Text style={styles.removeText}>Remove</Text>
+            </TouchableOpacity>
+          </View>
+        ))}
+
         <View style={styles.infoCard}>
-          <Text style={styles.infoTitle}>💡 Tips</Text>
+          <Text style={styles.infoTitle}>Tips</Text>
           <Text style={styles.infoText}>
-            • Set your regular weekly availability{'\n'}
-            • Venues and agencies can see when you're free{'\n'}
-            • You can still accept or decline individual shifts{'\n'}
-            • Update anytime if your schedule changes
+            • Save applies weekly hours, blocked dates, and special days together{"\n"}• Blocked dates
+            always win over weekly hours{"\n"}• Special availability overrides the usual window for
+            that date{"\n"}• You can still accept or decline individual shift offers
           </Text>
         </View>
       </ScrollView>
@@ -322,13 +660,13 @@ const styles = StyleSheet.create({
   centered: {
     flex: 1,
     backgroundColor: colors.background,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
     borderBottomWidth: 1,
@@ -345,7 +683,7 @@ const styles = StyleSheet.create({
   saveButton: {
     ...typography.body,
     color: colors.accent,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   saveButtonDisabled: {
     opacity: 0.5,
@@ -363,7 +701,7 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     marginBottom: spacing.lg,
     borderWidth: 1,
-    borderColor: colors.accent + '40',
+    borderColor: colors.accent + "40",
   },
   summaryTitle: {
     ...typography.titleCard,
@@ -374,23 +712,128 @@ const styles = StyleSheet.create({
     color: colors.text,
     marginTop: spacing.xs,
   },
+  sectionHeading: {
+    ...typography.titleCard,
+    color: colors.text,
+    marginTop: spacing.lg,
+    marginBottom: spacing.xs,
+  },
+  sectionHint: {
+    ...typography.bodySmall,
+    color: colors.textMuted,
+    marginBottom: spacing.md,
+    lineHeight: 20,
+  },
+  formCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  selectedDateLine: {
+    ...typography.bodySmall,
+    color: colors.accent,
+    fontWeight: "600",
+    textAlign: "center",
+    marginTop: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  inputLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginBottom: spacing.xs,
+  },
+  textInput: {
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    ...typography.body,
+    color: colors.text,
+  },
+  addBtn: {
+    marginTop: spacing.md,
+    backgroundColor: colors.accent,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    alignItems: "center",
+  },
+  addBtnText: {
+    ...typography.body,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  listRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  listRowTitle: {
+    ...typography.body,
+    color: colors.text,
+    fontWeight: "600",
+  },
+  listRowSub: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  removeText: {
+    ...typography.caption,
+    color: colors.error,
+    fontWeight: "600",
+  },
+  inlineRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  miniChip: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    backgroundColor: colors.surfaceElevated,
+    marginRight: spacing.xs,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  miniChipOn: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  miniChipText: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontWeight: "500",
+  },
+  miniChipTextOn: {
+    color: colors.text,
+    fontWeight: "700",
+  },
   dayCard: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
     marginBottom: spacing.sm,
-    overflow: 'hidden',
+    overflow: "hidden",
   },
   dayHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     padding: spacing.md,
   },
   dayInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
   },
   dayIndicator: {
     width: 12,
@@ -405,11 +848,11 @@ const styles = StyleSheet.create({
   dayLabel: {
     ...typography.body,
     color: colors.text,
-    fontWeight: '500',
+    fontWeight: "500",
   },
   dayActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
   },
   dayTime: {
     ...typography.caption,
@@ -430,7 +873,7 @@ const styles = StyleSheet.create({
   editTimesText: {
     ...typography.caption,
     color: colors.accent,
-    textAlign: 'center',
+    textAlign: "center",
   },
   timeSelector: {
     padding: spacing.md,
@@ -460,7 +903,7 @@ const styles = StyleSheet.create({
   timeChipText: {
     ...typography.caption,
     color: colors.textMuted,
-    fontWeight: '500',
+    fontWeight: "500",
   },
   timeChipTextActive: {
     color: colors.text,

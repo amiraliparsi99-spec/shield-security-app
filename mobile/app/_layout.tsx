@@ -1,6 +1,9 @@
-import { useEffect, useState } from "react";
-import { Stack, router } from "expo-router";
+import { useEffect, useRef, useState } from "react";
+import { View } from "react-native";
+import { Stack, router, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { StripeProvider } from "@stripe/stripe-react-native";
 import { colors } from "../theme";
 import { supabase } from "../lib/supabase";
 import { CallProvider } from "../contexts/CallContext";
@@ -10,14 +13,23 @@ import { ThemeProvider, useTheme } from "../contexts/ThemeContext";
 import { UnreadMessagesProvider } from "../contexts/UnreadMessagesContext";
 import { IncomingCallModal, ActiveCallScreen } from "../components/calling";
 import { ShiftOfferPopup } from "../components/shifts/ShiftOfferPopup";
+import { ShiftAttendanceConfirmPopup } from "../components/shifts/ShiftAttendanceConfirmPopup";
+import { PreShiftTracker } from "../components/tracking/PreShiftTracker";
 import { setupNotificationDeepLinks } from "../lib/push-notifications";
 import { AnimatedOnboarding, useAnimatedOnboardingComplete } from "../components/onboarding/AnimatedOnboarding";
 import { useAuthStore } from "../stores";
+import { hasCompletedProfile } from "../lib/oauth-profile";
+
+const STRIPE_PUBLISHABLE_KEY =
+  process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY || "";
 
 function AppContent() {
   const { isDark, colors: themeColors } = useTheme();
   const { isComplete, setIsComplete } = useAnimatedOnboardingComplete();
   const { loadAuth, clear: clearAuth } = useAuthStore();
+  const segments = useSegments();
+  const segmentsRef = useRef(segments);
+  segmentsRef.current = segments;
 
   useEffect(() => {
     if (!supabase) return;
@@ -28,9 +40,43 @@ function AppContent() {
         clearAuth();
         return;
       }
-      if (session?.user) {
-        loadAuth();
-      }
+      if (!session?.user) return;
+      loadAuth();
+
+      // OAuth users who quit before completing the role-picker step land back
+      // here on next launch — they have a session but no profile row, so we
+      // route them to /signup/oauth-complete. We deliberately DELAY the check
+      // by ~2s: email/password signup also fires SIGNED_IN immediately, and
+      // its profile insert happens a few hundred ms later. We don't want to
+      // fight the explicit nav that those flows do.
+      if (event !== "SIGNED_IN" && event !== "INITIAL_SESSION") return;
+
+      const userId = session.user.id;
+      setTimeout(async () => {
+        try {
+          // If the user is currently on a login/signup/auth flow, leave them
+          // alone — they're either still onboarding or about to be navigated
+          // explicitly by the screen that triggered the sign-in.
+          const seg0 = segmentsRef.current[0] ?? "";
+          if (
+            seg0 === "login" ||
+            seg0 === "signup" ||
+            seg0 === "verification"
+          ) {
+            return;
+          }
+          const completed = await hasCompletedProfile(userId);
+          if (!completed) {
+            try {
+              router.replace("/signup/oauth-complete");
+            } catch {
+              // router may not be ready on initial mount — best-effort
+            }
+          }
+        } catch (e) {
+          console.warn("[Auth] profile check failed:", e);
+        }
+      }, 2000);
     });
     loadAuth();
 
@@ -76,7 +122,7 @@ function AppContent() {
       <UnreadMessagesProvider>
         <CallProvider>
           <ShiftOfferProvider>
-          <StatusBar style={isDark ? "light" : "dark"} />
+          <StatusBar style="light" />
           <Stack
           screenOptions={{
             headerStyle: { backgroundColor: themeColors.background },
@@ -89,8 +135,8 @@ function AppContent() {
           <Stack.Screen name="index" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="d" options={{ headerShown: false }} />
-          <Stack.Screen name="login" options={{ title: "Log in" }} />
-          <Stack.Screen name="signup" options={{ title: "Sign up" }} />
+          <Stack.Screen name="login" options={{ headerShown: false }} />
+          <Stack.Screen name="signup" options={{ headerShown: false }} />
           <Stack.Screen name="verification" options={{ headerShown: false }} />
           <Stack.Screen name="venue/[id]" options={{ title: "Venue" }} />
           <Stack.Screen name="personnel/[id]" options={{ title: "Profile" }} />
@@ -114,6 +160,14 @@ function AppContent() {
           <Stack.Screen name="referrals" options={{ headerShown: false }} />
           <Stack.Screen name="notification-settings" options={{ headerShown: false }} />
           <Stack.Screen name="calendar" options={{ headerShown: false }} />
+          <Stack.Screen name="cv" options={{ headerShown: false }} />
+          <Stack.Screen name="stats" options={{ headerShown: false }} />
+          <Stack.Screen name="jobs" options={{ headerShown: false }} />
+          <Stack.Screen name="job/[id]" options={{ headerShown: false }} />
+          <Stack.Screen name="training/index" options={{ headerShown: false }} />
+          <Stack.Screen name="training/[courseId]" options={{ headerShown: false }} />
+          <Stack.Screen name="trophies" options={{ headerShown: false }} />
+          <Stack.Screen name="shift/[id]" options={{ headerShown: false }} />
           <Stack.Screen name="upcoming-shifts" options={{ headerShown: false }} />
           <Stack.Screen name="new-conversation" options={{ headerShown: false }} />
           <Stack.Screen name="venue-settings" options={{ headerShown: false }} />
@@ -125,6 +179,8 @@ function AppContent() {
             <IncomingCallModal />
             <ActiveCallScreen />
             <ShiftOfferPopup />
+            <ShiftAttendanceConfirmPopup />
+            <PreShiftTracker />
           </ShiftOfferProvider>
         </CallProvider>
       </UnreadMessagesProvider>
@@ -134,8 +190,17 @@ function AppContent() {
 
 export default function RootLayout() {
   return (
-    <ThemeProvider>
-      <AppContent />
-    </ThemeProvider>
+    <SafeAreaProvider>
+      <View style={{ flex: 1, backgroundColor: colors.background }}>
+        <ThemeProvider>
+          <StripeProvider
+            publishableKey={STRIPE_PUBLISHABLE_KEY}
+            merchantIdentifier="merchant.app.shield.mobile"
+          >
+            <AppContent />
+          </StripeProvider>
+        </ThemeProvider>
+      </View>
+    </SafeAreaProvider>
   );
 }

@@ -13,9 +13,9 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { supabase } from "../lib/supabase";
-import { getProfileRole, getRoleDashboardPath } from "../lib/auth";
 import { colors, typography, spacing, radius } from "../theme";
 import { BackButton } from "../components/ui/BackButton";
+import { OAuthButtons } from "../components/auth/OAuthButtons";
 
 function ConfigNeeded() {
   const insets = useSafeAreaInsets();
@@ -62,15 +62,12 @@ export default function Login() {
       return;
     }
 
-    const userId = data.user?.id;
-    if (!userId) {
+    if (!data.user) {
       setError("Something went wrong. Please try again.");
       return;
     }
 
-    const role = await getProfileRole(sb, userId);
-    const path = role ? getRoleDashboardPath(role) : "/";
-    router.replace(path as "/" | "/d/venue" | "/d/personnel" | "/d/agency");
+    router.replace("/(tabs)/explore");
   }
 
   return (
@@ -147,6 +144,18 @@ export default function Login() {
                 <Text style={styles.submitBtnText}>Log in</Text>
               )}
             </TouchableOpacity>
+
+            <OAuthButtons
+              dividerLabel="or continue with"
+              onError={(msg) => setError(msg)}
+              onSuccess={({ profileExists }) => {
+                if (profileExists) {
+                  router.replace("/(tabs)/explore");
+                } else {
+                  router.replace("/signup/oauth-complete");
+                }
+              }}
+            />
           </View>
 
           <TouchableOpacity style={styles.link} onPress={() => router.push("/signup")}>

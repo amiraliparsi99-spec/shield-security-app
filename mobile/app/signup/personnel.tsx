@@ -11,12 +11,19 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
+import * as Device from "expo-device";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { supabase } from "../../lib/supabase";
 import { colors, typography, spacing, radius } from "../../theme";
+import {
+  PermissionsStep,
+  permissionsReady,
+  type PermissionsCapture,
+} from "../../components/auth/PermissionsStep";
+import { isMissingColumnError } from "../../lib/postgresErrors";
 
-const TOTAL_STEPS = 5;
+const TOTAL_STEPS = 6;
 
 const certificationOptions = [
   { value: "door_supervisor", label: "SIA Door Supervisor" },
@@ -41,7 +48,8 @@ export default function PersonnelSignUp() {
   const insets = useSafeAreaInsets();
   const [currentStep, setCurrentStep] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
-  
+  const [permissionsCapture, setPermissionsCapture] = useState<PermissionsCapture | null>(null);
+
   const [formData, setFormData] = useState({
     fullName: "",
     email: "",
@@ -110,6 +118,15 @@ export default function PersonnelSignUp() {
           return false;
         }
         return true;
+      case 6:
+        if (!permissionsReady(permissionsCapture, true)) {
+          Alert.alert(
+            "Permissions required",
+            "Please enable notifications and location to finish creating your account."
+          );
+          return false;
+        }
+        return true;
       default:
         return true;
     }
@@ -133,6 +150,7 @@ export default function PersonnelSignUp() {
 
   const handleSubmit = async () => {
     if (!validateStep(5)) return;
+    if (!validateStep(6)) return;
 
     setIsLoading(true);
 
@@ -168,9 +186,9 @@ export default function PersonnelSignUp() {
         throw new Error("Failed to create profile");
       }
 
-      // Now create personnel record (profile exists, foreign key will work)
-      if (!supabase) return;
-      const { error: personnelError } = await supabase.from("personnel").insert({
+      // Build the personnel insert with permission columns (graceful fallback
+      // if 0055 migration hasn't been applied yet — retry without them).
+      const personnelBase = {
         user_id: authData.user.id,
         display_name: formData.fullName,
         city: formData.city,
@@ -181,15 +199,43 @@ export default function PersonnelSignUp() {
         experience_years: formData.experienceYears ? parseInt(formData.experienceYears) : 0,
         hourly_rate: formData.hourlyRate ? parseFloat(formData.hourlyRate) : 16.00,
         bio: formData.bio || null,
-      });
+      };
 
+      const personnelWithPerms = {
+        ...personnelBase,
+        notifications_granted_at: permissionsCapture?.notifications.grantedAt ?? null,
+        location_permission: permissionsCapture?.location.level ?? null,
+        location_granted_at: permissionsCapture?.location.grantedAt ?? null,
+      };
+
+      let { error: personnelError } = await supabase.from("personnel").insert(personnelWithPerms);
+      if (personnelError && isMissingColumnError(personnelError)) {
+        // Migration 0055 not yet applied — fall back to legacy columns only.
+        const retry = await supabase.from("personnel").insert(personnelBase);
+        personnelError = retry.error;
+      }
       if (personnelError) {
         console.error("Personnel insert error:", personnelError);
         // Continue anyway - profile was created successfully
       }
 
-      // Email confirmation disabled - go directly to dashboard
-      router.replace("/d/personnel");
+      // Persist the Expo push token (table is independent of personnel/venues/agencies).
+      const pushToken = permissionsCapture?.notifications.token;
+      if (pushToken) {
+        const { error: pushErr } = await supabase.from("push_tokens").upsert(
+          {
+            user_id: authData.user.id,
+            token: pushToken,
+            platform: Platform.OS,
+            device_name: Device.deviceName || "Unknown",
+            is_active: true,
+          },
+          { onConflict: "user_id,token" }
+        );
+        if (pushErr) console.warn("[Signup] push_tokens upsert failed:", pushErr.message);
+      }
+
+      router.replace("/(tabs)/explore");
     } catch (err: any) {
       Alert.alert("Error", err.message || "Something went wrong");
     } finally {
@@ -200,7 +246,7 @@ export default function PersonnelSignUp() {
   const renderProgressBar = () => (
     <View style={styles.progressContainer}>
       <View style={styles.progressBar}>
-        {[1, 2, 3, 4, 5].map((step) => (
+        {Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1).map((step) => (
           <View key={step} style={styles.progressStepContainer}>
             <View style={[
               styles.progressDot,
@@ -215,7 +261,7 @@ export default function PersonnelSignUp() {
                 </Text>
               )}
             </View>
-            {step < 5 && (
+            {step < TOTAL_STEPS && (
               <View style={[styles.progressLine, step < currentStep && styles.progressLineActive]} />
             )}
           </View>
@@ -448,12 +494,22 @@ export default function PersonnelSignUp() {
     </View>
   );
 
+  const renderStep6 = () => (
+    <PermissionsStep
+      requireLocation
+      onChange={setPermissionsCapture}
+      submitting={isLoading}
+    />
+  );
+
+  const submitDisabled = isLoading || !permissionsReady(permissionsCapture, true);
+
   return (
     <KeyboardAvoidingView 
       style={styles.container} 
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
-      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 4 }]}>
         <TouchableOpacity onPress={handleBack} style={styles.backButton}>
           <Text style={styles.backButtonText}>‹</Text>
         </TouchableOpacity>
@@ -479,6 +535,7 @@ export default function PersonnelSignUp() {
         {currentStep === 3 && renderStep3()}
         {currentStep === 4 && renderStep4()}
         {currentStep === 5 && renderStep5()}
+        {currentStep === 6 && renderStep6()}
       </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + 10 }]}>
@@ -489,9 +546,9 @@ export default function PersonnelSignUp() {
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
-            style={[styles.submitButton, isLoading && styles.submitButtonDisabled]}
+            style={[styles.submitButton, submitDisabled && styles.submitButtonDisabled]}
             onPress={handleSubmit}
-            disabled={isLoading}
+            disabled={submitDisabled}
           >
             {isLoading ? (
               <ActivityIndicator color={colors.text} />

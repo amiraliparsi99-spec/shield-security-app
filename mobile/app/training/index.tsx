@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -14,86 +14,16 @@ import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { colors, typography, spacing, radius } from '../../theme';
+import { COURSES, type Course } from '../../data/training-courses';
+import { supabase } from '../../lib/supabase';
+import { getMyPersonnelId, getTrainingCompletions } from '../../lib/trainingProgress';
+import { BackButton } from '../../components/ui/BackButton';
+import { GuestGate } from '../../components/auth/GuestGate';
+
+export type { Course };
+export { COURSES };
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
-interface Course {
-  id: string;
-  title: string;
-  description: string;
-  duration: number;
-  badge: string;
-  badgeName: string;
-  points: number;
-  difficulty: 'beginner' | 'intermediate' | 'advanced';
-  completed?: boolean;
-  progress?: number;
-}
-
-const COURSES: Course[] = [
-  {
-    id: 'ct-basics',
-    title: 'Counter-Terrorism Basics',
-    description: 'Learn to identify suspicious behavior and respond to potential threats.',
-    duration: 8,
-    badge: '🛡️',
-    badgeName: 'CT Aware',
-    points: 50,
-    difficulty: 'beginner',
-    completed: true,
-  },
-  {
-    id: 'first-aid',
-    title: 'First Aid Refresher',
-    description: 'Quick refresh on CPR, recovery position, and common injuries.',
-    duration: 10,
-    badge: '🏥',
-    badgeName: 'First Responder',
-    points: 40,
-    difficulty: 'beginner',
-    progress: 60,
-  },
-  {
-    id: 'conflict',
-    title: 'Conflict De-escalation',
-    description: 'Techniques to calm aggressive situations without physical intervention.',
-    duration: 12,
-    badge: '🤝',
-    badgeName: 'Peacekeeper',
-    points: 60,
-    difficulty: 'intermediate',
-  },
-  {
-    id: 'drug-awareness',
-    title: 'Drug Awareness',
-    description: 'Identify signs of drug use in nightlife settings.',
-    duration: 7,
-    badge: '💊',
-    badgeName: 'Vigilant',
-    points: 45,
-    difficulty: 'beginner',
-  },
-  {
-    id: 'crowd',
-    title: 'Crowd Management',
-    description: 'Handle large crowds safely and prevent crushes at events.',
-    duration: 15,
-    badge: '👥',
-    badgeName: 'Crowd Controller',
-    points: 75,
-    difficulty: 'intermediate',
-  },
-  {
-    id: 'vip',
-    title: 'VIP Protection',
-    description: 'Advanced techniques for protecting high-profile individuals.',
-    duration: 20,
-    badge: '⭐',
-    badgeName: 'Elite Protector',
-    points: 100,
-    difficulty: 'advanced',
-  },
-];
 
 const TIER_CONFIG = {
   bronze: { label: 'Bronze', icon: '🥉', color: '#CD7F32', minPoints: 0 },
@@ -103,14 +33,52 @@ const TIER_CONFIG = {
 };
 
 export default function TrainingScreen() {
+  return (
+    <GuestGate feature="training" redirectAfter="/training">
+      <TrainingScreenContent />
+    </GuestGate>
+  );
+}
+
+function TrainingScreenContent() {
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [activeTab, setActiveTab] = useState<'courses' | 'passport'>('courses');
   const scrollY = useRef(new Animated.Value(0)).current;
+  const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
+  const [earnedBadges, setEarnedBadges] = useState<Record<string, string>>({});
+  const [userPoints, setUserPoints] = useState(0);
 
-  // Demo user data
-  const userPoints = 145;
-  const currentTier = 'silver';
-  const completedCourses = COURSES.filter(c => c.completed).length;
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      if (!supabase) return;
+      const pid = await getMyPersonnelId(supabase);
+      if (!pid) return;
+      const rows = await getTrainingCompletions(supabase, pid);
+      if (!mounted) return;
+      const ids = new Set(rows.map((r) => r.course_id));
+      const badges: Record<string, string> = {};
+      let total = 0;
+      rows.forEach((r) => {
+        badges[r.course_id] = r.badge_name;
+        total += Number(r.points_earned || 0);
+      });
+      setCompletedIds(ids);
+      setEarnedBadges(badges);
+      setUserPoints(total);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const completedCourses = completedIds.size;
+  const currentTier = useMemo(() => {
+    if (userPoints >= TIER_CONFIG.elite.minPoints) return 'elite';
+    if (userPoints >= TIER_CONFIG.gold.minPoints) return 'gold';
+    if (userPoints >= TIER_CONFIG.silver.minPoints) return 'silver';
+    return 'bronze';
+  }, [userPoints]);
 
   const getDifficultyColor = (diff: string) => {
     switch (diff) {
@@ -132,11 +100,18 @@ export default function TrainingScreen() {
         <View style={styles.courseBadge}>
           <Text style={styles.courseBadgeText}>{course.badge}</Text>
         </View>
-        {course.completed && (
-          <View style={styles.completedBadge}>
-            <Text style={styles.completedText}>✓ Done</Text>
-          </View>
-        )}
+        <View style={styles.courseHeaderBadges}>
+          {completedIds.has(course.id) && (
+            <View style={styles.doneBadge}>
+              <Text style={styles.doneBadgeText}>✓ Done</Text>
+            </View>
+          )}
+          {course.elite_required && (
+            <View style={styles.eliteBadge}>
+              <Text style={styles.eliteBadgeText}>⭐ Elite</Text>
+            </View>
+          )}
+        </View>
       </View>
 
       <Text style={styles.courseTitle}>{course.title}</Text>
@@ -146,21 +121,13 @@ export default function TrainingScreen() {
 
       <View style={styles.courseMeta}>
         <Text style={styles.courseMetaText}>⏱ {course.duration} min</Text>
+        <Text style={styles.courseMetaText}>📖 {course.lessons} sections</Text>
         <View style={[styles.difficultyBadge, { backgroundColor: getDifficultyColor(course.difficulty) + '30' }]}>
           <Text style={[styles.difficultyText, { color: getDifficultyColor(course.difficulty) }]}>
             {course.difficulty}
           </Text>
         </View>
       </View>
-
-      {course.progress !== undefined && course.progress > 0 && course.progress < 100 && (
-        <View style={styles.progressContainer}>
-          <View style={styles.progressBar}>
-            <View style={[styles.progressFill, { width: `${course.progress}%` }]} />
-          </View>
-          <Text style={styles.progressText}>{course.progress}%</Text>
-        </View>
-      )}
 
       <View style={styles.courseFooter}>
         <Text style={styles.badgeName}>Earn: {course.badgeName}</Text>
@@ -174,18 +141,20 @@ export default function TrainingScreen() {
       {/* Earned Badges */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Earned Badges</Text>
+        <Text style={styles.passportHint}>Badges unlock automatically when you pass module quizzes.</Text>
         <View style={styles.badgesGrid}>
-          {COURSES.filter(c => c.completed).map(course => (
-            <View key={course.id} style={styles.earnedBadge}>
-              <Text style={styles.earnedBadgeIcon}>{course.badge}</Text>
-              <Text style={styles.earnedBadgeName}>{course.badgeName}</Text>
-            </View>
-          ))}
-          {COURSES.filter(c => !c.completed).map(course => (
-            <View key={course.id} style={[styles.earnedBadge, styles.lockedBadge]}>
-              <Text style={styles.lockedBadgeIcon}>🔒</Text>
-              <Text style={styles.lockedBadgeName}>{course.badgeName}</Text>
-            </View>
+          {COURSES.map((course) => (
+            completedIds.has(course.id) ? (
+              <View key={course.id} style={styles.earnedBadge}>
+                <Text style={styles.earnedBadgeIcon}>{course.badge}</Text>
+                <Text style={styles.earnedBadgeName}>{earnedBadges[course.id] || course.badgeName}</Text>
+              </View>
+            ) : (
+              <View key={course.id} style={[styles.earnedBadge, styles.lockedBadge]}>
+                <Text style={styles.lockedBadgeIcon}>🔒</Text>
+                <Text style={styles.lockedBadgeName}>{course.badgeName}</Text>
+              </View>
+            )
           ))}
         </View>
       </View>
@@ -245,9 +214,7 @@ export default function TrainingScreen() {
       <SafeAreaView style={styles.safeArea}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Text style={styles.backText}>←</Text>
-          </TouchableOpacity>
+          <BackButton />
           <Text style={styles.headerTitle}>Training Academy</Text>
           <View style={styles.headerRight} />
         </View>
@@ -277,14 +244,14 @@ export default function TrainingScreen() {
                   style={[
                     styles.tierProgressFill, 
                     { 
-                      width: `${(userPoints / TIER_CONFIG.gold.minPoints) * 100}%`,
+                      width: `${Math.min(100, (userPoints / TIER_CONFIG.gold.minPoints) * 100)}%`,
                       backgroundColor: TIER_CONFIG[currentTier as keyof typeof TIER_CONFIG].color,
                     }
                   ]} 
                 />
               </View>
               <Text style={styles.tierProgressText}>
-                {TIER_CONFIG.gold.minPoints - userPoints} pts to Gold 🥇
+                {Math.max(0, TIER_CONFIG.gold.minPoints - userPoints)} pts to Gold 🥇
               </Text>
             </View>
           </LinearGradient>
@@ -333,6 +300,13 @@ export default function TrainingScreen() {
         onRequestClose={() => setSelectedCourse(null)}
       >
         <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={() => setSelectedCourse(null)}
+            accessibilityRole="button"
+            accessibilityLabel="Close course details"
+          />
           <View style={styles.modalContent}>
             {selectedCourse && (
               <>
@@ -357,6 +331,10 @@ export default function TrainingScreen() {
                     <Text style={styles.modalStatLabel}>Minutes</Text>
                   </View>
                   <View style={styles.modalStat}>
+                    <Text style={styles.modalStatValue}>📖 {selectedCourse.lessons}</Text>
+                    <Text style={styles.modalStatLabel}>Sections</Text>
+                  </View>
+                  <View style={styles.modalStat}>
                     <Text style={styles.modalStatValue}>+{selectedCourse.points}</Text>
                     <Text style={styles.modalStatLabel}>Points</Text>
                   </View>
@@ -370,22 +348,14 @@ export default function TrainingScreen() {
                 </View>
 
                 <TouchableOpacity
-                  style={[
-                    styles.startButton,
-                    selectedCourse.completed && styles.startButtonCompleted
-                  ]}
+                  style={styles.startButton}
                   onPress={() => {
+                    const id = selectedCourse.id;
                     setSelectedCourse(null);
-                    // Navigate to course content
+                    router.push(`/training/${id}`);
                   }}
                 >
-                  <Text style={styles.startButtonText}>
-                    {selectedCourse.completed 
-                      ? '✓ Completed - Review Course' 
-                      : selectedCourse.progress 
-                      ? 'Continue Course →' 
-                      : 'Start Course →'}
-                  </Text>
+                  <Text style={styles.startButtonText}>Start course →</Text>
                 </TouchableOpacity>
               </>
             )}
@@ -410,18 +380,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.lg,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  backText: {
-    color: colors.text,
-    fontSize: 20,
   },
   headerTitle: {
     ...typography.title,
@@ -559,16 +517,38 @@ const styles = StyleSheet.create({
   courseBadgeText: {
     fontSize: 24,
   },
-  completedBadge: {
-    backgroundColor: colors.success + '20',
+  courseHeaderBadges: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    alignItems: 'center',
+  },
+  doneBadge: {
+    backgroundColor: colors.successSoft,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.success + '55',
   },
-  completedText: {
+  doneBadgeText: {
     ...typography.caption,
     color: colors.success,
+    fontWeight: '700',
+    fontSize: 11,
+  },
+  eliteBadge: {
+    backgroundColor: colors.secondarySoft,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.secondary + '40',
+  },
+  eliteBadgeText: {
+    ...typography.caption,
+    color: colors.secondaryLight,
     fontWeight: '600',
+    fontSize: 11,
   },
   courseTitle: {
     ...typography.titleCard,
@@ -649,6 +629,12 @@ const styles = StyleSheet.create({
   sectionTitle: {
     ...typography.titleCard,
     color: colors.text,
+  },
+  passportHint: {
+    ...typography.caption,
+    color: colors.textMuted,
+    lineHeight: 18,
+    marginBottom: spacing.sm,
   },
   badgesGrid: {
     flexDirection: 'row',
@@ -751,14 +737,29 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)',
+    backgroundColor: 'rgba(0,0,0,0.94)',
     justifyContent: 'flex-end',
   },
+  /** Tap above the sheet to go back — stays clearly darker than the wallpaper behind the simulator */
+  modalBackdrop: {
+    flex: 1,
+    minHeight: 48,
+  },
   modalContent: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.backgroundAlt,
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
     padding: spacing.xl,
+    paddingBottom: spacing.xl + 8,
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+    elevation: 24,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -778,16 +779,19 @@ const styles = StyleSheet.create({
     fontSize: 32,
   },
   closeButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.22)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   closeText: {
-    color: colors.textMuted,
+    color: colors.textSecondary,
     fontSize: 18,
+    fontWeight: '600',
   },
   modalTitle: {
     ...typography.title,
@@ -801,18 +805,24 @@ const styles = StyleSheet.create({
   },
   modalStats: {
     flexDirection: 'row',
-    gap: spacing.lg,
+    flexWrap: 'wrap',
+    gap: spacing.sm,
     marginBottom: spacing.lg,
   },
   modalStat: {
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    flexGrow: 1,
+    flexBasis: '30%',
+    minWidth: '28%',
+    backgroundColor: 'rgba(255,255,255,0.06)',
     borderRadius: radius.lg,
-    padding: spacing.md,
+    padding: spacing.sm,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   modalStatValue: {
     ...typography.title,
+    fontSize: 16,
     color: colors.text,
   },
   modalStatLabel: {
@@ -842,9 +852,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg,
     paddingVertical: spacing.md,
     alignItems: 'center',
-  },
-  startButtonCompleted: {
-    backgroundColor: colors.success,
   },
   startButtonText: {
     ...typography.body,

@@ -17,6 +17,7 @@ import { supabase } from "../lib/supabase";
 import { getProfileIdAndRole } from "../lib/auth";
 import { safeHaptic } from "../lib/haptics";
 import { SlideInView } from "../components/ui/AnimatedComponents";
+import { GuestGate } from "../components/auth/GuestGate";
 
 interface Review {
   id: string;
@@ -39,6 +40,14 @@ interface RatingStats {
 }
 
 export default function ReviewsScreen() {
+  return (
+    <GuestGate feature="reviews" redirectAfter="/reviews">
+      <ReviewsScreenContent />
+    </GuestGate>
+  );
+}
+
+function ReviewsScreenContent() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
   const userId = params.userId as string;

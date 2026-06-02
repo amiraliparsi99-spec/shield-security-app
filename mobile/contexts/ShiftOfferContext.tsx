@@ -1,12 +1,8 @@
 /**
  * ShiftOfferContext — Uber-style shift offer popup system
  *
- * STRATEGY: Poll the shifts table directly for new unclaimed shifts.
- * When a new shift appears that the guard hasn't seen yet, show the popup.
- * This is completely self-contained — no dependency on any API, server,
- * or the shift_offers table being populated externally.
- *
- * Also listens to Supabase Realtime on the shifts table for instant detection.
+ * Only shows offers where the guard has a row in `shift_offers` (targeted offers).
+ * Polls `shift_offers` and listens to Realtime inserts for this personnel_id.
  */
 
 import React, {
@@ -17,11 +13,11 @@ import React, {
   useCallback,
   useRef,
 } from "react";
-import { Vibration, Platform } from "react-native";
+import { Vibration, Platform, Alert } from "react-native";
 import { supabase } from "../lib/supabase";
 import { getPersonnelId, isPersonnelVerified } from "../lib/auth";
 import { safeHaptic } from "../lib/haptics";
-import { getApiBaseUrl } from "../lib/api";
+import { acceptOfferWithLocation } from "../lib/shiftClaim";
 
 // ——— Types ———
 
@@ -54,33 +50,32 @@ interface ShiftOfferContextValue {
 
 const ShiftOfferContext = createContext<ShiftOfferContextValue | null>(null);
 
-const OFFER_DURATION_SECONDS = 120;
-
-function buildOfferFromShift(
-  shift: any,
-  personnelId: string,
-  meta?: { event_name?: string; venue_name?: string; venue_city?: string }
-): ShiftOffer {
-  const start = new Date(shift.scheduled_start);
-  const end = new Date(shift.scheduled_end);
-  const eventName = meta?.event_name || "New Shift";
-  const venueName = meta?.venue_name || "Venue";
+function mapOfferRow(row: Record<string, unknown>): ShiftOffer {
   return {
-    id: `shift-${shift.id}`,
-    shift_id: shift.id,
-    personnel_id: personnelId,
-    status: "pending",
-    hourly_rate: Number(shift.hourly_rate) || 0,
-    venue_name: `${eventName} @ ${venueName}`,
-    venue_address: meta?.venue_city || null,
-    venue_latitude: null,
-    venue_longitude: null,
-    shift_date: start.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }),
-    start_time: start.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
-    end_time: end.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
-    distance_miles: null,
-    expires_at: new Date(Date.now() + OFFER_DURATION_SECONDS * 1000).toISOString(),
-    created_at: shift.created_at || new Date().toISOString(),
+    id: String(row.id),
+    shift_id: String(row.shift_id),
+    personnel_id: String(row.personnel_id),
+    status: String(row.status ?? "pending"),
+    hourly_rate: Number(row.hourly_rate) || 0,
+    venue_name: row.venue_name != null ? String(row.venue_name) : null,
+    venue_address: row.venue_address != null ? String(row.venue_address) : null,
+    venue_latitude:
+      row.venue_latitude != null && row.venue_latitude !== ""
+        ? Number(row.venue_latitude)
+        : null,
+    venue_longitude:
+      row.venue_longitude != null && row.venue_longitude !== ""
+        ? Number(row.venue_longitude)
+        : null,
+    shift_date: row.shift_date != null ? String(row.shift_date) : null,
+    start_time: row.start_time != null ? String(row.start_time) : null,
+    end_time: row.end_time != null ? String(row.end_time) : null,
+    distance_miles:
+      row.distance_miles != null && row.distance_miles !== ""
+        ? Number(row.distance_miles)
+        : null,
+    expires_at: String(row.expires_at ?? new Date().toISOString()),
+    created_at: String(row.created_at ?? new Date().toISOString()),
   };
 }
 
@@ -95,8 +90,7 @@ export function ShiftOfferProvider({ children }: { children: React.ReactNode }) 
 
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
   const offerQueueRef = useRef<ShiftOffer[]>([]);
-  const seenShiftIdsRef = useRef<Set<string>>(new Set());
-  const metaCacheRef = useRef<Record<string, any>>({});
+  const seenOfferIdsRef = useRef<Set<string>>(new Set());
 
   // --- Initialize ---
   useEffect(() => {
@@ -125,8 +119,7 @@ export function ShiftOfferProvider({ children }: { children: React.ReactNode }) 
         setPersonnelId(pId);
         setCurrentOffer(null);
         offerQueueRef.current = [];
-        seenShiftIdsRef.current.clear();
-        metaCacheRef.current = {};
+        seenOfferIdsRef.current.clear();
         setIsVerifiedGuard(false);
         if (pId) {
           const verified = await isPersonnelVerified(supabase, pId);
@@ -138,73 +131,20 @@ export function ShiftOfferProvider({ children }: { children: React.ReactNode }) 
         setCurrentOffer(null);
         setIsVerifiedGuard(false);
         offerQueueRef.current = [];
-        seenShiftIdsRef.current.clear();
-        metaCacheRef.current = {};
+        seenOfferIdsRef.current.clear();
       }
     });
 
     return () => { subscription.unsubscribe(); };
   }, []);
 
-  // --- Fetch booking metadata (event name + venue name) ---
-  const fetchMetadata = useCallback(async (bookingIds: string[]) => {
-    const missing = bookingIds.filter((id) => !metaCacheRef.current[id]);
-    if (missing.length === 0) return;
-
-    // Try API endpoint first
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
-      const res = await fetch(`${getApiBaseUrl()}/api/shifts/metadata`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ booking_ids: missing }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      if (res.ok) {
-        const { data } = await res.json();
-        if (data) {
-          Object.assign(metaCacheRef.current, data);
-          return;
-        }
-      }
-    } catch {
-      // API unreachable — try direct Supabase
-    }
-
-    // Fallback: try Supabase directly (may fail due to RLS for unassigned bookings)
-    if (supabase) {
-      const { data: bookings } = await supabase
-        .from("bookings")
-        .select("id, event_name, venue_id")
-        .in("id", missing);
-      if (bookings && bookings.length > 0) {
-        const venueIds = [...new Set(bookings.map((b) => b.venue_id).filter(Boolean))];
-        let venuesMap: Record<string, any> = {};
-        if (venueIds.length > 0) {
-          const { data: venues } = await supabase.from("venues").select("id, name, city").in("id", venueIds);
-          if (venues) venues.forEach((v) => { venuesMap[v.id] = v; });
-        }
-        for (const b of bookings) {
-          const v = venuesMap[b.venue_id] || {};
-          metaCacheRef.current[b.id] = {
-            event_name: b.event_name || "Security Shift",
-            venue_name: v.name || "Venue",
-            venue_city: v.city || "",
-          };
-        }
-      }
-    }
-  }, []);
-
   // --- Show an offer ---
   const showOffer = useCallback((offer: ShiftOffer) => {
-    if (seenShiftIdsRef.current.has(offer.shift_id)) {
-      console.log("[ShiftOffer] Already seen shift:", offer.shift_id.slice(0, 8));
+    if (seenOfferIdsRef.current.has(offer.id)) {
+      console.log("[ShiftOffer] Already seen offer:", offer.id.slice(0, 8));
       return;
     }
-    seenShiftIdsRef.current.add(offer.shift_id);
+    seenOfferIdsRef.current.add(offer.id);
     console.log("[ShiftOffer] SHOWING POPUP for shift:", offer.shift_id.slice(0, 8), "venue:", offer.venue_name);
 
     if (Platform.OS !== "web") {
@@ -222,42 +162,32 @@ export function ShiftOfferProvider({ children }: { children: React.ReactNode }) 
     });
   }, []);
 
-  // --- Poll shifts table for new unclaimed shifts ---
+  // --- Poll shift_offers for this guard ---
   useEffect(() => {
-    if (!supabase || !personnelId || !isVerifiedGuard) return;
+    if (!supabase || !personnelId) return;
 
     let cancelled = false;
-    // Clear seen IDs on each effect run to avoid stale data from previous runs
-    seenShiftIdsRef.current.clear();
-    console.log("[ShiftOffer] Starting shift poll for", personnelId);
+    seenOfferIdsRef.current.clear();
+    console.log("[ShiftOffer] Starting shift_offers poll for", personnelId);
 
-    const pollShifts = async () => {
+    const pollOffers = async () => {
       if (cancelled || !supabase) return;
 
       try {
-        const { data: shifts } = await supabase
-          .from("shifts")
-          .select("id, booking_id, role, hourly_rate, scheduled_start, scheduled_end, created_at")
-          .is("personnel_id", null)
+        const nowIso = new Date().toISOString();
+        const { data: rows } = await supabase
+          .from("shift_offers")
+          .select("*")
+          .eq("personnel_id", personnelId)
           .eq("status", "pending")
-          .gte("scheduled_start", new Date().toISOString())
+          .gt("expires_at", nowIso)
           .order("created_at", { ascending: false })
-          .limit(10);
+          .limit(15);
 
-        if (cancelled || !shifts || shifts.length === 0) return;
+        if (cancelled || !rows || rows.length === 0) return;
 
-        const newShifts = shifts.filter((s) => !seenShiftIdsRef.current.has(s.id));
-        if (newShifts.length === 0) return;
-
-        // Fetch metadata for these bookings
-        const bookingIds = [...new Set(newShifts.map((s) => s.booking_id).filter(Boolean))];
-        await fetchMetadata(bookingIds);
-
-        if (cancelled) return;
-
-        for (const shift of newShifts) {
-          const meta = metaCacheRef.current[shift.booking_id];
-          const offer = buildOfferFromShift(shift, personnelId, meta);
+        let offers = rows.map(mapOfferRow).filter((o) => new Date(o.expires_at).getTime() > Date.now());
+        for (const offer of offers) {
           showOffer(offer);
         }
       } catch (err) {
@@ -265,50 +195,30 @@ export function ShiftOfferProvider({ children }: { children: React.ReactNode }) 
       }
     };
 
-    // Initial load — show popups for shifts created in the last 10 min, mark older as seen
-    const recentThreshold = new Date(Date.now() - 10 * 60 * 1000).toISOString();
     let intervalId: NodeJS.Timeout | null = null;
 
     const initPoll = async () => {
       if (!supabase || cancelled) return;
 
+      const nowIso = new Date().toISOString();
       const { data: existing } = await supabase
-        .from("shifts")
-        .select("id, booking_id, role, hourly_rate, scheduled_start, scheduled_end, created_at")
-        .is("personnel_id", null)
+        .from("shift_offers")
+        .select("*")
+        .eq("personnel_id", personnelId)
         .eq("status", "pending")
-        .gte("scheduled_start", new Date().toISOString())
+        .gt("expires_at", nowIso)
         .order("created_at", { ascending: false })
-        .limit(50);
+        .limit(40);
 
       if (cancelled || !existing) return;
 
-      const recent: typeof existing = [];
-      for (const s of existing) {
-        if (s.created_at && s.created_at >= recentThreshold) {
-          recent.push(s);
-        } else {
-          seenShiftIdsRef.current.add(s.id);
-        }
+      const offers = existing.map(mapOfferRow);
+      for (const offer of offers) {
+        showOffer(offer);
       }
 
-      console.log("[ShiftOffer] Existing:", existing.length, "Recent:", recent.length, "Marked seen:", existing.length - recent.length);
-
-      // Show popups for recent shifts
-      if (recent.length > 0 && !cancelled) {
-        const bookingIds = [...new Set(recent.map((s) => s.booking_id).filter(Boolean))];
-        await fetchMetadata(bookingIds);
-        if (cancelled) return;
-        for (const shift of recent) {
-          const meta = metaCacheRef.current[shift.booking_id];
-          const offer = buildOfferFromShift(shift, personnelId, meta);
-          showOffer(offer);
-        }
-      }
-
-      // Start polling for new shifts
       if (!cancelled) {
-        intervalId = setInterval(pollShifts, 5000);
+        intervalId = setInterval(pollOffers, 2000);
       }
     };
 
@@ -318,44 +228,38 @@ export function ShiftOfferProvider({ children }: { children: React.ReactNode }) 
       cancelled = true;
       if (intervalId) clearInterval(intervalId);
     };
-  }, [personnelId, isVerifiedGuard, fetchMetadata, showOffer]);
+  }, [personnelId, showOffer]);
 
-  // --- Also subscribe to Realtime on shifts table for instant detection ---
+  // --- Realtime: new shift_offers for this guard ---
   useEffect(() => {
-    if (!supabase || !personnelId || !isVerifiedGuard) return;
+    if (!supabase || !personnelId) return;
 
     const channel = supabase
-      .channel(`new-shifts:${personnelId}`)
+      .channel(`shift-offers:${personnelId}`)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
-          table: "shifts",
+          table: "shift_offers",
+          filter: `personnel_id=eq.${personnelId}`,
         },
         async (payload) => {
-          const shift = payload.new as any;
-          if (shift.personnel_id !== null || shift.status !== "pending") return;
-          if (seenShiftIdsRef.current.has(shift.id)) return;
-
-          console.log("[ShiftOffer] Realtime new shift detected:", shift.id);
-
-          if (shift.booking_id) {
-            await fetchMetadata([shift.booking_id]);
-          }
-          const meta = metaCacheRef.current[shift.booking_id];
-          const offer = buildOfferFromShift(shift, personnelId, meta);
+          const row = payload.new as Record<string, unknown>;
+          if (String(row.status) !== "pending") return;
+          const offer = mapOfferRow(row);
+          if (new Date(offer.expires_at).getTime() <= Date.now()) return;
           showOffer(offer);
         }
       )
       .subscribe((status) => {
-        console.log("[ShiftOffer] Realtime shifts subscription:", status);
+        console.log("[ShiftOffer] Realtime shift_offers subscription:", status);
       });
 
     return () => {
       if (supabase) supabase.removeChannel(channel);
     };
-  }, [personnelId, isVerifiedGuard, fetchMetadata, showOffer]);
+  }, [personnelId, showOffer]);
 
   // --- Countdown timer ---
   useEffect(() => {
@@ -414,26 +318,7 @@ export function ShiftOfferProvider({ children }: { children: React.ReactNode }) 
     safeHaptic("medium");
 
     try {
-      // Claim the shift directly
-      const { error: claimErr } = await supabase.rpc("claim_shift", {
-        p_shift_id: currentOffer.shift_id,
-        p_personnel_id: currentOffer.personnel_id,
-      });
-
-      if (claimErr) {
-        // Fallback: direct update
-        await supabase
-          .from("shifts")
-          .update({
-            personnel_id: currentOffer.personnel_id,
-            status: "accepted",
-            accepted_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", currentOffer.shift_id)
-          .eq("status", "pending")
-          .is("personnel_id", null);
-      }
+      await acceptOfferWithLocation(currentOffer.id, currentOffer.personnel_id);
 
       safeHaptic("success");
 
@@ -444,14 +329,23 @@ export function ShiftOfferProvider({ children }: { children: React.ReactNode }) 
       }, 2000);
     } catch (err) {
       console.error("[ShiftOffer] Accept error:", err);
+      Alert.alert("Unable to accept shift", (err as Error)?.message || "Please try again.");
       safeHaptic("error");
       setAccepting(false);
     }
   }, [currentOffer, accepting, showNextFromQueue]);
 
   const declineOffer = useCallback(async () => {
-    if (!currentOffer) return;
+    if (!currentOffer || !supabase) return;
     safeHaptic("light");
+    await supabase
+      .from("shift_offers")
+      .update({
+        status: "declined",
+        responded_at: new Date().toISOString(),
+      })
+      .eq("id", currentOffer.id)
+      .eq("personnel_id", currentOffer.personnel_id);
     setCurrentOffer(null);
     showNextFromQueue();
   }, [currentOffer, showNextFromQueue]);

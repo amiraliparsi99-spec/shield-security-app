@@ -6,6 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
+    "backgroundColor": "#080a0f",
     "scheme": "shield",
     "newArchEnabled": true,
     "splash": {
@@ -16,11 +17,14 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.shield.mobile",
+      "usesAppleSignIn": true,
       "infoPlist": {
         "NSCameraUsageDescription": "Shield HQ needs camera access to take photos for verification documents.",
         "NSPhotoLibraryUsageDescription": "Shield HQ needs photo library access to upload verification documents.",
         "NSMicrophoneUsageDescription": "Shield HQ needs microphone access for voice calls.",
-        "NSLocationWhenInUseUsageDescription": "Shield HQ needs location access for shift check-ins and GPS tracking.",
+        "NSLocationWhenInUseUsageDescription": "Shield HQ uses your location to verify shift check-in and show you nearby venues. Upgrading to Always lets venues see your live ETA before your shift starts.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Shield HQ uses your location to verify shift attendance, share live ETA with venues before your shift, and protect you on the way to and during work — even when the app is in the background.",
+        "NSLocationAlwaysUsageDescription": "Shield HQ tracks your location during scheduled shifts so venues can verify check-in and respond if you don't arrive on time.",
         "ITSAppUsesNonExemptEncryption": false,
         "NSSupportsLiveActivities": true,
         "UIApplicationShortcutItems": [
@@ -85,13 +89,29 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Shield HQ needs your location for shift check-ins."
+          "locationWhenInUsePermission": "Shield HQ needs your location for shift check-ins.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ],
       "expo-document-picker",
       "@react-native-community/datetimepicker",
       "./plugins/withAgora.js",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-apple-authentication",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.REPLACE_WITH_REVERSED_IOS_CLIENT_ID"
+        }
+      ],
+      [
+        "@stripe/stripe-react-native",
+        {
+          "merchantIdentifier": "merchant.app.shield.mobile",
+          "enableGooglePay": true
+        }
+      ]
     ],
     "extra": {
       "router": {},

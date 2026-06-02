@@ -18,6 +18,7 @@ import { colors, typography, spacing, radius } from "../theme";
 import { supabase } from "../lib/supabase";
 import { getProfileIdAndRole, getPersonnelId } from "../lib/auth";
 import { BackButton } from "../components/ui/BackButton";
+import { GuestGate } from "../components/auth/GuestGate";
 
 interface ShiftStats {
   totalShifts: number;
@@ -36,6 +37,14 @@ interface ShiftStats {
 }
 
 export default function StatsScreen() {
+  return (
+    <GuestGate feature="stats" redirectAfter="/stats">
+      <StatsScreenContent />
+    </GuestGate>
+  );
+}
+
+function StatsScreenContent() {
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

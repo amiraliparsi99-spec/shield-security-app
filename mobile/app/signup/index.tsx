@@ -1,8 +1,10 @@
 import { router } from "expo-router";
+import { useState } from "react";
 import { StyleSheet, Text, TouchableOpacity, View, ScrollView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, typography, spacing, radius } from "../../theme";
 import { BackButton } from "../../components/ui/BackButton";
+import { OAuthButtons } from "../../components/auth/OAuthButtons";
 
 const roles = [
   { 
@@ -36,12 +38,13 @@ const roles = [
 
 export default function SignUpIndex() {
   const insets = useSafeAreaInsets();
+  const [oauthError, setOauthError] = useState<string | null>(null);
 
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 20 }]}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 8 }]}>
         <BackButton onPress={() => router.replace("/(tabs)/explore")} />
-        
+
         <View style={styles.header}>
           <View style={styles.logo}>
             <Text style={styles.logoIcon}>🛡️</Text>
@@ -50,9 +53,15 @@ export default function SignUpIndex() {
         </View>
 
         <Text style={styles.welcomeTitle}>Join Shield HQ</Text>
-        <Text style={styles.welcomeSubtitle}>Choose your role to get started.</Text>
+        <Text style={styles.welcomeSubtitle}>Pick a role below to get started.</Text>
 
         <View style={styles.card}>
+          {oauthError && (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{oauthError}</Text>
+            </View>
+          )}
+
           <View style={styles.rolesContainer}>
             {roles.map((role) => (
               <TouchableOpacity
@@ -81,6 +90,19 @@ export default function SignUpIndex() {
               </TouchableOpacity>
             ))}
           </View>
+
+          <OAuthButtons
+            dividerLabel="or sign up with"
+            onError={(msg) => setOauthError(msg)}
+            onSuccess={({ profileExists }) => {
+              setOauthError(null);
+              if (profileExists) {
+                router.replace("/(tabs)/explore");
+              } else {
+                router.replace("/signup/oauth-complete");
+              }
+            }}
+          />
         </View>
 
         <TouchableOpacity style={styles.link} onPress={() => router.push("/login")}>
@@ -104,7 +126,8 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: spacing.xxl,
+    marginTop: spacing.sm,
+    marginBottom: spacing.lg,
     gap: spacing.sm,
   },
   logo: {
@@ -127,7 +150,7 @@ const styles = StyleSheet.create({
     ...typography.display,
     fontSize: 28,
     color: colors.text,
-    marginTop: spacing.lg,
+    marginTop: spacing.sm,
     marginBottom: spacing.xs,
   },
   welcomeSubtitle: {
@@ -144,6 +167,19 @@ const styles = StyleSheet.create({
   },
   rolesContainer: {
     gap: spacing.md,
+    marginTop: spacing.md,
+  },
+  errorBox: {
+    backgroundColor: colors.errorSoft,
+    borderColor: "rgba(239,68,68,0.4)",
+    borderWidth: 1,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  errorText: {
+    ...typography.caption,
+    color: colors.error,
   },
   roleCard: {
     flexDirection: "row",

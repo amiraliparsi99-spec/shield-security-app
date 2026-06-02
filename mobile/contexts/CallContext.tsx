@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { Alert, Vibration, Platform } from 'react-native';
 import { supabase } from '../lib/supabase';
+import { getApiBaseUrl } from '../lib/api';
 import { 
   signalingService, 
   type CallState, 
@@ -27,6 +28,7 @@ interface CallContextValue {
   
   // Actions
   initiateCall: (participant: CallParticipant, context?: { bookingId?: string; shiftId?: string }) => Promise<void>;
+  joinGroupVoiceChannel: (channelName: string, displayName: string) => Promise<void>;
   answerCall: () => Promise<void>;
   rejectCall: () => Promise<void>;
   endCall: () => Promise<void>;
@@ -46,21 +48,32 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const [callDuration, setCallDuration] = useState(0);
   const [userId, setUserId] = useState<string | null>(null);
   const [isAgoraConnected, setIsAgoraConnected] = useState(false);
+  const [isGroupVoiceSession, setIsGroupVoiceSession] = useState(false);
   
   const durationIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isGroupVoiceSessionRef = useRef(false);
+
+  useEffect(() => {
+    isGroupVoiceSessionRef.current = isGroupVoiceSession;
+  }, [isGroupVoiceSession]);
 
   // Fetch Agora token from server
   const fetchAgoraToken = async (channelName: string, uid: number): Promise<string | null> => {
     try {
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || '';
+      const apiUrl = getApiBaseUrl();
+      const session = supabase ? (await supabase.auth.getSession()).data.session : null;
       const response = await fetch(`${apiUrl}/api/agora/token`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
         body: JSON.stringify({ channelName, uid }),
       });
       
       if (!response.ok) {
-        throw new Error('Failed to fetch Agora token');
+        const errText = await response.text();
+        throw new Error(`Failed to fetch Agora token (${response.status}): ${errText}`);
       }
       
       const data = await response.json();
@@ -71,8 +84,8 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Join Agora voice channel
-  const joinAgoraChannel = async (callId: string): Promise<boolean> => {
+  // Join Agora voice channel by channel name
+  const joinAgoraChannelByName = async (channelName: string): Promise<boolean> => {
     if (!userId) return false;
 
     try {
@@ -96,8 +109,11 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         },
         onUserOffline: (uid) => {
           console.log('Agora: Remote user offline', uid);
-          // Other user left - end the call
-          endCall();
+          // For 1:1 calls, remote leaving ends the call.
+          // For group calls, other users can leave/join without ending session.
+          if (!isGroupVoiceSessionRef.current) {
+            endCall();
+          }
         },
         onError: (error) => {
           console.error('Agora error:', error);
@@ -105,7 +121,6 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         },
       });
 
-      const channelName = generateChannelName(callId);
       const agoraUid = generateAgoraUid(userId);
 
       // Get token from server
@@ -122,6 +137,12 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       console.error('Error joining Agora channel:', error);
       return false;
     }
+  };
+
+  // Join Agora voice channel for 1:1 call
+  const joinAgoraChannel = async (callId: string): Promise<boolean> => {
+    setIsGroupVoiceSession(false);
+    return joinAgoraChannelByName(generateChannelName(callId));
   };
 
   // Leave Agora channel
@@ -244,6 +265,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     setIsMuted(false);
     setIsSpeakerOn(false);
     setIsAgoraConnected(false);
+    setIsGroupVoiceSession(false);
 
     if (durationIntervalRef.current) {
       clearInterval(durationIntervalRef.current);
@@ -308,6 +330,44 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       Alert.alert('Error', 'Failed to initiate call');
     }
   }, [userId, callState, cleanup]);
+
+  const joinGroupVoiceChannel = useCallback(async (
+    channelName: string,
+    displayName: string
+  ): Promise<void> => {
+    if (!userId) {
+      Alert.alert('Error', 'Please sign in to join voice');
+      return;
+    }
+    if (!channelName.trim()) {
+      Alert.alert('Error', 'Invalid group call channel');
+      return;
+    }
+    try {
+      setRemoteParticipant({
+        userId: `group:${channelName}`,
+        name: displayName || 'Mission Control',
+        role: 'personnel',
+      });
+      setIsIncomingCall(false);
+      setCallState('connecting');
+      setIsGroupVoiceSession(true);
+      const joined = await joinAgoraChannelByName(channelName);
+      if (!joined) {
+        Alert.alert('Error', 'Failed to join group voice channel');
+        cleanup();
+        return;
+      }
+      setCallState('connected');
+      durationIntervalRef.current = setInterval(() => {
+        setCallDuration((prev) => prev + 1);
+      }, 1000);
+    } catch (error) {
+      console.error('Failed to join group voice channel:', error);
+      cleanup();
+      Alert.alert('Error', 'Failed to join group voice channel');
+    }
+  }, [userId, cleanup]);
 
   const answerCall = useCallback(async (): Promise<void> => {
     if (!currentCall) return;
@@ -388,6 +448,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     callDuration,
     isAgoraConnected,
     initiateCall,
+    joinGroupVoiceChannel,
     answerCall,
     rejectCall,
     endCall,

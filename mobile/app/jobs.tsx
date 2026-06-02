@@ -21,6 +21,9 @@ import { supabase } from "../lib/supabase";
 import { getProfileIdAndRole, getPersonnelId, isPersonnelVerified, isPersonnelBankConnected } from "../lib/auth";
 import { safeHaptic } from "../lib/haptics";
 import { getApiBaseUrl } from "../lib/api";
+import { getClaimAvailabilityWarning } from "../lib/shiftAvailabilityClaimCheck";
+import { claimShiftWithLocation } from "../lib/shiftClaim";
+import { GuestGate } from "../components/auth/GuestGate";
 
 interface Shift {
   id: string;
@@ -29,12 +32,29 @@ interface Shift {
   hourly_rate: number;
   scheduled_start: string;
   scheduled_end: string;
+  created_at?: string;
   venue_name: string;
   venue_city: string;
   event_name: string;
+  attire_requirement?: string | null;
+  brief_notes?: string | null;
+}
+
+function extractAttireRequirement(briefNotes?: string | null): string | null {
+  if (!briefNotes) return null;
+  const match = briefNotes.match(/Attire requirement:\s*(.+)/i);
+  return match?.[1]?.trim() || null;
 }
 
 export default function JobsScreen() {
+  return (
+    <GuestGate feature="jobs" redirectAfter="/jobs">
+      <JobsScreenContent />
+    </GuestGate>
+  );
+}
+
+function JobsScreenContent() {
   const insets = useSafeAreaInsets();
   const [availableShifts, setAvailableShifts] = useState<Shift[]>([]);
   const [myShifts, setMyShifts] = useState<Shift[]>([]);
@@ -103,18 +123,20 @@ export default function JobsScreen() {
       // Fetch available shifts (unclaimed)
       const { data: available, error: availableError } = await supabase
         .from("shifts")
-        .select("id, booking_id, role, hourly_rate, scheduled_start, scheduled_end")
+        .select("id, booking_id, role, hourly_rate, scheduled_start, scheduled_end, created_at")
         .is("personnel_id", null)
-        .gte("scheduled_start", new Date().toISOString());
+        .gte("scheduled_end", new Date().toISOString())
+        .in("status", ["pending", "accepted", "checked_in"]);
       
       console.log("📦 Jobs: Available shifts:", available?.length, "Error:", availableError?.message);
 
       // Fetch my shifts
       const { data: mine, error: mineError } = await supabase
         .from("shifts")
-        .select("id, booking_id, role, hourly_rate, scheduled_start, scheduled_end")
+        .select("id, booking_id, role, hourly_rate, scheduled_start, scheduled_end, created_at")
         .eq("personnel_id", personnelId)
-        .gte("scheduled_start", new Date().toISOString());
+        .gte("scheduled_end", new Date().toISOString())
+        .in("status", ["pending", "accepted", "checked_in"]);
       
       console.log("📦 Jobs: My shifts:", mine?.length, "Error:", mineError?.message);
 
@@ -126,7 +148,7 @@ export default function JobsScreen() {
       if (bookingIds.length > 0) {
         const { data: bookings } = await supabase
           .from("bookings")
-          .select("id, event_name, venue_id")
+          .select("id, event_name, venue_id, brief_notes")
           .in("id", bookingIds);
 
         if (bookings && bookings.length > 0) {
@@ -150,6 +172,8 @@ export default function JobsScreen() {
             bookingsMap[b.id] = {
               event_name: b.event_name,
               venue: venuesMap[b.venue_id] || { name: "Venue", city: "" },
+              attire_requirement: extractAttireRequirement(b.brief_notes),
+              brief_notes: b.brief_notes || null,
             };
           });
         }
@@ -174,6 +198,8 @@ export default function JobsScreen() {
                   bookingsMap[id] = {
                     event_name: meta.event_name,
                     venue: { name: meta.venue_name, city: meta.venue_city },
+                    attire_requirement: extractAttireRequirement(meta.brief_notes),
+                    brief_notes: meta.brief_notes || null,
                   };
                 }
               }
@@ -193,13 +219,25 @@ export default function JobsScreen() {
           hourly_rate: s.hourly_rate,
           scheduled_start: s.scheduled_start,
           scheduled_end: s.scheduled_end,
+          created_at: s.created_at,
           venue_name: booking.venue?.name || "Venue",
           venue_city: booking.venue?.city || "",
           event_name: booking.event_name || "Event",
+          attire_requirement: booking.attire_requirement || null,
+          brief_notes: booking.brief_notes || null,
         };
       };
 
-      setAvailableShifts((available || []).map(formatShift));
+      const sortedAvailable = (available || [])
+        .map(formatShift)
+        .sort((a, b) => {
+          if (b.hourly_rate !== a.hourly_rate) return b.hourly_rate - a.hourly_rate;
+          const bCreated = b.created_at ? new Date(b.created_at).getTime() : 0;
+          const aCreated = a.created_at ? new Date(a.created_at).getTime() : 0;
+          if (bCreated !== aCreated) return bCreated - aCreated;
+          return new Date(a.scheduled_start).getTime() - new Date(b.scheduled_start).getTime();
+        });
+      setAvailableShifts(sortedAvailable);
       setMyShifts((mine || []).map(formatShift));
     } catch (e) {
       console.error("Error loading jobs:", e);
@@ -284,92 +322,103 @@ export default function JobsScreen() {
     const hours = getHours(shift.scheduled_start, shift.scheduled_end);
     const pay = (shift.hourly_rate * parseFloat(hours)).toFixed(0);
 
-    Alert.alert(
-      "Claim This Shift?",
-      `📍 ${shift.venue_name}\n📅 ${formatDate(shift.scheduled_start)}\n🕐 ${formatTime(shift.scheduled_start)} - ${formatTime(shift.scheduled_end)}\n💰 £${pay}\n\nYou're committing to this shift.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Claim It!",
-          style: "default",
-          onPress: async () => {
-            safeHaptic("medium");
-            setClaiming(shift.id);
+    const showClaimConfirmation = () => {
+      Alert.alert(
+        "Claim This Shift?",
+        `📍 ${shift.venue_name}\n📅 ${formatDate(shift.scheduled_start)}\n🕐 ${formatTime(shift.scheduled_start)} - ${formatTime(shift.scheduled_end)}\n💰 £${pay}${shift.attire_requirement ? `\n👔 Attire: ${shift.attire_requirement}` : ""}\n\nYou're committing to this shift.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Claim It!",
+            style: "default",
+            onPress: async () => {
+              safeHaptic("medium");
+              setClaiming(shift.id);
 
-            if (!supabase) return;
-            try {
-              // Use atomic claim function
-              const { data: result, error } = await supabase.rpc("claim_shift", {
-                p_shift_id: shift.id,
-                p_personnel_id: personnel.id,
-              });
-
-              if (error || !result?.success) {
-                safeHaptic("error");
-                if (result?.error === "ALREADY_CLAIMED") {
-                  Alert.alert("Too Slow!", "This shift was just claimed by another guard.");
-                } else {
-                  Alert.alert("Error", result?.message || "Failed to claim. Try again.");
-                }
-                setAvailableShifts((prev) => prev.filter((s) => s.id !== shift.id));
-                setClaiming(null);
-                return;
-              }
-
-              // Success!
-              safeHaptic("success");
-              
-              // Notify venue
-              if (!supabase) return;
-              const { data: booking } = await supabase
-                .from("bookings")
-                .select("venue_id")
-                .eq("id", shift.booking_id)
-                .single();
-
-              if (booking?.venue_id && supabase) {
-                const { data: venue } = await supabase
-                  .from("venues")
-                  .select("user_id")
-                  .eq("id", booking.venue_id)
-                  .single();
-
-                if (venue?.user_id && supabase) {
-                  await supabase.from("notifications").insert({
-                    user_id: venue.user_id,
-                    type: "shift",
-                    title: "✅ Shift Confirmed!",
-                    body: `${personnel.display_name} accepted the ${shift.role} shift for ${shift.event_name}`,
-                    data: { booking_id: shift.booking_id },
-                  });
-                }
-              }
-
-              // Create Mission Control chat for this booking
               if (!supabase) return;
               try {
-                await supabase.rpc("create_mission_control_chat", { p_booking_id: shift.booking_id });
-                console.log("Mission Control chat created for booking:", shift.booking_id);
-              } catch (chatErr) {
-                console.log("Mission Control chat (non-critical):", chatErr);
+                await claimShiftWithLocation(shift.id, personnel.id);
+
+                safeHaptic("success");
+
+                if (!supabase) return;
+                const { data: booking } = await supabase
+                  .from("bookings")
+                  .select("venue_id")
+                  .eq("id", shift.booking_id)
+                  .single();
+
+                if (booking?.venue_id && supabase) {
+                  const { data: venue } = await supabase
+                    .from("venues")
+                    .select("user_id")
+                    .eq("id", booking.venue_id)
+                    .single();
+
+                  if (venue?.user_id && supabase) {
+                    await supabase.from("notifications").insert({
+                      user_id: venue.user_id,
+                      type: "shift",
+                      title: "✅ Shift Confirmed!",
+                      body: `${personnel.display_name} accepted the ${shift.role} shift for ${shift.event_name}`,
+                      data: { booking_id: shift.booking_id },
+                    });
+                  }
+                }
+
+                if (!supabase) return;
+                try {
+                  await supabase.rpc("create_mission_control_chat", { p_booking_id: shift.booking_id });
+                  console.log("Mission Control chat created for booking:", shift.booking_id);
+                } catch (chatErr) {
+                  console.log("Mission Control chat (non-critical):", chatErr);
+                }
+
+                setAvailableShifts((prev) => prev.filter((s) => s.id !== shift.id));
+                setMyShifts((prev) => [...prev, shift]);
+
+                Alert.alert("✅ Shift Claimed!", "You're confirmed for this job. Mission Control is now active!");
+                setTab("my-shifts");
+              } catch (e: any) {
+                safeHaptic("error");
+                const msg = String(e?.message || "");
+                if (msg.toLowerCase().includes("already been claimed")) {
+                  safeHaptic("error");
+                  Alert.alert("Too Slow!", "This shift was just claimed by another guard.");
+                  setAvailableShifts((prev) => prev.filter((s) => s.id !== shift.id));
+                  setClaiming(null);
+                  return;
+                }
+                console.error("Claim error:", e);
+                Alert.alert("Error", msg || "Something went wrong. Try again.");
               }
 
-              // Move to my shifts
-              setAvailableShifts((prev) => prev.filter((s) => s.id !== shift.id));
-              setMyShifts((prev) => [...prev, shift]);
-
-              Alert.alert("✅ Shift Claimed!", "You're confirmed for this job. Mission Control is now active!");
-              setTab("my-shifts");
-            } catch (e) {
-              console.error("Claim error:", e);
-              Alert.alert("Error", "Something went wrong. Try again.");
-            }
-
-            setClaiming(null);
+              setClaiming(null);
+            },
           },
-        },
-      ]
-    );
+        ]
+      );
+    };
+
+    try {
+      const warning = await getClaimAvailabilityWarning(
+        supabase,
+        personnel.id,
+        shift.scheduled_start,
+        shift.scheduled_end
+      );
+      if (warning.shouldWarn) {
+        Alert.alert(warning.title, warning.message, [
+          { text: "Cancel", style: "cancel" },
+          { text: "Claim anyway", onPress: showClaimConfirmation },
+        ]);
+        return;
+      }
+    } catch (e) {
+      console.warn("Availability check (non-blocking):", e);
+    }
+
+    showClaimConfirmation();
   };
 
   if (loading) {
@@ -518,7 +567,11 @@ export default function JobsScreen() {
 
                 return (
                   <View key={shift.id} style={styles.shiftCard}>
-                    <View style={styles.shiftContent}>
+                    <TouchableOpacity
+                      style={styles.shiftContent}
+                      activeOpacity={0.9}
+                      onPress={() => router.push(`/job/${shift.id}`)}
+                    >
                       <View style={styles.shiftHeader}>
                         <View style={{ flex: 1 }}>
                           <Text style={styles.shiftTitle}>{shift.event_name}</Text>
@@ -544,8 +597,13 @@ export default function JobsScreen() {
                         <View style={styles.detailChip}>
                           <Text style={styles.detailChipText}>{shift.role}</Text>
                         </View>
+                        {shift.attire_requirement ? (
+                          <View style={styles.attireChip}>
+                            <Text style={styles.attireChipText}>👔 {shift.attire_requirement}</Text>
+                          </View>
+                        ) : null}
                       </View>
-                    </View>
+                    </TouchableOpacity>
 
                     <TouchableOpacity
                       style={[styles.claimButton, claiming === shift.id && styles.claimButtonDisabled]}
@@ -580,7 +638,12 @@ export default function JobsScreen() {
                 const pay = (shift.hourly_rate * parseFloat(hours)).toFixed(0);
 
                 return (
-                  <View key={shift.id} style={styles.myShiftCard}>
+                  <TouchableOpacity
+                    key={shift.id}
+                    style={styles.myShiftCard}
+                    activeOpacity={0.9}
+                    onPress={() => router.push(`/job/${shift.id}`)}
+                  >
                     <View style={styles.confirmedBadge}>
                       <Text style={styles.confirmedBadgeText}>CONFIRMED</Text>
                     </View>
@@ -610,8 +673,13 @@ export default function JobsScreen() {
                       <View style={styles.myShiftChip}>
                         <Text style={styles.myShiftChipText}>{shift.role}</Text>
                       </View>
+                      {shift.attire_requirement ? (
+                        <View style={styles.myShiftChip}>
+                          <Text style={styles.myShiftChipText}>👔 {shift.attire_requirement}</Text>
+                        </View>
+                      ) : null}
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 );
               })
             )}
@@ -806,6 +874,20 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.text,
     fontSize: 14,
+  },
+  attireChip: {
+    backgroundColor: "rgba(59, 130, 246, 0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(96, 165, 250, 0.35)",
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+  },
+  attireChipText: {
+    ...typography.body,
+    color: "#93C5FD",
+    fontSize: 13,
+    fontWeight: "600",
   },
   claimButton: {
     backgroundColor: "#10B981",

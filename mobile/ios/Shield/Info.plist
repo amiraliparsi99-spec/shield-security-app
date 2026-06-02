@@ -7,7 +7,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
-    <string>Shield</string>
+    <string>Shield HQ</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
@@ -54,17 +54,17 @@
       <true/>
     </dict>
     <key>NSCameraUsageDescription</key>
-    <string>Shield needs access to your camera to take photos for verification documents.</string>
+    <string>Shield HQ needs access to your camera to take photos for verification documents.</string>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your location</string>
+    <string>Shield HQ uses your location to verify shift attendance, share live ETA with venues before your shift, and protect you on the way to and during work — even when the app is in the background.</string>
     <key>NSLocationAlwaysUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your location</string>
+    <string>Shield HQ tracks your location during scheduled shifts so venues can verify check-in and respond if you don't arrive on time.</string>
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>Shield needs your location for shift check-ins.</string>
+    <string>Shield HQ uses your location to verify shift check-in and show you nearby venues. Upgrading to Always lets venues see your live ETA before your shift starts.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Shield needs microphone access for voice calls.</string>
+    <string>Shield HQ needs microphone access for voice calls.</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>Shield needs access to your photos to upload verification documents.</string>
+    <string>Shield HQ needs access to your photos to upload verification documents.</string>
     <key>NSSupportsLiveActivities</key>
     <true/>
     <key>NSUserActivityTypes</key>
@@ -119,6 +119,9 @@
     <key>UIBackgroundModes</key>
     <array>
       <string>fetch</string>
+      <string>audio</string>
+      <string>voip</string>
+      <string>location</string>
     </array>
     <key>UILaunchStoryboardName</key>
     <string>SplashScreen</string>

@@ -122,10 +122,10 @@ export default function PersonnelDashboard() {
         .eq("provider_id", personnelId)
         .order("event_date", { ascending: false });
 
-      const formattedBookings = (bookingsData || []).map((b: any) => ({
-        ...b,
-        venue_name: b.venues?.name || "Unknown Venue",
-      }));
+      const formattedBookings = (bookingsData || []).map((b: any) => {
+        const venues = Array.isArray(b.venues) ? b.venues[0] : b.venues;
+        return { ...b, venue_name: venues?.name || "Unknown Venue" };
+      });
 
       setBookings(formattedBookings);
       setError(null);

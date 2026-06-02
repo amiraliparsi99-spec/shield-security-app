@@ -11,13 +11,20 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
+import * as Device from "expo-device";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { supabase } from "../../lib/supabase";
 import { colors, typography, spacing, radius } from "../../theme";
 import { BackButton } from "../../components/ui/BackButton";
+import {
+  PermissionsStep,
+  permissionsReady,
+  type PermissionsCapture,
+} from "../../components/auth/PermissionsStep";
+import { isMissingColumnError } from "../../lib/postgresErrors";
 
-const TOTAL_STEPS = 4;
+const TOTAL_STEPS = 5;
 
 const venueTypes = [
   { value: "club", label: "Nightclub" },
@@ -34,7 +41,8 @@ export default function VenueSignUp() {
   const insets = useSafeAreaInsets();
   const [currentStep, setCurrentStep] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
-  
+  const [permissionsCapture, setPermissionsCapture] = useState<PermissionsCapture | null>(null);
+
   const [formData, setFormData] = useState({
     businessName: "",
     companiesHouseNumber: "",
@@ -93,6 +101,15 @@ export default function VenueSignUp() {
           return false;
         }
         return true;
+      case 5:
+        if (!permissionsReady(permissionsCapture, false)) {
+          Alert.alert(
+            "Notifications required",
+            "Please enable notifications to finish creating your account."
+          );
+          return false;
+        }
+        return true;
       default:
         return true;
     }
@@ -116,6 +133,7 @@ export default function VenueSignUp() {
 
   const handleSubmit = async () => {
     if (!validateStep(4)) return;
+    if (!validateStep(5)) return;
 
     setIsLoading(true);
 
@@ -149,9 +167,7 @@ export default function VenueSignUp() {
         console.error("Profile upsert error:", profileError);
       }
 
-      // Now create venue record
-      if (!supabase) return;
-      const { error: venueError } = await supabase.from("venues").insert({
+      const venueBase = {
         user_id: authData.user.id,
         name: formData.businessName,
         address_line1: formData.addressLine1,
@@ -163,14 +179,37 @@ export default function VenueSignUp() {
         phone: formData.contactPhone || null,
         email: formData.contactEmail,
         is_active: true,
-      });
+      };
+      const venueWithPerms = {
+        ...venueBase,
+        notifications_granted_at: permissionsCapture?.notifications.grantedAt ?? null,
+      };
 
+      let { error: venueError } = await supabase.from("venues").insert(venueWithPerms);
+      if (venueError && isMissingColumnError(venueError)) {
+        const retry = await supabase.from("venues").insert(venueBase);
+        venueError = retry.error;
+      }
       if (venueError) {
         console.error("Venue insert error:", venueError);
       }
 
-      // Email confirmation disabled - go directly to dashboard
-      router.replace("/d/venue");
+      const pushToken = permissionsCapture?.notifications.token;
+      if (pushToken) {
+        const { error: pushErr } = await supabase.from("push_tokens").upsert(
+          {
+            user_id: authData.user.id,
+            token: pushToken,
+            platform: Platform.OS,
+            device_name: Device.deviceName || "Unknown",
+            is_active: true,
+          },
+          { onConflict: "user_id,token" }
+        );
+        if (pushErr) console.warn("[Signup] push_tokens upsert failed:", pushErr.message);
+      }
+
+      router.replace("/(tabs)/explore");
     } catch (err: any) {
       Alert.alert("Error", err.message || "Something went wrong");
     } finally {
@@ -181,7 +220,7 @@ export default function VenueSignUp() {
   const renderProgressBar = () => (
     <View style={styles.progressContainer}>
       <View style={styles.progressBar}>
-        {[1, 2, 3, 4].map((step) => (
+        {Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1).map((step) => (
           <View key={step} style={styles.progressStepContainer}>
             <View style={[
               styles.progressDot,
@@ -196,7 +235,7 @@ export default function VenueSignUp() {
                 </Text>
               )}
             </View>
-            {step < 4 && (
+            {step < TOTAL_STEPS && (
               <View style={[styles.progressLine, step < currentStep && styles.progressLineActive]} />
             )}
           </View>
@@ -402,12 +441,22 @@ export default function VenueSignUp() {
     </View>
   );
 
+  const renderStep5 = () => (
+    <PermissionsStep
+      requireLocation={false}
+      onChange={setPermissionsCapture}
+      submitting={isLoading}
+    />
+  );
+
+  const submitDisabled = isLoading || !permissionsReady(permissionsCapture, false);
+
   return (
     <KeyboardAvoidingView 
       style={styles.container} 
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
-      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 4 }]}>
         <TouchableOpacity onPress={handleBack} style={styles.backButton}>
           <Text style={styles.backButtonText}>‹</Text>
         </TouchableOpacity>
@@ -432,6 +481,7 @@ export default function VenueSignUp() {
         {currentStep === 2 && renderStep2()}
         {currentStep === 3 && renderStep3()}
         {currentStep === 4 && renderStep4()}
+        {currentStep === 5 && renderStep5()}
       </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + 10 }]}>
@@ -442,9 +492,9 @@ export default function VenueSignUp() {
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
-            style={[styles.submitButton, isLoading && styles.submitButtonDisabled]}
+            style={[styles.submitButton, submitDisabled && styles.submitButtonDisabled]}
             onPress={handleSubmit}
-            disabled={isLoading}
+            disabled={submitDisabled}
           >
             {isLoading ? (
               <ActivityIndicator color={colors.text} />

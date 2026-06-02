@@ -32,10 +32,20 @@ interface UseLocationTrackingReturn {
 
   // Actions
   requestPermissions: () => Promise<boolean>;
-  startTracking: (agencyStaffId: string, assignmentId?: string) => Promise<boolean>;
+  startTracking: (
+    personnelId: string,
+    shiftId?: string,
+    options?: {
+      authToken?: string | null;
+      scheduledStartIso?: string | null;
+      scheduledEndIso?: string | null;
+      autoCheckIn?: boolean;
+      autoCheckOut?: boolean;
+    }
+  ) => Promise<boolean>;
   stopTracking: () => Promise<void>;
   refreshLocation: () => Promise<void>;
-  loadGeofencesForBooking: (bookingId: string) => Promise<void>;
+  loadGeofencesForBooking: (bookingId: string, shiftId: string) => Promise<void>;
 }
 
 export function useLocationTracking(): UseLocationTrackingReturn {
@@ -89,7 +99,17 @@ export function useLocationTracking(): UseLocationTrackingReturn {
   }, []);
 
   const startTracking = useCallback(
-    async (agencyStaffId: string, assignmentId?: string): Promise<boolean> => {
+    async (
+      personnelId: string,
+      shiftId?: string,
+      options?: {
+        authToken?: string | null;
+        scheduledStartIso?: string | null;
+        scheduledEndIso?: string | null;
+        autoCheckIn?: boolean;
+        autoCheckOut?: boolean;
+      }
+    ): Promise<boolean> => {
       setIsLoading(true);
       setError(null);
 
@@ -100,7 +120,7 @@ export function useLocationTracking(): UseLocationTrackingReturn {
           if (!granted) return false;
         }
 
-        const success = await startLocationTracking(agencyStaffId, assignmentId);
+        const success = await startLocationTracking(personnelId, shiftId, options);
         
         if (success) {
           setIsTracking(true);
@@ -153,13 +173,12 @@ export function useLocationTracking(): UseLocationTrackingReturn {
     }
   }, []);
 
-  const loadGeofencesForBooking = useCallback(async (bookingId: string): Promise<void> => {
+  const loadGeofencesForBooking = useCallback(async (bookingId: string, shiftId: string): Promise<void> => {
     if (!supabase) return;
     try {
-      // Get booking to find venue
       const { data: booking, error: bookingError } = await supabase
         .from("bookings")
-        .select("venue_id")
+        .select("venue_id, site_latitude, site_longitude")
         .eq("id", bookingId)
         .single();
 
@@ -168,23 +187,46 @@ export function useLocationTracking(): UseLocationTrackingReturn {
         return;
       }
 
-      // Get geofences for venue
-      if (!supabase) return;
-      const { data: geofences, error: geofenceError } = await supabase
-        .from("geofences")
-        .select("*")
-        .eq("venue_id", booking.venue_id)
-        .eq("is_active", true);
+      const isValidCoord = (v: unknown): v is number =>
+        v !== null && v !== undefined && Number.isFinite(Number(v)) && Number(v) !== 0;
 
-      if (geofenceError) {
-        console.error("[Geofence] Failed to get geofences:", geofenceError);
+      let lat = booking.site_latitude;
+      let lng = booking.site_longitude;
+      const hasSiteCoords = isValidCoord(lat) && isValidCoord(lng);
+
+      if (!hasSiteCoords) {
+        const { data: venue, error: venueError } = await supabase
+          .from("venues")
+          .select("latitude, longitude")
+          .eq("id", booking.venue_id)
+          .single();
+
+        if (venueError || !venue) {
+          console.warn("[Geofence] Failed to resolve venue coordinates:", venueError?.message);
+          return;
+        }
+        lat = venue.latitude;
+        lng = venue.longitude;
+      }
+
+      if (!isValidCoord(lat) || !isValidCoord(lng)) {
+        console.warn("[Geofence] Booking/venue has no valid coordinates — skipping geofence");
         return;
       }
 
-      if (geofences && geofences.length > 0) {
-        await setActiveGeofences(geofences);
-        console.log(`[Geofence] Loaded ${geofences.length} geofences for booking`);
-      }
+      const numLat = Number(lat);
+      const numLng = Number(lng);
+      await setActiveGeofences([
+        {
+          id: `booking-${bookingId}`,
+          shift_id: shiftId,
+          venue_id: booking.venue_id,
+          lat: numLat,
+          lng: numLng,
+          radius: 100,
+        },
+      ]);
+      console.log(`[Geofence] Loaded derived geofence for booking ${bookingId} lat=${numLat} lng=${numLng}`);
     } catch (err) {
       console.error("[Geofence] Error loading geofences:", err);
     }

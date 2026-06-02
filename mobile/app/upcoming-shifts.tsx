@@ -3,7 +3,7 @@
  * Shows all upcoming shifts for the logged-in guard
  */
 
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useState, useRef } from "react";
 import {
   ActivityIndicator,
@@ -23,6 +23,7 @@ import { getProfileIdAndRole, getPersonnelId } from "../lib/auth";
 import { colors, gradients, typography, spacing, radius } from "../theme";
 import { AnimatedBackground } from "../components/ui/AnimatedBackground";
 import { BackButton } from "../components/ui/BackButton";
+import { GuestGate } from "../components/auth/GuestGate";
 
 type Shift = {
   id: string;
@@ -42,6 +43,14 @@ type Shift = {
 };
 
 export default function UpcomingShiftsScreen() {
+  return (
+    <GuestGate feature="shifts" redirectAfter="/upcoming-shifts">
+      <UpcomingShiftsScreenContent />
+    </GuestGate>
+  );
+}
+
+function UpcomingShiftsScreenContent() {
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -114,13 +123,16 @@ export default function UpcomingShiftsScreen() {
         console.error("Error loading shifts:", error);
       }
 
-      // Format shifts with venue info
-      const formattedShifts = (shiftsData || []).map((s: any) => ({
-        ...s,
-        venue_name: s.booking?.venues?.name || "Unknown Venue",
-        event_name: s.booking?.event_name || "Shift",
-        event_date: s.booking?.event_date,
-      }));
+      const formattedShifts = (shiftsData || []).map((s: any) => {
+        const booking = Array.isArray(s.booking) ? s.booking[0] : s.booking;
+        const venues = booking ? (Array.isArray(booking.venues) ? booking.venues[0] : booking.venues) : null;
+        return {
+          ...s,
+          venue_name: venues?.name || "Unknown Venue",
+          event_name: booking?.event_name || "Shift",
+          event_date: booking?.event_date,
+        };
+      });
 
       setShifts(formattedShifts);
     } catch (e) {
@@ -131,9 +143,11 @@ export default function UpcomingShiftsScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    loadShifts();
-  }, [loadShifts]);
+  useFocusEffect(
+    useCallback(() => {
+      loadShifts();
+    }, [loadShifts])
+  );
 
   const onRefresh = useCallback(() => {
     loadShifts(true);

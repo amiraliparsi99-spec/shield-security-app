@@ -8,7 +8,6 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
-  Switch,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
@@ -16,13 +15,7 @@ import { colors, typography, spacing, radius } from "../theme";
 import { supabase } from "../lib/supabase";
 import { getProfileIdAndRole } from "../lib/auth";
 import { safeHaptic } from "../lib/haptics";
-
-interface DayAvailability {
-  day: string;
-  enabled: boolean;
-  start_time: string;
-  end_time: string;
-}
+import { GuestGate } from "../components/auth/GuestGate";
 
 interface ProfileData {
   // Personnel fields
@@ -33,8 +26,6 @@ interface ProfileData {
   sia_license_number: string;
   sia_expiry_date: string;
   skills: string[];
-  available_days: string[];
-  availability_times: DayAvailability[];
   
   // Venue fields
   venue_name: string;
@@ -60,15 +51,6 @@ const SKILL_OPTIONS = [
   "Fire Marshal",
 ];
 
-const DAY_OPTIONS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-const DEFAULT_AVAILABILITY: DayAvailability[] = DAY_OPTIONS.map(day => ({
-  day,
-  enabled: false,
-  start_time: "09:00",
-  end_time: "17:00",
-}));
-
 const VENUE_TYPES = [
   "Nightclub",
   "Bar/Pub",
@@ -81,13 +63,25 @@ const VENUE_TYPES = [
 ];
 
 export default function ProfileEditScreen() {
+  return (
+    <GuestGate feature="profile" redirectAfter="/profile-edit">
+      <ProfileEditScreenContent />
+    </GuestGate>
+  );
+}
+
+function ProfileEditScreenContent() {
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [role, setRole] = useState<string>("");
   const [profileId, setProfileId] = useState<string | null>(null);
   const [entityId, setEntityId] = useState<string | null>(null);
-  
+  const [expandedSection, setExpandedSection] = useState<"personal" | "work" | "availability" | null>(
+    "personal"
+  );
+  const [availabilitySummary, setAvailabilitySummary] = useState<string>("");
+
   const [profile, setProfile] = useState<ProfileData>({
     display_name: "",
     phone: "",
@@ -96,8 +90,6 @@ export default function ProfileEditScreen() {
     sia_license_number: "",
     sia_expiry_date: "",
     skills: [],
-    available_days: [],
-    availability_times: DEFAULT_AVAILABILITY,
     venue_name: "",
     venue_type: "",
     capacity: "",
@@ -142,13 +134,6 @@ export default function ProfileEditScreen() {
 
         if (data) {
           setEntityId(data.id);
-          // Parse availability times from database or use defaults
-          const savedTimes = data.availability_times || [];
-          const availTimes = DEFAULT_AVAILABILITY.map(defaultDay => {
-            const saved = savedTimes.find((s: DayAvailability) => s.day === defaultDay.day);
-            return saved || defaultDay;
-          });
-          
           setProfile((prev) => ({
             ...prev,
             display_name: data.display_name || "",
@@ -158,9 +143,29 @@ export default function ProfileEditScreen() {
             sia_license_number: data.sia_license_number || "",
             sia_expiry_date: data.sia_expiry_date || "",
             skills: data.skills || [],
-            available_days: data.available_days || [],
-            availability_times: availTimes,
           }));
+
+          const { data: availRows } = await supabase
+            .from("availability")
+            .select("day_of_week, is_available, start_time, end_time")
+            .eq("personnel_id", data.id);
+
+          const dayShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+          const enabled = (availRows || [])
+            .filter((r) => r.is_available)
+            .sort((a, b) => a.day_of_week - b.day_of_week);
+          if (enabled.length === 0) {
+            setAvailabilitySummary("No weekly hours set yet.");
+          } else {
+            const parts = enabled.map((r) => {
+              const d = dayShort[r.day_of_week] ?? "?";
+              const st = r.start_time?.slice(0, 5) || "";
+              const en = r.end_time?.slice(0, 5) || "";
+              if (st && en) return `${d} ${st}–${en}`;
+              return d;
+            });
+            setAvailabilitySummary(parts.join(" · "));
+          }
         }
       } else if (userRole === "venue" && supabase) {
         const { data: profileData } = await supabase
@@ -227,22 +232,16 @@ export default function ProfileEditScreen() {
     setSaving(true);
     try {
       if (role === "personnel" && entityId) {
-        // Filter availability times to only include enabled days
-        const enabledAvailability = profile.availability_times.filter(a => a.enabled);
-        const availableDays = enabledAvailability.map(a => a.day);
-        
         const { error } = await supabase
           .from("personnel")
           .update({
             display_name: profile.display_name,
             phone: profile.phone,
             bio: profile.bio,
-            hourly_rate: profile.hourly_rate ? parseInt(profile.hourly_rate) : null,
+            hourly_rate: profile.hourly_rate ? parseInt(profile.hourly_rate, 10) : null,
             sia_license_number: profile.sia_license_number,
             sia_expiry_date: profile.sia_expiry_date || null,
             skills: profile.skills,
-            available_days: availableDays,
-            availability_times: profile.availability_times,
           })
           .eq("id", entityId);
 
@@ -297,31 +296,10 @@ export default function ProfileEditScreen() {
     }));
   };
 
-  const toggleDay = (day: string) => {
+  const toggleSection = (id: "personal" | "work" | "availability") => {
     safeHaptic("selection");
-    setProfile((prev) => ({
-      ...prev,
-      availability_times: prev.availability_times.map(a => 
-        a.day === day ? { ...a, enabled: !a.enabled } : a
-      ),
-    }));
+    setExpandedSection((prev) => (prev === id ? null : id));
   };
-
-  const updateDayTime = (day: string, field: 'start_time' | 'end_time', value: string) => {
-    setProfile((prev) => ({
-      ...prev,
-      availability_times: prev.availability_times.map(a => 
-        a.day === day ? { ...a, [field]: value } : a
-      ),
-    }));
-  };
-
-  const TIME_OPTIONS = [
-    "00:00", "01:00", "02:00", "03:00", "04:00", "05:00",
-    "06:00", "07:00", "08:00", "09:00", "10:00", "11:00",
-    "12:00", "13:00", "14:00", "15:00", "16:00", "17:00",
-    "18:00", "19:00", "20:00", "21:00", "22:00", "23:00",
-  ];
 
   if (loading) {
     return (
@@ -352,196 +330,161 @@ export default function ProfileEditScreen() {
         {/* Personnel Fields */}
         {role === "personnel" && (
           <>
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Basic Info</Text>
-              
-              <View style={styles.field}>
-                <Text style={styles.label}>Display Name</Text>
-                <TextInput
-                  style={styles.input}
-                  value={profile.display_name}
-                  onChangeText={(text) => setProfile((prev) => ({ ...prev, display_name: text }))}
-                  placeholder="Your name"
-                  placeholderTextColor={colors.textMuted}
-                />
-              </View>
-
-              <View style={styles.field}>
-                <Text style={styles.label}>Phone</Text>
-                <TextInput
-                  style={styles.input}
-                  value={profile.phone}
-                  onChangeText={(text) => setProfile((prev) => ({ ...prev, phone: text }))}
-                  placeholder="07xxx xxxxxx"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="phone-pad"
-                />
-              </View>
-
-              <View style={styles.field}>
-                <Text style={styles.label}>Bio</Text>
-                <TextInput
-                  style={[styles.input, styles.textArea]}
-                  value={profile.bio}
-                  onChangeText={(text) => setProfile((prev) => ({ ...prev, bio: text }))}
-                  placeholder="Tell venues about yourself..."
-                  placeholderTextColor={colors.textMuted}
-                  multiline
-                  numberOfLines={4}
-                  textAlignVertical="top"
-                />
-              </View>
-
-              <View style={styles.field}>
-                <Text style={styles.label}>Hourly Rate (£)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={profile.hourly_rate}
-                  onChangeText={(text) => setProfile((prev) => ({ ...prev, hourly_rate: text }))}
-                  placeholder="15"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="numeric"
-                />
-              </View>
-            </View>
-
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>SIA License</Text>
-              
-              <View style={styles.field}>
-                <Text style={styles.label}>License Number</Text>
-                <TextInput
-                  style={styles.input}
-                  value={profile.sia_license_number}
-                  onChangeText={(text) => setProfile((prev) => ({ ...prev, sia_license_number: text }))}
-                  placeholder="1234-5678-9012-3456"
-                  placeholderTextColor={colors.textMuted}
-                />
-              </View>
-
-              <View style={styles.field}>
-                <Text style={styles.label}>Expiry Date</Text>
-                <TextInput
-                  style={styles.input}
-                  value={profile.sia_expiry_date}
-                  onChangeText={(text) => setProfile((prev) => ({ ...prev, sia_expiry_date: text }))}
-                  placeholder="2025-12-31"
-                  placeholderTextColor={colors.textMuted}
-                />
-              </View>
-            </View>
-
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Skills</Text>
-              <View style={styles.chipContainer}>
-                {SKILL_OPTIONS.map((skill) => (
-                  <TouchableOpacity
-                    key={skill}
-                    style={[
-                      styles.chip,
-                      profile.skills.includes(skill) && styles.chipSelected,
-                    ]}
-                    onPress={() => toggleSkill(skill)}
-                  >
-                    <Text
-                      style={[
-                        styles.chipText,
-                        profile.skills.includes(skill) && styles.chipTextSelected,
-                      ]}
-                    >
-                      {skill}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Availability</Text>
-              <Text style={styles.sectionSubtitle}>Select the days and times you're available to work</Text>
-              
-              {profile.availability_times.map((dayAvail) => (
-                <View key={dayAvail.day} style={styles.availabilityRow}>
-                  <TouchableOpacity
-                    style={[
-                      styles.dayToggle,
-                      dayAvail.enabled && styles.dayToggleEnabled,
-                    ]}
-                    onPress={() => toggleDay(dayAvail.day)}
-                  >
-                    <Text
-                      style={[
-                        styles.dayToggleText,
-                        dayAvail.enabled && styles.dayToggleTextEnabled,
-                      ]}
-                    >
-                      {dayAvail.day}
-                    </Text>
-                  </TouchableOpacity>
-                  
-                  {dayAvail.enabled && (
-                    <View style={styles.timePickerRow}>
-                      <View style={styles.timePicker}>
-                        <Text style={styles.timeLabel}>From</Text>
-                        <ScrollView 
-                          horizontal 
-                          showsHorizontalScrollIndicator={false}
-                          style={styles.timeScroll}
-                        >
-                          {TIME_OPTIONS.map((time) => (
-                            <TouchableOpacity
-                              key={time}
-                              style={[
-                                styles.timeChip,
-                                dayAvail.start_time === time && styles.timeChipSelected,
-                              ]}
-                              onPress={() => updateDayTime(dayAvail.day, 'start_time', time)}
-                            >
-                              <Text
-                                style={[
-                                  styles.timeChipText,
-                                  dayAvail.start_time === time && styles.timeChipTextSelected,
-                                ]}
-                              >
-                                {time}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
-                        </ScrollView>
-                      </View>
-                      
-                      <View style={styles.timePicker}>
-                        <Text style={styles.timeLabel}>To</Text>
-                        <ScrollView 
-                          horizontal 
-                          showsHorizontalScrollIndicator={false}
-                          style={styles.timeScroll}
-                        >
-                          {TIME_OPTIONS.map((time) => (
-                            <TouchableOpacity
-                              key={time}
-                              style={[
-                                styles.timeChip,
-                                dayAvail.end_time === time && styles.timeChipSelected,
-                              ]}
-                              onPress={() => updateDayTime(dayAvail.day, 'end_time', time)}
-                            >
-                              <Text
-                                style={[
-                                  styles.timeChipText,
-                                  dayAvail.end_time === time && styles.timeChipTextSelected,
-                                ]}
-                              >
-                                {time}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
-                        </ScrollView>
-                      </View>
-                    </View>
-                  )}
+            <View style={styles.accordionCard}>
+              <TouchableOpacity
+                style={styles.accordionHeader}
+                onPress={() => toggleSection("personal")}
+                activeOpacity={0.75}
+              >
+                <Text style={styles.accordionTitle}>Personal info</Text>
+                <Text style={styles.accordionChevron}>
+                  {expandedSection === "personal" ? "▼" : "▶"}
+                </Text>
+              </TouchableOpacity>
+              {expandedSection === "personal" && (
+                <View style={styles.accordionBody}>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Display name</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={profile.display_name}
+                      onChangeText={(text) => setProfile((prev) => ({ ...prev, display_name: text }))}
+                      placeholder="Your name"
+                      placeholderTextColor={colors.textMuted}
+                    />
+                  </View>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Phone</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={profile.phone}
+                      onChangeText={(text) => setProfile((prev) => ({ ...prev, phone: text }))}
+                      placeholder="07xxx xxxxxx"
+                      placeholderTextColor={colors.textMuted}
+                      keyboardType="phone-pad"
+                    />
+                  </View>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Bio</Text>
+                    <TextInput
+                      style={[styles.input, styles.textArea]}
+                      value={profile.bio}
+                      onChangeText={(text) => setProfile((prev) => ({ ...prev, bio: text }))}
+                      placeholder="Tell venues about yourself..."
+                      placeholderTextColor={colors.textMuted}
+                      multiline
+                      numberOfLines={4}
+                      textAlignVertical="top"
+                    />
+                  </View>
                 </View>
-              ))}
+              )}
+            </View>
+
+            <View style={styles.accordionCard}>
+              <TouchableOpacity
+                style={styles.accordionHeader}
+                onPress={() => toggleSection("work")}
+                activeOpacity={0.75}
+              >
+                <Text style={styles.accordionTitle}>Work details</Text>
+                <Text style={styles.accordionChevron}>
+                  {expandedSection === "work" ? "▼" : "▶"}
+                </Text>
+              </TouchableOpacity>
+              {expandedSection === "work" && (
+                <View style={styles.accordionBody}>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Hourly rate (£)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={profile.hourly_rate}
+                      onChangeText={(text) => setProfile((prev) => ({ ...prev, hourly_rate: text }))}
+                      placeholder="15"
+                      placeholderTextColor={colors.textMuted}
+                      keyboardType="numeric"
+                    />
+                  </View>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>SIA license number</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={profile.sia_license_number}
+                      onChangeText={(text) =>
+                        setProfile((prev) => ({ ...prev, sia_license_number: text }))
+                      }
+                      placeholder="1234-5678-9012-3456"
+                      placeholderTextColor={colors.textMuted}
+                    />
+                  </View>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>SIA expiry date</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={profile.sia_expiry_date}
+                      onChangeText={(text) =>
+                        setProfile((prev) => ({ ...prev, sia_expiry_date: text }))
+                      }
+                      placeholder="2025-12-31"
+                      placeholderTextColor={colors.textMuted}
+                    />
+                  </View>
+                  <Text style={[styles.label, { marginTop: spacing.sm }]}>Skills</Text>
+                  <View style={styles.chipContainer}>
+                    {SKILL_OPTIONS.map((skill) => (
+                      <TouchableOpacity
+                        key={skill}
+                        style={[
+                          styles.chip,
+                          profile.skills.includes(skill) && styles.chipSelected,
+                        ]}
+                        onPress={() => toggleSkill(skill)}
+                      >
+                        <Text
+                          style={[
+                            styles.chipText,
+                            profile.skills.includes(skill) && styles.chipTextSelected,
+                          ]}
+                        >
+                          {skill}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+            </View>
+
+            <View style={styles.accordionCard}>
+              <TouchableOpacity
+                style={styles.accordionHeader}
+                onPress={() => toggleSection("availability")}
+                activeOpacity={0.75}
+              >
+                <Text style={styles.accordionTitle}>Availability</Text>
+                <Text style={styles.accordionChevron}>
+                  {expandedSection === "availability" ? "▼" : "▶"}
+                </Text>
+              </TouchableOpacity>
+              {expandedSection === "availability" && (
+                <View style={styles.accordionBody}>
+                  <Text style={styles.sectionSubtitle}>
+                    Weekly hours are saved on the dedicated availability screen (including blocked
+                    dates and one-off overrides).
+                  </Text>
+                  <View style={styles.availabilitySummaryCard}>
+                    <Text style={styles.availabilitySummaryLabel}>Current schedule</Text>
+                    <Text style={styles.availabilitySummaryText}>{availabilitySummary}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.manageAvailabilityBtn}
+                    onPress={() => router.push("/availability")}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.manageAvailabilityBtnText}>Manage availability</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
           </>
         )}
@@ -755,6 +698,67 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: spacing.xl,
   },
+  accordionCard: {
+    marginBottom: spacing.md,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    overflow: "hidden",
+  },
+  accordionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+  },
+  accordionTitle: {
+    ...typography.title,
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  accordionChevron: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontSize: 12,
+  },
+  accordionBody: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+  },
+  availabilitySummaryCard: {
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  availabilitySummaryLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginBottom: spacing.xs,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  availabilitySummaryText: {
+    ...typography.body,
+    color: colors.text,
+    lineHeight: 22,
+  },
+  manageAvailabilityBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    alignItems: "center",
+  },
+  manageAvailabilityBtnText: {
+    ...typography.body,
+    fontWeight: "700",
+    color: colors.text,
+  },
   sectionTitle: {
     ...typography.title,
     color: colors.text,
@@ -809,100 +813,10 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontWeight: "600",
   },
-  daysContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  dayChip: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  dayChipSelected: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
-  },
-  dayText: {
-    ...typography.caption,
-    color: colors.textMuted,
-    fontWeight: "600",
-  },
-  dayTextSelected: {
-    color: colors.text,
-  },
   sectionSubtitle: {
     ...typography.caption,
     color: colors.textMuted,
     marginBottom: spacing.md,
-  },
-  availabilityRow: {
-    marginBottom: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  dayToggle: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    backgroundColor: colors.background,
-    borderRadius: radius.md,
-    alignSelf: "flex-start",
-  },
-  dayToggleEnabled: {
-    backgroundColor: colors.accent,
-  },
-  dayToggleText: {
-    ...typography.body,
-    color: colors.textMuted,
-    fontWeight: "600",
-  },
-  dayToggleTextEnabled: {
-    color: colors.text,
-  },
-  timePickerRow: {
-    marginTop: spacing.md,
-    gap: spacing.sm,
-  },
-  timePicker: {
-    marginBottom: spacing.xs,
-  },
-  timeLabel: {
-    ...typography.caption,
-    color: colors.textMuted,
-    marginBottom: spacing.xs,
-  },
-  timeScroll: {
-    flexGrow: 0,
-  },
-  timeChip: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    backgroundColor: colors.background,
-    borderRadius: radius.sm,
-    marginRight: spacing.xs,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  timeChipSelected: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
-  },
-  timeChipText: {
-    ...typography.caption,
-    color: colors.textMuted,
-    fontSize: 12,
-  },
-  timeChipTextSelected: {
-    color: colors.text,
-    fontWeight: "600",
+    lineHeight: 20,
   },
 });

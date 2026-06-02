@@ -11,12 +11,19 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
+import * as Device from "expo-device";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { supabase } from "../../lib/supabase";
 import { colors, typography, spacing, radius } from "../../theme";
+import {
+  PermissionsStep,
+  permissionsReady,
+  type PermissionsCapture,
+} from "../../components/auth/PermissionsStep";
+import { isMissingColumnError } from "../../lib/postgresErrors";
 
-const TOTAL_STEPS = 5;
+const TOTAL_STEPS = 6;
 
 const serviceOptions = [
   { value: "door_supervision", label: "Door Supervision" },
@@ -41,7 +48,8 @@ export default function AgencySignUp() {
   const insets = useSafeAreaInsets();
   const [currentStep, setCurrentStep] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
-  
+  const [permissionsCapture, setPermissionsCapture] = useState<PermissionsCapture | null>(null);
+
   const [formData, setFormData] = useState({
     businessName: "",
     companiesHouseNumber: "",
@@ -116,6 +124,15 @@ export default function AgencySignUp() {
           return false;
         }
         return true;
+      case 6:
+        if (!permissionsReady(permissionsCapture, false)) {
+          Alert.alert(
+            "Notifications required",
+            "Please enable notifications to finish creating your account."
+          );
+          return false;
+        }
+        return true;
       default:
         return true;
     }
@@ -139,6 +156,7 @@ export default function AgencySignUp() {
 
   const handleSubmit = async () => {
     if (!validateStep(5)) return;
+    if (!validateStep(6)) return;
 
     setIsLoading(true);
 
@@ -172,9 +190,7 @@ export default function AgencySignUp() {
         console.error("Profile upsert error:", profileError);
       }
 
-      // Now create agency record
-      if (!supabase) return;
-      const { error: agencyError } = await supabase.from("agencies").insert({
+      const agencyBase = {
         owner_id: authData.user.id,
         name: formData.businessName,
         companies_house_number: formData.companiesHouseNumber || null,
@@ -188,14 +204,37 @@ export default function AgencySignUp() {
         contact_name: formData.contactName,
         contact_email: formData.contactEmail,
         contact_phone: formData.contactPhone || null,
-      });
+      };
+      const agencyWithPerms = {
+        ...agencyBase,
+        notifications_granted_at: permissionsCapture?.notifications.grantedAt ?? null,
+      };
 
+      let { error: agencyError } = await supabase.from("agencies").insert(agencyWithPerms);
+      if (agencyError && isMissingColumnError(agencyError)) {
+        const retry = await supabase.from("agencies").insert(agencyBase);
+        agencyError = retry.error;
+      }
       if (agencyError) {
         console.error("Agency insert error:", agencyError);
       }
 
-      // Email confirmation disabled - go directly to dashboard
-      router.replace("/d/agency");
+      const pushToken = permissionsCapture?.notifications.token;
+      if (pushToken) {
+        const { error: pushErr } = await supabase.from("push_tokens").upsert(
+          {
+            user_id: authData.user.id,
+            token: pushToken,
+            platform: Platform.OS,
+            device_name: Device.deviceName || "Unknown",
+            is_active: true,
+          },
+          { onConflict: "user_id,token" }
+        );
+        if (pushErr) console.warn("[Signup] push_tokens upsert failed:", pushErr.message);
+      }
+
+      router.replace("/(tabs)/explore");
     } catch (err: any) {
       Alert.alert("Error", err.message || "Something went wrong");
     } finally {
@@ -206,7 +245,7 @@ export default function AgencySignUp() {
   const renderProgressBar = () => (
     <View style={styles.progressContainer}>
       <View style={styles.progressBar}>
-        {[1, 2, 3, 4, 5].map((step) => (
+        {Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1).map((step) => (
           <View key={step} style={styles.progressStepContainer}>
             <View style={[
               styles.progressDot,
@@ -221,7 +260,7 @@ export default function AgencySignUp() {
                 </Text>
               )}
             </View>
-            {step < 5 && (
+            {step < TOTAL_STEPS && (
               <View style={[styles.progressLine, step < currentStep && styles.progressLineActive]} />
             )}
           </View>
@@ -455,12 +494,22 @@ export default function AgencySignUp() {
     </View>
   );
 
+  const renderStep6 = () => (
+    <PermissionsStep
+      requireLocation={false}
+      onChange={setPermissionsCapture}
+      submitting={isLoading}
+    />
+  );
+
+  const submitDisabled = isLoading || !permissionsReady(permissionsCapture, false);
+
   return (
     <KeyboardAvoidingView 
       style={styles.container} 
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
-      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 4 }]}>
         <TouchableOpacity onPress={handleBack} style={styles.backButton}>
           <Text style={styles.backButtonText}>‹</Text>
         </TouchableOpacity>
@@ -486,6 +535,7 @@ export default function AgencySignUp() {
         {currentStep === 3 && renderStep3()}
         {currentStep === 4 && renderStep4()}
         {currentStep === 5 && renderStep5()}
+        {currentStep === 6 && renderStep6()}
       </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + 10 }]}>
@@ -496,9 +546,9 @@ export default function AgencySignUp() {
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
-            style={[styles.submitButton, isLoading && styles.submitButtonDisabled]}
+            style={[styles.submitButton, submitDisabled && styles.submitButtonDisabled]}
             onPress={handleSubmit}
-            disabled={isLoading}
+            disabled={submitDisabled}
           >
             {isLoading ? (
               <ActivityIndicator color={colors.text} />

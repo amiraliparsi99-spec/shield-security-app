@@ -6,7 +6,7 @@
  * Enhanced with animations and modern UI
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -16,20 +16,21 @@ import {
   Alert,
   ScrollView,
   Animated,
-  Dimensions,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
+import * as Location from "expo-location";
 import { colors, gradients, spacing, radius } from "../../theme";
 import { useLocationTracking } from "../../hooks/useLocationTracking";
 import { supabase } from "../../lib/supabase";
+import { fetchApi } from "../../lib/api";
+import { isMissingColumnError } from "../../lib/postgresErrors";
+import { bookingDirectionsLine } from "../../lib/bookingDirections";
 import { BackButton } from "../../components/ui/BackButton";
 import { AnimatedBackground } from "../../components/ui/AnimatedBackground";
 import { LiveIndicator } from "../../components/ui/LiveIndicator";
-
-const { width } = Dimensions.get("window");
 
 interface ShiftData {
   id: string;
@@ -45,22 +46,94 @@ interface ShiftData {
   check_in_latitude: number | null;
   check_in_longitude: number | null;
   venue_confirmed: boolean;
+  // Cover sourcing state — populated by the pre-shift travel risk cron.
+  // null when not in cover search; integer 1-3 once a wave is active.
+  cover_search_wave?: number | null;
+  cover_search_started_at?: string | null;
+  travel_risk?: string | null;
   booking: {
     id: string;
     event_name: string;
     event_date: string;
     start_time: string;
     end_time: string;
+    brief_notes?: string | null;
+    site_label?: string | null;
+    site_address_text?: string | null;
+    venue_location?: {
+      label?: string | null;
+      address_line1?: string | null;
+      city?: string | null;
+      postcode?: string | null;
+    } | null;
     venue: {
       id: string;
       name: string;
       address_line1: string | null;
       city: string;
+      postcode?: string | null;
       latitude: number | null;
       longitude: number | null;
     };
   };
 }
+
+const SHIFT_SELECT_WITH_SITE_ADDRESS = `
+          id,
+          booking_id,
+          personnel_id,
+          role,
+          hourly_rate,
+          status,
+          scheduled_start,
+          scheduled_end,
+          actual_start,
+          actual_end,
+          check_in_latitude,
+          check_in_longitude,
+          venue_confirmed,
+          cover_search_wave,
+          cover_search_started_at,
+          travel_risk,
+          booking:bookings(
+            id,
+            event_name,
+            event_date,
+            start_time,
+            end_time,
+            brief_notes,
+            site_label,
+            site_address_text,
+            venue_location:venue_locations!venue_location_id(label, address_line1, city, postcode),
+            venue:venues(id, name, address_line1, city, postcode, latitude, longitude)
+          )
+        `;
+
+const SHIFT_SELECT_LEGACY = `
+          id,
+          booking_id,
+          personnel_id,
+          role,
+          hourly_rate,
+          status,
+          scheduled_start,
+          scheduled_end,
+          actual_start,
+          actual_end,
+          check_in_latitude,
+          check_in_longitude,
+          venue_confirmed,
+          booking:bookings(
+            id,
+            event_name,
+            event_date,
+            start_time,
+            end_time,
+            brief_notes,
+            site_label,
+            venue:venues(id, name, address_line1, city, postcode, latitude, longitude)
+          )
+        `;
 
 export default function ShiftScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -68,6 +141,13 @@ export default function ShiftScreen() {
   const insets = useSafeAreaInsets();
   const [shift, setShift] = useState<ShiftData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [checkinActionLoading, setCheckinActionLoading] = useState(false);
+
+  const extractAttireRequirement = (briefNotes?: string | null): string | null => {
+    if (!briefNotes) return null;
+    const match = briefNotes.match(/Attire requirement:\s*(.+)/i);
+    return match?.[1]?.trim() || null;
+  };
 
   const {
     isTracking,
@@ -88,60 +168,84 @@ export default function ShiftScreen() {
     }
   }, [id]);
 
-  const loadShift = async () => {
+  // Foreground auto-checkout: while the guard is checked in, watch the clock
+  // and fire the checkout the instant scheduled end is reached. The server
+  // cron is the safety net; this is the instant-UX path for an open app.
+  const autoCheckoutFiredRef = useRef(false);
+  useEffect(() => {
+    if (!shift) return;
+    if (shift.status !== "checked_in") return;
+    if (shift.actual_end) return;
+    if (autoCheckoutFiredRef.current) return;
+
+    const endMs = new Date(shift.scheduled_end).getTime();
+    if (!Number.isFinite(endMs)) return;
+
+    const fire = () => {
+      if (autoCheckoutFiredRef.current) return;
+      autoCheckoutFiredRef.current = true;
+      console.log("[Shift] Scheduled end reached — firing auto checkout");
+      postCheckinAction("check_out", { auto: true });
+    };
+
+    const delay = endMs - Date.now();
+    if (delay <= 0) {
+      fire();
+      return;
+    }
+    const timer = setTimeout(fire, delay);
+    return () => clearTimeout(timer);
+  }, [shift?.id, shift?.status, shift?.scheduled_end, shift?.actual_end]);
+
+  const loadShift = async (opts?: { silent?: boolean }) => {
     if (!supabase) return;
-    setIsLoading(true);
+    if (!opts?.silent) setIsLoading(true);
     try {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from("shifts")
-        .select(`
-          id,
-          booking_id,
-          personnel_id,
-          role,
-          hourly_rate,
-          status,
-          scheduled_start,
-          scheduled_end,
-          actual_start,
-          actual_end,
-          check_in_latitude,
-          check_in_longitude,
-          venue_confirmed,
-          booking:bookings(
-            id,
-            event_name,
-            event_date,
-            start_time,
-            end_time,
-            venue:venues(id, name, address_line1, city, latitude, longitude)
-          )
-        `)
+        .select(SHIFT_SELECT_WITH_SITE_ADDRESS)
         .eq("id", id)
         .single();
 
+      if (error && isMissingColumnError(error)) {
+        const retry = await supabase
+          .from("shifts")
+          .select(SHIFT_SELECT_LEGACY)
+          .eq("id", id)
+          .single();
+        data = retry.data;
+        error = retry.error;
+      }
+
       if (error) throw error;
-      // Transform the data to match ShiftData type
       if (data) {
-        const bookingArray = data.booking as any[];
-        const booking = bookingArray?.[0];
-        const venueArray = booking?.venue as any[];
-        const venue = venueArray?.[0];
-        
+        const raw = data as any;
+        const booking = Array.isArray(raw.booking) ? raw.booking[0] : raw.booking;
+        const venue = booking ? (Array.isArray(booking.venue) ? booking.venue[0] : booking.venue) : null;
+        const venueLocation = booking
+          ? (Array.isArray((booking as any).venue_location)
+              ? (booking as any).venue_location[0]
+              : (booking as any).venue_location)
+          : null;
+        const emptyVenue = { id: '', name: '', address_line1: null, city: '', postcode: null as string | null, latitude: null, longitude: null };
+
         const transformedData: ShiftData = {
-          ...data,
-          booking: booking ? {
-            ...booking,
-            venue: venue || { id: '', name: '', address_line1: null, city: '', latitude: null, longitude: null }
-          } : { id: '', event_name: '', event_date: '', start_time: '', end_time: '', venue: { id: '', name: '', address_line1: null, city: '', latitude: null, longitude: null } }
+          ...raw,
+          booking: booking
+            ? {
+                ...booking,
+                venue: venue || emptyVenue,
+                venue_location: venueLocation ?? undefined,
+              }
+            : { id: '', event_name: '', event_date: '', start_time: '', end_time: '', venue: emptyVenue },
         };
         setShift(transformedData);
       }
 
       // Try to load geofences but don't fail if it doesn't work
-      if (data?.booking_id) {
+      if (data?.booking_id && data?.id) {
         try {
-          await loadGeofencesForBooking(data.booking_id);
+          await loadGeofencesForBooking(data.booking_id, data.id);
         } catch (geoError) {
           console.log("Geofences not available:", geoError);
           // Continue without geofences - not critical
@@ -151,99 +255,171 @@ export default function ShiftScreen() {
       console.error("Error loading shift:", error?.code, error?.message);
       Alert.alert("Error", "Failed to load shift details");
     } finally {
-      setIsLoading(false);
+      if (!opts?.silent) setIsLoading(false);
     }
   };
 
-  const handleStartTracking = async () => {
-    if (!shift?.personnel_id) return;
+  const startTrackingForShift = useCallback(
+    async (opts?: { showAlert?: boolean }) => {
+      if (!shift?.personnel_id || !supabase) return false;
+      const showAlert = opts?.showAlert ?? true;
 
-    if (!hasPermission) {
-      const granted = await requestPermissions();
-      if (!granted) {
-        Alert.alert(
-          "Permission Required",
-          "Location permission is required for shift tracking."
-        );
+      if (!hasPermission) {
+        const granted = await requestPermissions();
+        if (!granted) {
+          if (showAlert) {
+            Alert.alert(
+              "Permission Required",
+              "Location permission is required for shift tracking."
+            );
+          }
+          return false;
+        }
+      }
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        if (showAlert) Alert.alert("Error", "Please log in again");
+        return false;
+      }
+
+      await loadGeofencesForBooking(shift.booking_id, shift.id);
+      const success = await startTracking(shift.personnel_id, shift.id, {
+        authToken: session.access_token,
+        scheduledStartIso: shift.scheduled_start,
+        scheduledEndIso: shift.scheduled_end,
+        autoCheckIn: true,
+        autoCheckOut: true,
+      });
+      if (success && showAlert) {
+        Alert.alert("Tracking Started", "Live tracking and auto geofence check-in are now active.");
+      }
+      return success;
+    },
+    [
+      shift,
+      supabase,
+      hasPermission,
+      requestPermissions,
+      loadGeofencesForBooking,
+      startTracking,
+    ]
+  );
+
+  const postCheckinAction = async (
+    action: "check_in" | "check_out",
+    opts?: { auto?: boolean },
+  ) => {
+    if (!shift || !supabase) {
+      if (!opts?.auto) Alert.alert("Error", "Shift not loaded");
+      return;
+    }
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      if (!opts?.auto) Alert.alert("Error", "Please log in again");
+      return;
+    }
+
+    const perm = await Location.requestForegroundPermissionsAsync();
+    if (perm.status !== "granted" && !opts?.auto) {
+      Alert.alert(
+        "Location needed",
+        "We use one GPS fix when you tap check-in or check-out so the venue can see you were on site. Enable location to continue.",
+      );
+      return;
+    }
+
+    setCheckinActionLoading(true);
+    try {
+      // Best-effort GPS fix. For auto checkout we don't block on a missing
+      // fix — the shift must close at scheduled end no matter what.
+      let latitude: number | null = null;
+      let longitude: number | null = null;
+      try {
+        const pos = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.High,
+        });
+        latitude = pos.coords.latitude;
+        longitude = pos.coords.longitude;
+      } catch (gpsErr) {
+        if (!opts?.auto) throw gpsErr;
+        const last = await Location.getLastKnownPositionAsync().catch(() => null);
+        latitude = last?.coords.latitude ?? 0;
+        longitude = last?.coords.longitude ?? 0;
+      }
+
+      const res = await fetchApi("/api/shifts/checkin", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          shift_id: shift.id,
+          action,
+          latitude,
+          longitude,
+          auto: opts?.auto === true,
+        }),
+      });
+
+      let result: {
+        error?: string;
+        checkout_outside_geofence?: boolean;
+        distance_meters?: number;
+      } = {};
+      try {
+        result = await res.json();
+      } catch {
+        result = {};
+      }
+
+      if (!res.ok) {
+        if (!opts?.auto) {
+          Alert.alert(
+            action === "check_in" ? "Can't check in" : "Can't check out",
+            result.error || "Something went wrong. Try again.",
+          );
+        } else {
+          console.warn("[Shift] Auto checkout failed:", result.error);
+        }
         return;
       }
-    }
 
-    const success = await startTracking(shift.personnel_id, shift.id);
-    if (success) {
-      Alert.alert("Tracking Started", "Your location is now being tracked.");
-    }
-  };
-
-  const handleStopTracking = async () => {
-    Alert.alert("Stop Tracking", "Are you sure?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Stop", style: "destructive", onPress: () => stopTracking() },
-    ]);
-  };
-
-  const handleManualCheckIn = async () => {
-    if (!shift) {
-      Alert.alert("Error", "Shift not loaded");
-      return;
-    }
-
-    try {
-      const updateData: any = {
-        actual_start: new Date().toISOString(),
-        status: "checked_in",
-      };
-      
-      if (currentLocation) {
-        updateData.check_in_latitude = currentLocation.coords.latitude;
-        updateData.check_in_longitude = currentLocation.coords.longitude;
+      if (action === "check_in") {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Alert.alert(
+          "Checked in",
+          "You're on duty. Live tracking below is optional — most shifts only need manual check-in.",
+        );
+        await loadShift({ silent: true });
+      } else {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        await stopTracking();
+        const farMessage = result.checkout_outside_geofence
+          ? `\n\nNote: you were ${result.distance_meters ?? "?"}m from the venue. The venue will be asked to confirm your attendance.`
+          : "";
+        const title = opts?.auto ? "Shift auto-ended" : "Checked out";
+        const message = opts?.auto
+          ? `Your shift reached its scheduled end and was closed automatically.${farMessage}`
+          : `Shift complete.${farMessage}`;
+        Alert.alert(title, message, [
+          { text: "OK", onPress: () => router.back() },
+        ]);
       }
-
-      if (!supabase) return;
-      const { error } = await supabase
-        .from("shifts")
-        .update(updateData)
-        .eq("id", shift.id);
-
-      if (error) throw error;
-      Alert.alert("Checked In", "You have been checked in successfully");
-      loadShift();
-    } catch (error) {
-      console.error("Check in error:", error);
-      Alert.alert("Error", "Failed to check in");
-    }
-  };
-
-  const handleManualCheckOut = async () => {
-    if (!shift) {
-      Alert.alert("Error", "Shift not loaded");
-      return;
-    }
-
-    try {
-      const updateData: any = {
-        actual_end: new Date().toISOString(),
-        status: "checked_out",
-      };
-      
-      if (currentLocation) {
-        updateData.check_out_latitude = currentLocation.coords.latitude;
-        updateData.check_out_longitude = currentLocation.coords.longitude;
+    } catch (e: any) {
+      console.error("Check-in/out error:", e);
+      if (!opts?.auto) {
+        Alert.alert(
+          "Location",
+          "Could not read your GPS position. Move to an open area and try again.",
+        );
       }
-
-      if (!supabase) return;
-      const { error } = await supabase
-        .from("shifts")
-        .update(updateData)
-        .eq("id", shift.id);
-
-      if (error) throw error;
-      await stopTracking();
-      Alert.alert("Checked Out", "Great job! Your shift is complete.");
-      router.back();
-    } catch (error) {
-      console.error("Check out error:", error);
-      Alert.alert("Error", "Failed to check out");
+    } finally {
+      setCheckinActionLoading(false);
     }
   };
 
@@ -275,33 +451,56 @@ export default function ShiftScreen() {
                 return;
               }
 
-              const response = await fetch(
-                `${process.env.EXPO_PUBLIC_API_URL || ""}/api/shifts/cancel`,
-                {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${session.access_token}`,
-                  },
-                  body: JSON.stringify({
-                    shift_id: shift.id,
-                    reason: reason.trim(),
-                    cancelled_by: "guard",
-                  }),
-                }
-              );
+              const response = await fetchApi("/api/shifts/cancel", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${session.access_token}`,
+                },
+                body: JSON.stringify({
+                  shift_id: shift.id,
+                  reason: reason.trim(),
+                  cancelled_by: "guard",
+                }),
+              });
 
-              const data = await response.json();
-
-              if (!response.ok) {
-                throw new Error(data.error || "Failed to cancel shift");
+              const raw = await response.text();
+              let data: any = {};
+              try {
+                data = raw ? JSON.parse(raw) : {};
+              } catch {
+                data = {};
               }
 
-              Alert.alert(
-                "Shift Cancelled",
-                data.cancellation_note || "Your shift has been cancelled successfully.",
-                [{ text: "OK", onPress: () => router.back() }]
-              );
+              if (!response.ok) {
+                const fallbackText =
+                  typeof raw === "string" && raw.trim() && !raw.trim().startsWith("<")
+                    ? raw.trim()
+                    : null;
+                const base =
+                  data.error ||
+                  fallbackText ||
+                  "Failed to cancel shift";
+                const dbg =
+                  __DEV__ && typeof data.debug === "string" && data.debug.trim()
+                    ? `\n\n${data.debug.trim()}`
+                    : "";
+                throw new Error(base + dbg);
+              }
+
+              if (data.mode === "reopened_for_cover") {
+                Alert.alert(
+                  "Shift released",
+                  "Shift released: the shift has been cancelled.\n\nWhen you cancel with less than 24 hours before the shift starts, this will affect your reliability rating.",
+                  [{ text: "OK", onPress: () => router.back() }],
+                );
+              } else {
+                Alert.alert(
+                  "Shift Cancelled",
+                  data.cancellation_note || "Your shift has been cancelled successfully.",
+                  [{ text: "OK", onPress: () => router.back() }],
+                );
+              }
             } catch (error: any) {
               console.error("Cancel shift error:", error);
               Alert.alert("Error", error.message || "Failed to cancel shift");
@@ -319,6 +518,7 @@ export default function ShiftScreen() {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const autoTrackingAttemptRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!isLoading && shift) {
@@ -358,6 +558,32 @@ export default function ShiftScreen() {
     }
   }, [shift?.status]);
 
+  // Auto-start tracking 1 hour before scheduled start through to scheduled end.
+  // Mirrors the global PreShiftTracker so opening this screen kicks off tracking
+  // immediately if the user is in-window. Also re-starts tracking if the shift
+  // is already checked_in but tracking happens to be off (force-quit, etc.).
+  useEffect(() => {
+    if (!shift) return;
+    const _isCheckedOut = shift.status === "checked_out" || !!shift.actual_end;
+    const _statusOk =
+      shift.status === "accepted" ||
+      shift.status === "checked_in" ||
+      (shift.status === "pending" && !!shift.personnel_id);
+    const st = new Date(shift.scheduled_start);
+    const et = new Date(shift.scheduled_end);
+    const _now = new Date();
+    const _inTrackingWindow =
+      _now >= new Date(st.getTime() - 60 * 60 * 1000) && _now <= et;
+
+    if (_isCheckedOut || !_statusOk || !_inTrackingWindow || isTracking) return;
+    if (autoTrackingAttemptRef.current === shift.id) return;
+    autoTrackingAttemptRef.current = shift.id;
+
+    startTrackingForShift({ showAlert: false }).catch((err) => {
+      console.warn("[ShiftScreen] Auto tracking start failed:", err);
+    });
+  }, [shift, isTracking, startTrackingForShift]);
+
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -395,12 +621,19 @@ export default function ShiftScreen() {
   // Check if within 15 minutes of shift start (can check in 15 min before)
   const now = new Date();
   const fifteenMinutesBefore = new Date(startTime.getTime() - 15 * 60 * 1000);
-  const canCheckIn = now >= fifteenMinutesBefore && now <= endTime;
-  const minutesUntilCheckIn = Math.ceil((fifteenMinutesBefore.getTime() - now.getTime()) / 60000);
+  const inCheckInWindow = now >= fifteenMinutesBefore && now <= endTime;
+  const afterShiftWindow = now > endTime && !isCheckedIn && !isCheckedOut;
+  const minutesUntilCheckIn = Math.ceil(
+    (fifteenMinutesBefore.getTime() - now.getTime()) / 60000,
+  );
+  const statusAllowsCheckIn =
+    shift.status === "accepted" ||
+    (shift.status === "pending" && !!shift.personnel_id);
 
   // Calculate shift duration and earnings
   const shiftDurationHours = (endTime.getTime() - startTime.getTime()) / 3600000;
   const estimatedEarnings = shiftDurationHours * (shift.hourly_rate || 0);
+  const attireRequirement = extractAttireRequirement(shift.booking?.brief_notes);
 
   return (
     <View style={styles.container}>
@@ -470,8 +703,11 @@ export default function ShiftScreen() {
               )}
             </View>
             <Text style={styles.venueName}>{shift.booking?.venue?.name || "Unknown Venue"}</Text>
+            {shift.booking?.site_label ? (
+              <Text style={styles.siteLabel}>{shift.booking.site_label}</Text>
+            ) : null}
             <Text style={styles.venueAddress}>
-              {shift.booking?.venue?.address_line1 || shift.booking?.venue?.city || "Address not available"}
+              {shift.booking ? bookingDirectionsLine(shift.booking) : "Address not available"}
             </Text>
             <Text style={styles.eventName}>{shift.booking?.event_name || "Shift"}</Text>
 
@@ -509,8 +745,148 @@ export default function ShiftScreen() {
                 </Text>
               </View>
             </View>
+            {attireRequirement ? (
+              <View style={styles.attireBanner}>
+                <Text style={styles.attireBannerText}>👔 Required attire: {attireRequirement}</Text>
+              </View>
+            ) : null}
           </LinearGradient>
         </Animated.View>
+
+        {/* Cover-sourcing banner — appears when the venue has started looking
+         * for a replacement (R5+ ring or active cover search). Lets the guard
+         * recover by checking in immediately, which cancels the cover search
+         * and prevents double-booking. */}
+        {!isCheckedOut && shift.cover_search_wave && shift.cover_search_wave > 0 ? (
+          <Animated.View
+            style={[
+              styles.cardContainer,
+              {
+                opacity: fadeAnim,
+                transform: [{ translateY: slideAnim }],
+              },
+            ]}
+          >
+            <View style={styles.coverRecoveryCard}>
+              <Text style={styles.coverRecoveryTitle}>
+                🔴 The venue is looking for cover
+              </Text>
+              <Text style={styles.coverRecoveryBody}>
+                You're flagged as not yet on site. Wave {shift.cover_search_wave} of 3 is
+                active — nearby guards have been notified you may not make it.
+                {"\n\n"}
+                <Text style={styles.coverRecoveryEmphasis}>
+                  You can still recover.
+                </Text>{" "}
+                Check in below as soon as you arrive and we'll cancel the cover
+                search automatically.
+              </Text>
+            </View>
+          </Animated.View>
+        ) : null}
+
+        {/* Primary check-in / check-out (API + GPS — same rules as web) */}
+        {!isCheckedOut && (
+          <Animated.View
+            style={[
+              styles.cardContainer,
+              {
+                opacity: fadeAnim,
+                transform: [{ translateY: slideAnim }],
+              },
+            ]}
+          >
+            <LinearGradient colors={gradients.accentSoft} style={styles.primaryActionCard}>
+              {!isCheckedIn ? (
+                <>
+                  <Text style={styles.primaryActionTitle}>At the venue?</Text>
+                  <Text style={styles.primaryActionCaption}>
+                    Tap once to check in. We send a single GPS point to prove you're on site
+                    (server-validated, same as the web dashboard). Live tracking below is optional.
+                  </Text>
+                  {statusAllowsCheckIn ? (
+                    afterShiftWindow ? (
+                      <Text style={styles.primaryActionWarning}>
+                        This shift's check-in window has passed. Contact the venue if you still need to
+                        work this job.
+                      </Text>
+                    ) : inCheckInWindow ? (
+                      <TouchableOpacity
+                        style={styles.primaryActionButtonWrap}
+                        onPress={() => {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                          postCheckinAction("check_in");
+                        }}
+                        disabled={checkinActionLoading}
+                        activeOpacity={0.85}
+                      >
+                        {checkinActionLoading ? (
+                          <View style={styles.primaryActionLoading}>
+                            <ActivityIndicator color={colors.textInverse} />
+                          </View>
+                        ) : (
+                          <LinearGradient
+                            colors={gradients.accent}
+                            style={styles.primaryActionButtonGradient}
+                          >
+                            <Text style={styles.primaryActionButtonText}>
+                              I'm at the venue — Check in
+                            </Text>
+                          </LinearGradient>
+                        )}
+                      </TouchableOpacity>
+                    ) : (
+                      <View style={styles.countdownBadge}>
+                        <Text style={styles.countdownText}>
+                          Check-in opens in{" "}
+                          {minutesUntilCheckIn > 60
+                            ? `${Math.floor(minutesUntilCheckIn / 60)}h ${minutesUntilCheckIn % 60}m`
+                            : `${Math.max(0, minutesUntilCheckIn)}m`}
+                        </Text>
+                      </View>
+                    )
+                  ) : (
+                    <Text style={styles.primaryActionWarning}>
+                      Your shift must be accepted before you can check in.
+                    </Text>
+                  )}
+                </>
+              ) : (
+                <>
+                  <Text style={styles.primaryActionTitle}>Leaving the venue?</Text>
+                  <Text style={styles.primaryActionCaption}>
+                    One GPS point is recorded for check-out. You must be within range of the venue
+                    pin (same rule as check-in).
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.primaryActionButtonWrap}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      postCheckinAction("check_out");
+                    }}
+                    disabled={checkinActionLoading}
+                    activeOpacity={0.85}
+                  >
+                    {checkinActionLoading ? (
+                      <View style={styles.primaryActionLoading}>
+                        <ActivityIndicator color={colors.textInverse} />
+                      </View>
+                    ) : (
+                      <LinearGradient
+                        colors={gradients.accent}
+                        style={styles.primaryActionButtonGradient}
+                      >
+                        <Text style={styles.primaryActionButtonText}>
+                          End shift — Check out
+                        </Text>
+                      </LinearGradient>
+                    )}
+                  </TouchableOpacity>
+                </>
+              )}
+            </LinearGradient>
+          </Animated.View>
+        )}
 
         {/* Status Card - Enhanced */}
         <Animated.View
@@ -537,34 +913,15 @@ export default function ShiftScreen() {
                         hour: "2-digit",
                         minute: "2-digit",
                       })
-                    : canCheckIn 
-                      ? "Ready to check in"
-                      : `Available in ${minutesUntilCheckIn} min`}
+                    : afterShiftWindow
+                      ? "Window ended — see above"
+                      : inCheckInWindow
+                        ? "Ready when you are"
+                        : minutesUntilCheckIn > 0
+                          ? `Opens in ${minutesUntilCheckIn > 60 ? `${Math.floor(minutesUntilCheckIn / 60)}h ${minutesUntilCheckIn % 60}m` : `${minutesUntilCheckIn}m`}`
+                          : "See check-in above"}
                 </Text>
               </View>
-              {!isCheckedIn && (
-                canCheckIn ? (
-                  <TouchableOpacity 
-                    style={styles.actionButton} 
-                    onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                      handleManualCheckIn();
-                    }}
-                  >
-                    <LinearGradient colors={gradients.accent} style={styles.actionButtonGradient}>
-                      <Text style={styles.actionButtonText}>Check In</Text>
-                    </LinearGradient>
-                  </TouchableOpacity>
-                ) : (
-                  <View style={styles.countdownBadge}>
-                    <Text style={styles.countdownText}>
-                      {minutesUntilCheckIn > 60 
-                        ? `${Math.floor(minutesUntilCheckIn / 60)}h ${minutesUntilCheckIn % 60}m`
-                        : `${minutesUntilCheckIn}m`}
-                    </Text>
-                  </View>
-                )
-              )}
             </View>
 
             <View style={[styles.statusRow, { borderBottomWidth: 0 }]}>
@@ -582,17 +939,6 @@ export default function ShiftScreen() {
                     : "Not checked out"}
                 </Text>
               </View>
-              {isCheckedIn && !isCheckedOut && (
-                <TouchableOpacity
-                  style={styles.actionButtonSecondary}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                    handleManualCheckOut();
-                  }}
-                >
-                  <Text style={styles.actionButtonTextSecondary}>Check Out</Text>
-                </TouchableOpacity>
-              )}
             </View>
           </LinearGradient>
         </Animated.View>
@@ -608,7 +954,7 @@ export default function ShiftScreen() {
           ]}
         >
           <LinearGradient colors={gradients.card} style={styles.card}>
-            <Text style={styles.cardTitle}>📍 Location Tracking</Text>
+            <Text style={styles.cardTitle}>📍 Live GPS tracking</Text>
 
             <View style={styles.trackingStatus}>
               <View style={[styles.trackingIconContainer, isTracking && styles.trackingIconActive]}>
@@ -617,16 +963,18 @@ export default function ShiftScreen() {
               <View style={styles.trackingInfo}>
                 <View style={styles.trackingLabelRow}>
                   <Text style={styles.trackingLabel}>
-                    {isTracking ? "Tracking Active" : "Tracking Inactive"}
+                    {isTracking ? "Tracking on" : "Tracking will start automatically"}
                   </Text>
                   {isTracking && <LiveIndicator size="sm" showLabel={false} />}
                 </View>
                 <Text style={styles.trackingDetail}>
-                  {isTracking
-                    ? hasBackgroundPermission
-                      ? "Running in background"
-                      : "Only while app is open"
-                    : "Start tracking to enable auto check-in"}
+                  {isCheckedOut
+                    ? "Shift complete — tracking stopped."
+                    : isTracking
+                      ? hasBackgroundPermission
+                        ? "Running in the background. The venue can see your live location during the shift window."
+                        : "Running while the app is open. Enable Always-allow location so the venue can see you in the background."
+                      : "Live tracking turns on automatically 1 hour before your shift starts and stays on until you check out. The venue will see your location only during this window."}
                 </Text>
               </View>
             </View>
@@ -637,34 +985,9 @@ export default function ShiftScreen() {
               </View>
             )}
 
-            {!isCheckedOut && (
-              <TouchableOpacity
-                style={[styles.trackingButton, isTracking && styles.trackingButtonStop]}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                  isTracking ? handleStopTracking() : handleStartTracking();
-                }}
-                disabled={locationLoading}
-                activeOpacity={0.8}
-              >
-                {locationLoading ? (
-                  <ActivityIndicator color={colors.text} />
-                ) : (
-                  <LinearGradient
-                    colors={isTracking ? gradients.error : gradients.accent}
-                    style={styles.trackingButtonGradient}
-                  >
-                    <Text style={styles.trackingButtonText}>
-                      {isTracking ? "⏹ Stop Tracking" : "▶ Start Tracking"}
-                    </Text>
-                  </LinearGradient>
-                )}
-              </TouchableOpacity>
-            )}
-
             {!hasPermission && (
-              <TouchableOpacity 
-                style={styles.permissionButton} 
+              <TouchableOpacity
+                style={styles.permissionButton}
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   requestPermissions();
@@ -688,8 +1011,8 @@ export default function ShiftScreen() {
         >
           <LinearGradient colors={gradients.accentSoft} style={styles.infoCardGradient}>
             <Text style={styles.infoText}>
-              ℹ️ Location tracking helps your agency monitor shift attendance. Auto check-in/out
-              will trigger when you enter or leave the venue area.
+              ℹ️ Check-in uses one GPS fix when you tap the button (same rules as the web dashboard). Always-on
+              live tracking is optional and may come in a later release.
             </Text>
           </LinearGradient>
         </Animated.View>
@@ -845,6 +1168,12 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: colors.text,
   },
+  siteLabel: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: colors.success,
+    marginTop: 6,
+  },
   venueAddress: {
     fontSize: 14,
     color: colors.textSecondary,
@@ -912,6 +1241,42 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontWeight: "500",
   },
+  attireBanner: {
+    marginTop: spacing.md,
+    backgroundColor: "rgba(59,130,246,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(96,165,250,0.35)",
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  attireBannerText: {
+    fontSize: 13,
+    color: "#93C5FD",
+    fontWeight: "600",
+  },
+  coverRecoveryCard: {
+    backgroundColor: "rgba(220,38,38,0.18)",
+    borderWidth: 1,
+    borderColor: "rgba(248,113,113,0.45)",
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+  },
+  coverRecoveryTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#FCA5A5",
+    marginBottom: spacing.sm,
+  },
+  coverRecoveryBody: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: "#FECACA",
+  },
+  coverRecoveryEmphasis: {
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
   
   // Card Title
   cardTitle: {
@@ -919,6 +1284,52 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: colors.text,
     marginBottom: spacing.lg,
+  },
+  primaryActionCard: {
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.glassBorderAccent,
+  },
+  primaryActionTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  primaryActionCaption: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    lineHeight: 20,
+    marginBottom: spacing.lg,
+  },
+  primaryActionWarning: {
+    fontSize: 14,
+    color: colors.warning,
+    lineHeight: 20,
+  },
+  primaryActionButtonWrap: {
+    borderRadius: radius.lg,
+    overflow: "hidden",
+  },
+  primaryActionButtonGradient: {
+    paddingVertical: 16,
+    paddingHorizontal: spacing.lg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  primaryActionButtonText: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: colors.textInverse,
+    textAlign: "center",
+  },
+  primaryActionLoading: {
+    paddingVertical: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.accent,
+    borderRadius: radius.lg,
   },
   
   // Status

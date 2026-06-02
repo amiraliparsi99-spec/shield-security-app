@@ -8,6 +8,7 @@ import { router } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as Haptics from "expo-haptics";
+import { useStripe } from "@stripe/stripe-react-native";
 import { colors, typography, spacing, radius } from "../../theme";
 import { supabase } from "../../lib/supabase";
 import { getProfileIdAndRole, getVenueId } from "../../lib/auth";
@@ -20,6 +21,15 @@ const ROLES = [
   { id: "door_supervisor", label: "Door Supervisor", icon: "🚪", defaultRate: 18 },
   { id: "security_guard", label: "Security Guard", icon: "🛡️", defaultRate: 16 },
   { id: "cctv_operator", label: "CCTV Operator", icon: "📹", defaultRate: 17 },
+];
+
+const ATTIRE_OPTIONS = [
+  { id: "smart_black", label: "Smart black uniform", note: "Black shirt/trousers, polished footwear, SIA displayed." },
+  { id: "formal_suit", label: "Formal suit", note: "Suit and tie or business formal presentation." },
+  { id: "venue_uniform", label: "Venue branded uniform", note: "Use venue-issued branded kit." },
+  { id: "hi_vis", label: "Hi-vis / stewarding", note: "High-visibility jacket/vest for crowd control areas." },
+  { id: "tactical_ppe", label: "Tactical / PPE", note: "Boots, utility belt, and role-appropriate PPE." },
+  { id: "smart_casual", label: "Smart casual", note: "Clean smart-casual attire per venue policy." },
 ];
 
 type RoleSelection = { roleId: string; count: number; rate: number };
@@ -135,7 +145,17 @@ function EventStep({
 }
 
 // ─── Step 2: Staff Requirements (multi-role) ───
-function StaffStep({ roles, setRoles }: { roles: RoleSelection[]; setRoles: (r: RoleSelection[]) => void }) {
+function StaffStep({
+  roles,
+  setRoles,
+  attireRequirement,
+  setAttireRequirement,
+}: {
+  roles: RoleSelection[];
+  setRoles: (r: RoleSelection[]) => void;
+  attireRequirement: string;
+  setAttireRequirement: (v: string) => void;
+}) {
   const toggleRole = (roleId: string) => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const exists = roles.find((r) => r.roleId === roleId);
@@ -226,6 +246,29 @@ function StaffStep({ roles, setRoles }: { roles: RoleSelection[]; setRoles: (r: 
       })}
 
       {/* Brief notes */}
+      <Text style={[s.label, { marginTop: spacing.lg }]}>Required Attire</Text>
+      <View style={s.roleChipRow}>
+        {ATTIRE_OPTIONS.map((opt) => {
+          const active = attireRequirement === opt.id;
+          return (
+            <TouchableOpacity
+              key={opt.id}
+              style={[s.roleChip, active && s.roleChipActive]}
+              onPress={() => setAttireRequirement(opt.id)}
+              activeOpacity={0.75}
+            >
+              <Text style={[s.roleChipText, active && s.roleChipTextActive]}>{opt.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <View style={s.attireNotice}>
+        <Text style={s.attireNoticeTitle}>🔔 Guard notification preview</Text>
+        <Text style={s.attireNoticeText}>
+          Attire required: {ATTIRE_OPTIONS.find((a) => a.id === attireRequirement)?.label || "Smart black uniform"}.
+        </Text>
+      </View>
+
       <Text style={[s.label, { marginTop: spacing.lg }]}>Brief Notes (optional)</Text>
       <TextInput
         style={[s.field, { minHeight: 70, textAlignVertical: "top" }]}
@@ -338,11 +381,11 @@ function AssignStep({
 
 // ─── Step 4: Review ───
 function ReviewStep({
-  eventName, eventDate, startTime, endTime, roles, notes, setNotes,
+  eventName, eventDate, startTime, endTime, roles, notes, setNotes, attireRequirement,
   postToBoard, selectSpecific, selectedStaffCount,
 }: {
   eventName: string; eventDate: Date; startTime: Date; endTime: Date;
-  roles: RoleSelection[]; notes: string; setNotes: (s: string) => void;
+  roles: RoleSelection[]; notes: string; setNotes: (s: string) => void; attireRequirement: string;
   postToBoard: boolean; selectSpecific: boolean; selectedStaffCount: number;
 }) {
   const hours = Math.max(0, (endTime.getTime() - startTime.getTime()) / 3_600_000);
@@ -350,6 +393,7 @@ function ReviewStep({
   const fee = subtotal * 0.05;
   const total = subtotal + fee;
   const totalStaff = roles.reduce((sum, r) => sum + r.count, 0);
+  const attireLabel = ATTIRE_OPTIONS.find((a) => a.id === attireRequirement)?.label || "Smart black uniform";
   const assignLabel = postToBoard && selectSpecific
     ? "Job Board + Specific Staff"
     : postToBoard ? "Job Board (all guards notified)" : `Specific Staff (${selectedStaffCount} selected)`;
@@ -392,6 +436,14 @@ function ReviewStep({
         </View>
         <View style={s.reviewDiv} />
         <View style={s.reviewRow}>
+          <Text style={s.reviewIcon}>👔</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={s.reviewLbl}>Attire requirement</Text>
+            <Text style={s.reviewVal}>{attireLabel}</Text>
+          </View>
+        </View>
+        <View style={s.reviewDiv} />
+        <View style={s.reviewRow}>
           <Text style={s.reviewIcon}>📋</Text>
           <View style={{ flex: 1 }}>
             <Text style={s.reviewLbl}>Assignment</Text>
@@ -410,14 +462,20 @@ function ReviewStep({
           <Text style={s.priceVal}>£{subtotal.toFixed(2)}</Text>
         </View>
         <View style={s.priceRow}>
-          <Text style={s.priceLbl}>Guard fee (from guard&apos;s pay)</Text>
+          <Text style={s.priceLbl}>Platform fee (5%)</Text>
           <Text style={s.priceVal}>£{fee.toFixed(2)}</Text>
         </View>
         <View style={{ height: 1, backgroundColor: "rgba(255,255,255,0.1)", marginVertical: spacing.sm }} />
         <View style={s.priceRow}>
-          <Text style={{ ...typography.title, color: colors.text }}>Estimated Total</Text>
+          <Text style={{ ...typography.title, color: colors.text }}>Total to Pay</Text>
           <Text style={{ ...typography.title, color: colors.accent, fontSize: 20 }}>£{total.toFixed(2)}</Text>
         </View>
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "center", marginTop: spacing.md, backgroundColor: "rgba(45,212,191,0.08)", borderRadius: radius.md, padding: spacing.md }}>
+        <Text style={{ fontSize: 16, marginRight: spacing.sm }}>🔒</Text>
+        <Text style={{ ...typography.caption, color: colors.textMuted, flex: 1 }}>
+          Secure payment via Stripe. You&apos;ll be prompted to enter your card details on the next step.
+        </Text>
       </View>
     </View>
   );
@@ -439,11 +497,11 @@ function ConfirmationStep() {
       <LinearGradient colors={["rgba(45,212,191,0.2)", "rgba(45,212,191,0.05)"]} style={s.confirmCircle}>
         <Text style={{ fontSize: 48 }}>🎉</Text>
       </LinearGradient>
-      <Text style={s.confirmTitle}>Job Posted!</Text>
-      <Text style={s.confirmText}>Your booking has been created and all security guards have been notified. They can now claim shifts from the job board.</Text>
+      <Text style={s.confirmTitle}>Payment Successful!</Text>
+      <Text style={s.confirmText}>Your booking has been paid and created. All security guards have been notified and can now claim shifts from the job board.</Text>
       <View style={s.confirmInfo}>
-        <Text style={{ fontSize: 16, marginRight: spacing.sm }}>📧</Text>
-        <Text style={{ ...typography.caption, color: colors.accent }}>Check your email for confirmation details</Text>
+        <Text style={{ fontSize: 16, marginRight: spacing.sm }}>✅</Text>
+        <Text style={{ ...typography.caption, color: colors.accent }}>Payment processed securely via Stripe</Text>
       </View>
     </Animated.View>
   );
@@ -452,6 +510,7 @@ function ConfirmationStep() {
 // ─── Main Screen ───
 export default function NewBookingScreen() {
   const insets = useSafeAreaInsets();
+  const { initPaymentSheet, presentPaymentSheet } = useStripe();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const slideAnim = useRef(new Animated.Value(0)).current;
@@ -462,6 +521,7 @@ export default function NewBookingScreen() {
   const [endTime, setEndTime] = useState(new Date(Date.now() + 6 * 3_600_000));
   const [roles, setRoles] = useState<RoleSelection[]>([{ roleId: "door_supervisor", count: 2, rate: 18 }]);
   const [notes, setNotes] = useState("");
+  const [attireRequirement, setAttireRequirement] = useState("smart_black");
   const [postToBoard, setPostToBoard] = useState(true);
   const [selectSpecific, setSelectSpecific] = useState(false);
   const [selectedStaff, setSelectedStaff] = useState<string[]>([]);
@@ -507,6 +567,8 @@ export default function NewBookingScreen() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Please sign in");
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Session expired — please sign in again");
       const profile = await getProfileIdAndRole(supabase, user.id);
       if (!profile) throw new Error("Profile not found");
       const venueId = await getVenueId(supabase, profile.profileId);
@@ -514,10 +576,61 @@ export default function NewBookingScreen() {
 
       const start = new Date(eventDate); start.setHours(startTime.getHours(), startTime.getMinutes(), 0, 0);
       const end = new Date(eventDate); end.setHours(endTime.getHours(), endTime.getMinutes(), 0, 0);
-      const hours = (end.getTime() - start.getTime()) / 3_600_000;
-      const totalStaff = roles.reduce((sum, r) => sum + r.count, 0);
-      const subtotalPence = roles.reduce((sum, r) => sum + r.count * r.rate * hours * 100, 0);
-      const feePence = Math.round(subtotalPence * 0.05);
+      let hours = (end.getTime() - start.getTime()) / 3_600_000;
+      if (hours <= 0) hours += 24;
+      const scheduledEnd = new Date(start);
+      scheduledEnd.setHours(endTime.getHours(), endTime.getMinutes(), 0, 0);
+      if (scheduledEnd <= start) scheduledEnd.setDate(scheduledEnd.getDate() + 1);
+      if (scheduledEnd.getTime() <= Date.now()) {
+        throw new Error("Shift must end in the future. Please choose a later time or date.");
+      }
+      const subtotalPounds = roles.reduce((sum, r) => sum + r.count * r.rate * hours, 0);
+      const feePounds = subtotalPounds * 0.05;
+      const grandTotalPounds = subtotalPounds + feePounds;
+      const totalPence = Math.round(grandTotalPounds * 100);
+      const attireLabel = ATTIRE_OPTIONS.find((a) => a.id === attireRequirement)?.label || "Smart black uniform";
+      const attireNote = `Attire requirement: ${attireLabel}`;
+      const bookingNotes = [notes?.trim(), attireNote].filter(Boolean).join("\n");
+
+      if (totalPence < 100) throw new Error("Booking total must be at least £1.00");
+
+      // ── Step 1: Create PaymentIntent via API ──
+      const apiBase = getApiBaseUrl();
+      const piResponse = await fetch(`${apiBase}/api/stripe/booking-payment`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          amount_pence: totalPence,
+          event_name: eventName || "Security Booking",
+          venue_id: venueId,
+        }),
+      });
+      const piData = await piResponse.json();
+      if (!piResponse.ok) throw new Error(piData.error || "Failed to create payment");
+
+      // ── Step 2: Initialize & present PaymentSheet ──
+      const { error: initError } = await initPaymentSheet({
+        paymentIntentClientSecret: piData.client_secret,
+        merchantDisplayName: "Shield HQ",
+        style: "alwaysDark",
+        returnURL: "shield://booking/complete",
+      });
+      if (initError) throw new Error(initError.message);
+
+      const { error: sheetError } = await presentPaymentSheet();
+      if (sheetError) {
+        if (sheetError.code === "Canceled") {
+          setLoading(false);
+          return;
+        }
+        throw new Error(sheetError.message);
+      }
+
+      // ── Step 3: Payment succeeded — create booking in DB ──
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
       const canonicalStaffRequirements = toCanonicalStaffRequirements(
         roles.map((r) => ({ role: r.roleId, count: r.count, rate: r.rate }))
@@ -530,15 +643,17 @@ export default function NewBookingScreen() {
         start_time: startTime.toTimeString().slice(0, 5),
         end_time: endTime.toTimeString().slice(0, 5),
         status: "pending",
-        brief_notes: notes || null,
+        brief_notes: bookingNotes,
         staff_requirements: canonicalStaffRequirements,
-        estimated_total: Math.round(subtotalPence + feePence),
-        platform_fee: Math.round(feePence),
+        estimated_total: Math.round(grandTotalPounds * 100) / 100,
+        platform_fee: Math.round(feePounds * 100) / 100,
         auto_assign: postToBoard,
+        payment_status: "paid",
+        stripe_payment_intent_id: piData.payment_intent_id,
       }).select("id").single();
       if (error) throw error;
 
-      // Always create shift rows so jobs are visible on guard-side boards.
+      // ── Step 4: Create shifts ──
       if (bookingRow?.id) {
         const startAt = new Date(eventDate);
         startAt.setHours(startTime.getHours(), startTime.getMinutes(), 0, 0);
@@ -593,16 +708,11 @@ export default function NewBookingScreen() {
           if (shiftsErr) throw shiftsErr;
         }
 
-        // Trigger Uber-style popup for verified guards.
-        // Strategy: try the server API first; if that fails, fall back to
-        // creating shift_offers directly via Supabase service-role admin endpoint.
+        // ── Step 5: Notify guards ──
         if (unassignedShiftCount > 0) {
-          const apiBase = getApiBaseUrl();
           let notified = false;
 
-          // Attempt 1: call notify-guards API (works when Next.js dev server is reachable)
           try {
-            const { data: { session } } = await supabase.auth.getSession();
             if (session?.access_token) {
               const controller = new AbortController();
               const timeout = setTimeout(() => controller.abort(), 5000);
@@ -618,7 +728,9 @@ export default function NewBookingScreen() {
               clearTimeout(timeout);
               if (res.ok) {
                 const data = await res.json();
-                notified = !!data?.success;
+                const offersCreated = Number(data?.offers_created ?? 0);
+                const guardsNotified = Number(data?.guards_notified ?? 0);
+                notified = !!data?.success && offersCreated > 0 && guardsNotified > 0;
                 console.log("[Booking] notify-guards OK:", data?.guards_notified, "guards");
               }
             }
@@ -626,7 +738,6 @@ export default function NewBookingScreen() {
             console.warn("[Booking] notify-guards unreachable, trying admin fallback:", e);
           }
 
-          // Attempt 2: admin create_offers endpoint (doesn't need auth, uses service role)
           if (!notified) {
             try {
               const controller2 = new AbortController();
@@ -648,10 +759,8 @@ export default function NewBookingScreen() {
             }
           }
 
-          // Attempt 3: create shift_offers directly via Supabase (last resort)
           if (!notified) {
             try {
-              console.log("[Booking] Attempting direct Supabase shift_offers creation...");
               const { data: verifiedRows } = await supabase
                 .from("verifications")
                 .select("owner_id")
@@ -694,6 +803,25 @@ export default function NewBookingScreen() {
               console.warn("[Booking] Direct offer creation failed:", directErr);
             }
           }
+
+          try {
+            const { data: notifyUsers } = await supabase
+              .from("personnel")
+              .select("user_id")
+              .eq("is_active", true);
+            const rows = (notifyUsers || [])
+              .filter((p: any) => p.user_id)
+              .map((p: any) => ({
+                user_id: p.user_id,
+                type: "shift",
+                title: "New shift available",
+                body: `${eventName || "Security Booking"} • Attire: ${attireLabel}`,
+                data: { booking_id: bookingRow.id, attire_requirement: attireRequirement },
+              }));
+            if (rows.length > 0) await supabase.from("notifications").insert(rows);
+          } catch (notifyInsertErr) {
+            console.warn("[Booking] Failed to insert attire notifications:", notifyInsertErr);
+          }
         }
       }
       setStep(5);
@@ -719,9 +847,9 @@ export default function NewBookingScreen() {
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 100 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         <Animated.View style={{ transform: [{ translateX: slideAnim }] }}>
           {step === 1 && <EventStep eventName={eventName} setEventName={setEventName} eventDate={eventDate} setEventDate={setEventDate} startTime={startTime} setStartTime={setStartTime} endTime={endTime} setEndTime={setEndTime} />}
-          {step === 2 && <StaffStep roles={roles} setRoles={setRoles} />}
+          {step === 2 && <StaffStep roles={roles} setRoles={setRoles} attireRequirement={attireRequirement} setAttireRequirement={setAttireRequirement} />}
           {step === 3 && <AssignStep postToBoard={postToBoard} setPostToBoard={setPostToBoard} selectSpecific={selectSpecific} setSelectSpecific={setSelectSpecific} selectedStaff={selectedStaff} toggleStaff={toggleStaff} personnel={personnel} loadingStaff={loadingStaff} />}
-          {step === 4 && <ReviewStep eventName={eventName} eventDate={eventDate} startTime={startTime} endTime={endTime} roles={roles} notes={notes} setNotes={setNotes} postToBoard={postToBoard} selectSpecific={selectSpecific} selectedStaffCount={selectedStaff.length} />}
+          {step === 4 && <ReviewStep eventName={eventName} eventDate={eventDate} startTime={startTime} endTime={endTime} roles={roles} notes={notes} setNotes={setNotes} attireRequirement={attireRequirement} postToBoard={postToBoard} selectSpecific={selectSpecific} selectedStaffCount={selectedStaff.length} />}
           {isConfirm && <ConfirmationStep />}
         </Animated.View>
       </ScrollView>
@@ -735,7 +863,7 @@ export default function NewBookingScreen() {
             activeOpacity={0.9}
           >
             <LinearGradient colors={(!canContinue() || loading) ? ["#555", "#444"] : [colors.accent, "#1fa89e"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={s.primaryBtnInner}>
-              <Text style={s.primaryBtnText}>{loading ? "Posting Job..." : step === 4 ? "Confirm Booking" : step === 3 ? "Next: Review →" : step === 2 ? "Next: Assign Staff →" : "Continue"}</Text>
+              <Text style={s.primaryBtnText}>{loading ? "Processing Payment..." : step === 4 ? "Confirm & Pay" : step === 3 ? "Next: Review →" : step === 2 ? "Next: Assign Staff →" : "Continue"}</Text>
             </LinearGradient>
           </TouchableOpacity>
         </View>
@@ -823,6 +951,16 @@ const s = StyleSheet.create({
   infoBox: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.accent, padding: spacing.md, marginTop: spacing.sm },
   infoBoxTitle: { ...typography.body, color: colors.text, fontWeight: "700", marginBottom: spacing.sm },
   infoBoxLine: { ...typography.bodySmall, color: colors.textMuted, marginBottom: 4 },
+  attireNotice: {
+    backgroundColor: "rgba(59,130,246,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(96,165,250,0.35)",
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  attireNoticeTitle: { ...typography.bodySmall, color: "#93C5FD", fontWeight: "700", marginBottom: 4 },
+  attireNoticeText: { ...typography.caption, color: colors.textSecondary },
 
   staffRow: { flexDirection: "row", alignItems: "center", backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.xs },
   staffRowSel: { borderColor: colors.secondary, backgroundColor: "rgba(167,139,250,0.08)" },

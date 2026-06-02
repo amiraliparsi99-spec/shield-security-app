@@ -47,29 +47,6 @@ export function UnreadMessagesProvider({ children }: { children: React.ReactNode
         }
       }
 
-      // Also try to count direct messages if the table exists
-      try {
-        const { data: conversations } = await supabase
-          .from("direct_conversations")
-          .select("id")
-          .or(`participant_1.eq.${userId},participant_2.eq.${userId}`);
-
-        if (conversations && conversations.length > 0) {
-          const conversationIds = conversations.map((c) => c.id);
-
-          const { count: dmCount } = await supabase
-            .from("direct_messages")
-            .select("*", { count: "exact", head: true })
-            .in("conversation_id", conversationIds)
-            .neq("sender_id", userId)
-            .eq("is_read", false);
-
-          totalUnread += dmCount || 0;
-        }
-      } catch {
-        // Direct messages table might not exist yet - that's okay
-      }
-
       setUnreadCount(totalUnread);
     } catch (e) {
       console.error("Error fetching unread count:", e);
@@ -120,21 +97,6 @@ export function UnreadMessagesProvider({ children }: { children: React.ReactNode
           event: "INSERT",
           schema: "public",
           table: "group_chat_messages",
-        },
-        (payload) => {
-          const msg = payload.new as any;
-          // If message is not from us, increment count
-          if (msg.sender_id !== userId) {
-            setUnreadCount((prev) => prev + 1);
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "direct_messages",
         },
         (payload) => {
           const msg = payload.new as any;

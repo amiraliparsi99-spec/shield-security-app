@@ -195,6 +195,17 @@ export function setupNotificationDeepLinks(
       return;
     }
 
+    // ~2h attendance confirmation (cron) — open shift detail
+    if (
+      data.type === "shift_reminder" &&
+      data.reminder_kind === "attendance_confirm_2h" &&
+      data.shift_id &&
+      typeof data.shift_id === "string"
+    ) {
+      navigate(`/shift/${data.shift_id}`);
+      return;
+    }
+
     // Incoming call notification — handled by CallContext
     // The app will show the incoming call modal automatically via Supabase Realtime
     // This is just for when the user taps the notification

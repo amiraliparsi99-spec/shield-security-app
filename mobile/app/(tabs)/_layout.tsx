@@ -10,6 +10,8 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: styles.tabBarHidden, // Hide default tab bar
+        // Prevent white gaps above/below tab screens (status bar + home indicator).
+        sceneStyle: { backgroundColor: colors.background },
       }}
       tabBar={(props) => <PremiumTabBar {...props} />}
     >

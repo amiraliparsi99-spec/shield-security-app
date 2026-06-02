@@ -5,10 +5,11 @@
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useState, useRef } from "react";
 import {
   ActivityIndicator,
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -30,7 +31,6 @@ import {
 } from "../../lib/auth";
 import { colors, gradients, typography, spacing, radius } from "../../theme";
 import { getPricingBreakdown } from "../../lib/pricing";
-import { ShieldAI, ShieldAIButton } from "../../components/ai";
 import {
   GreetingHeader,
   QuickActions,
@@ -48,6 +48,27 @@ import {
   EnhancedNoShift,
   QuickActionButton,
 } from "../../components/home/EnhancedDashboard";
+import { GuestGate } from "../../components/auth/GuestGate";
+import { LocationPermissionBanner } from "../../components/auth/LocationPermissionBanner";
+
+function personnelInitials(name: string | null | undefined): string {
+  const n = (name || "?").trim();
+  if (!n) return "?";
+  const parts = n.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0].charAt(0)}${parts[1].charAt(0)}`.toUpperCase();
+  }
+  return n.slice(0, 2).toUpperCase();
+}
+
+function normalizeDisplayName(name: string | null | undefined): string | null {
+  const raw = (name || "").trim();
+  if (!raw) return null;
+  return raw
+    .split(/\s+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
 
 const { width } = Dimensions.get("window");
 
@@ -174,6 +195,7 @@ type Shift = {
   actual_end: string | null;
   status: string;
   venue_confirmed: boolean;
+  total_pay?: number | null;
   venue_name?: string;
   event_name?: string;
   event_date?: string;
@@ -181,6 +203,14 @@ type Shift = {
 
 function formatMoney(rate: number): string {
   return `£${(rate / 100).toFixed(0)}`;
+}
+
+/** YYYY-MM-DD in the device local timezone (avoid comparing UTC calendar days). */
+function localDateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function isToday(dateStr: string): boolean {
@@ -194,6 +224,14 @@ function isToday(dateStr: string): boolean {
 }
 
 export default function AccountTab() {
+  return (
+    <GuestGate feature="account" redirectAfter="/(tabs)/account" showBackLink={false}>
+      <AccountTabContent />
+    </GuestGate>
+  );
+}
+
+function AccountTabContent() {
   const insets = useSafeAreaInsets();
   const [guestRole, setGuestRole] = useState<string | null>(null);
   const [hasSession, setHasSession] = useState(false);
@@ -205,10 +243,18 @@ export default function AccountTab() {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [showAI, setShowAI] = useState(false);
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [personnelId, setPersonnelId] = useState<string | null>(null);
   const [activeVenueTab, setActiveVenueTab] = useState("overview");
+  const skipFocusReloadRef = useRef(true);
+  const [personnelMeta, setPersonnelMeta] = useState<{
+    shield_score: number;
+    sia_verified: boolean;
+    dbs_verified: boolean;
+    right_to_work_verified: boolean;
+  } | null>(null);
+  const [verificationStatus, setVerificationStatus] = useState<string | null>(null);
+  const [verifiedSticky, setVerifiedSticky] = useState(false);
 
   const load = useCallback(async (showRefresh = false) => {
     if (!supabase) {
@@ -228,13 +274,16 @@ export default function AccountTab() {
       setRole(null);
       setAuthRole(null);
       setBookings([]);
+      setPersonnelMeta(null);
+      setVerificationStatus(null);
+      setVerifiedSticky(false);
       setLoading(false);
       setRefreshing(false);
       return;
     }
 
     const metaRole = session.user.user_metadata?.role as string | undefined;
-    const metaName = session.user.user_metadata?.display_name as string | undefined;
+    const metaName = normalizeDisplayName(session.user.user_metadata?.display_name as string | undefined);
     setAuthRole(metaRole || null);
     setDisplayName(metaName || null);
 
@@ -243,6 +292,7 @@ export default function AccountTab() {
       setRole(metaRole || null);
       setHasProfileRecord(false);
       setBookings([]);
+      setPersonnelMeta(null);
       setLoading(false);
       setRefreshing(false);
       return;
@@ -253,11 +303,11 @@ export default function AccountTab() {
 
     if (effectiveRole === "personnel") {
       const pid = await getPersonnelId(supabase, profileData.profileId);
-      console.log("[Account] Personnel ID:", pid);
       setHasProfileRecord(!!pid);
       setPersonnelId(pid);
+      setVerificationStatus(null);
       if (!pid) {
-        console.log("[Account] No personnel ID found, showing empty state");
+        setPersonnelMeta(null);
         setBookings([]);
         setShifts([]);
         setLoading(false);
@@ -268,15 +318,40 @@ export default function AccountTab() {
       // Load personnel details
       const { data: personnelData } = await supabase
         .from("personnel")
-        .select("display_name, hourly_rate")
+        .select(
+          "display_name, hourly_rate, shield_score, sia_verified, dbs_verified, right_to_work_verified"
+        )
         .eq("id", pid)
         .single();
 
-      console.log("[Account] Personnel data:", personnelData);
-
       if (personnelData) {
-        setDisplayName(personnelData.display_name || metaName || "User");
+        setDisplayName(normalizeDisplayName(personnelData.display_name) || metaName || "User");
+        const localVerified =
+          !!personnelData.sia_verified &&
+          !!personnelData.dbs_verified &&
+          !!personnelData.right_to_work_verified;
+        if (localVerified) setVerifiedSticky(true);
+        setPersonnelMeta({
+          shield_score: typeof personnelData.shield_score === "number" ? personnelData.shield_score : 0,
+          sia_verified: !!personnelData.sia_verified,
+          dbs_verified: !!personnelData.dbs_verified,
+          right_to_work_verified: !!personnelData.right_to_work_verified,
+        });
+      } else {
+        setPersonnelMeta(null);
       }
+
+      // Authoritative verification status (verification flow writes this table).
+      const { data: vData } = await supabase
+        .from("verifications")
+        .select("status")
+        .eq("owner_type", "personnel")
+        .eq("owner_id", pid)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      setVerificationStatus(vData?.status || null);
+      if (vData?.status === "verified") setVerifiedSticky(true);
       
       // Load SHIFTS for this guard (not bookings)
       const { data: shiftsData, error: shiftsError } = await supabase
@@ -309,20 +384,20 @@ export default function AccountTab() {
         .order("scheduled_start", { ascending: true })
         .limit(50);
 
-      console.log("[Account] Shifts query result:", { shiftsData, shiftsError });
-      
       if (shiftsError) {
         console.error("Error loading shifts:", shiftsError);
       }
       
-      // Format shifts with venue info
-      const formattedShifts = (shiftsData || []).map((s: any) => ({
-        ...s,
-        venue_name: s.booking?.venues?.name || "Unknown Venue",
-        event_name: s.booking?.event_name || "Shift",
-        event_date: s.booking?.event_date,
-      }));
-      console.log("[Account] Formatted shifts:", formattedShifts.length);
+      const formattedShifts = (shiftsData || []).map((s: any) => {
+        const booking = Array.isArray(s.booking) ? s.booking[0] : s.booking;
+        const venues = booking ? (Array.isArray(booking.venues) ? booking.venues[0] : booking.venues) : null;
+        return {
+          ...s,
+          venue_name: venues?.name || "Unknown Venue",
+          event_name: booking?.event_name || "Shift",
+          event_date: booking?.event_date,
+        };
+      });
       setShifts(formattedShifts);
       
       // Also load bookings for backward compatibility
@@ -337,15 +412,19 @@ export default function AccountTab() {
         .order("event_date", { ascending: false })
         .limit(20);
       
-      const formattedBookings = (data || []).map((b: any) => ({
-        ...b,
-        rate: b.final_total ?? b.estimated_total ?? 0,
-        currency: "GBP",
-        guards_count: 0,
-        venue_name: b.venues?.name || "Unknown Venue",
-      }));
+      const formattedBookings = (data || []).map((b: any) => {
+        const venueRel = Array.isArray(b.venues) ? b.venues[0] : b.venues;
+        return {
+          ...b,
+          rate: b.final_total ?? b.estimated_total ?? 0,
+          currency: "GBP",
+          guards_count: 0,
+          venue_name: venueRel?.name || "Unknown Venue",
+        };
+      });
       setBookings(formattedBookings);
     } else if (effectiveRole === "agency") {
+      setPersonnelMeta(null);
       const aid = await getAgencyId(supabase, profileData.profileId);
       setHasProfileRecord(!!aid);
       if (!aid) {
@@ -368,12 +447,10 @@ export default function AccountTab() {
         guards_count: 0,
       })));
     } else if (effectiveRole === "venue") {
+      setPersonnelMeta(null);
       const vid = await getVenueId(supabase, profileData.profileId);
-      console.log("[Account] Venue role detected. profileId:", profileData.profileId, "venueId:", vid);
       setHasProfileRecord(!!vid);
       if (!vid) {
-        console.log("[Account] No venue ID found, showing empty state");
-
         setBookings([]);
         setLoading(false);
         setRefreshing(false);
@@ -392,6 +469,7 @@ export default function AccountTab() {
         guards_count: 0,
       })));
     } else {
+      setPersonnelMeta(null);
       setHasProfileRecord(false);
       setBookings([]);
     }
@@ -402,6 +480,23 @@ export default function AccountTab() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!hasSession) {
+      skipFocusReloadRef.current = true;
+    }
+  }, [hasSession]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasSession) return;
+      if (skipFocusReloadRef.current) {
+        skipFocusReloadRef.current = false;
+        return;
+      }
+      load(false);
+    }, [hasSession, load])
+  );
 
   const onRefresh = useCallback(() => {
     load(true);
@@ -544,27 +639,32 @@ export default function AccountTab() {
   
   // Calculate shift stats
   const now = new Date();
-  const todayStr = now.toISOString().split('T')[0];
+  const todayStr = localDateKey(now);
   const isVenueRole = effectiveRole === "venue";
-  console.log("[Account] Render: role=", effectiveRole, "isVenue=", isVenueRole, "hasProfileRecord=", hasProfileRecord, "loading=", loading);
+  const isPersonnelRole = effectiveRole === "personnel";
   
   // Filter shifts by status
   const completedShifts = shifts.filter((s) => s.status === "checked_out");
   const activeShift = shifts.find((s) => s.status === "checked_in");
-  const upcomingShifts = shifts.filter((s) => 
-    (s.status === "accepted" || s.status === "pending") && 
-    new Date(s.scheduled_start) > now
-  );
-  
-  // Today's shift - either active or upcoming today
-  const todayShift = activeShift || shifts.find((s) => {
+  const upcomingShifts = shifts.filter((s) => {
     if (s.status !== "accepted" && s.status !== "pending") return false;
-    const shiftDate = new Date(s.scheduled_start).toISOString().split('T')[0];
-    return shiftDate === todayStr;
+    // Guard against stale accepted rows whose shift window already ended.
+    return new Date(s.scheduled_end) > now;
   });
   
-  // Calculate earnings from completed shifts
-  const totalEarnings = completedShifts.reduce((sum, s) => {
+  // Today's shift - either active, or the next actionable shift today.
+  const todayShift =
+    activeShift ||
+    upcomingShifts
+      .filter((s) => localDateKey(new Date(s.scheduled_start)) === todayStr)
+      .sort(
+        (a, b) =>
+          new Date(a.scheduled_start).getTime() - new Date(b.scheduled_start).getTime()
+      )[0];
+  
+  // Calculate earnings from completed and active shifts
+  const totalEarnings = [...completedShifts, ...(activeShift ? [activeShift] : [])].reduce((sum, s) => {
+    if (s.total_pay) return sum + s.total_pay;
     const hours = s.actual_start && s.actual_end 
       ? (new Date(s.actual_end).getTime() - new Date(s.actual_start).getTime()) / 3600000
       : (new Date(s.scheduled_end).getTime() - new Date(s.scheduled_start).getTime()) / 3600000;
@@ -575,8 +675,7 @@ export default function AccountTab() {
   const past = bookings.filter((b) => b.status === "completed");
   const upcoming = bookings.filter((b) => ["pending", "confirmed"].includes(b.status));
 
-  // Quick actions for personnel
-  const quickActions = [
+  const personnelQuickActions = [
     {
       id: "checkin",
       icon: "📍",
@@ -605,13 +704,17 @@ export default function AccountTab() {
       onPress: () => router.push("/(tabs)/messages"),
     },
     {
-      id: "ai",
-      icon: "🛡️",
-      label: "Shield AI",
-      gradient: ["rgba(0, 212, 170, 0.2)", "rgba(0, 212, 170, 0.05)"] as [string, string],
-      onPress: () => setShowAI(true),
+      id: "availability",
+      icon: "📅",
+      label: "Availability",
+      badge: undefined,
+      onPress: () => router.push("/availability"),
     },
   ];
+
+  const agencyQuickActions = personnelQuickActions.filter((a) => a.id !== "availability");
+
+  const quickActions = isPersonnelRole ? personnelQuickActions : agencyQuickActions;
 
   const secondaryActions = [
     {
@@ -639,6 +742,12 @@ export default function AccountTab() {
       onPress: () => router.push("/reviews"),
     },
     {
+      id: "trophies",
+      icon: "🏆",
+      label: "Trophies",
+      onPress: () => router.push("/trophies"),
+    },
+    {
       id: "profile",
       icon: "✏️",
       label: "Edit Profile",
@@ -654,17 +763,14 @@ export default function AccountTab() {
 
   // Upcoming shifts for list (from shifts table, excluding today)
   const upcomingForList = upcomingShifts
-    .filter((s) => {
-      const shiftDate = new Date(s.scheduled_start).toISOString().split('T')[0];
-      return shiftDate !== todayStr;
-    })
-    .slice(0, 5)
+    .filter((s) => localDateKey(new Date(s.scheduled_start)) !== todayStr)
+    .slice(0, 3)
     .map((s) => {
       const hours = (new Date(s.scheduled_end).getTime() - new Date(s.scheduled_start).getTime()) / 3600000;
       return {
         id: s.id,
         venueName: s.venue_name || "Unknown Venue",
-        date: s.event_date || new Date(s.scheduled_start).toISOString().split('T')[0],
+        date: s.event_date || localDateKey(new Date(s.scheduled_start)),
         startTime: new Date(s.scheduled_start).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
         endTime: new Date(s.scheduled_end).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
         earnings: hours * (s.hourly_rate || 0),
@@ -865,39 +971,106 @@ export default function AccountTab() {
             refreshing={refreshing}
             onRefresh={onRefresh}
             tintColor={colors.accent}
+            title="Pull to refresh"
+            titleColor={colors.textMuted}
           />
         }
       >
-        {/* Enhanced Greeting Header */}
-        <EnhancedGreeting
-          name={displayName || "User"}
-          hasActiveShift={!!activeShift}
-          shiftCount={upcomingShifts.length}
-        />
+        {isPersonnelRole ? (
+          <>
+            <TouchableOpacity
+              style={styles.profileHeaderCard}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                router.push("/profile-edit");
+              }}
+              activeOpacity={0.85}
+            >
+              <LinearGradient colors={gradients.card} style={styles.profileHeaderInner}>
+                <View style={styles.profileAvatar}>
+                  <Text style={styles.profileAvatarText}>
+                    {personnelInitials(displayName)}
+                  </Text>
+                </View>
+                <View style={styles.profileHeaderBody}>
+                  <Text style={styles.profileHeaderName} numberOfLines={1}>
+                    {displayName || "Guard"}
+                  </Text>
+                  <View style={styles.profileHeaderMeta}>
+                    <View style={styles.shieldScoreBadge}>
+                      <Text style={styles.shieldScoreBadgeText}>
+                        🛡️ Shield {personnelMeta?.shield_score ?? 0}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text
+                    style={[
+                      styles.verificationStatus,
+                      verifiedSticky ||
+                      verificationStatus === "verified" ||
+                      (personnelMeta?.sia_verified &&
+                        personnelMeta?.dbs_verified &&
+                        personnelMeta?.right_to_work_verified)
+                        ? styles.verificationOk
+                        : styles.verificationPending,
+                    ]}
+                  >
+                    {verifiedSticky ||
+                    verificationStatus === "verified" ||
+                    (personnelMeta?.sia_verified &&
+                    personnelMeta?.dbs_verified &&
+                    personnelMeta?.right_to_work_verified)
+                      ? "Verified"
+                      : "Verification incomplete — tap to update"}
+                  </Text>
+                </View>
+                <Text style={styles.profileHeaderChevron}>›</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+            <LocationPermissionBanner />
+          </>
+        ) : (
+          <EnhancedGreeting
+            name={displayName || "User"}
+            hasActiveShift={!!activeShift}
+            shiftCount={upcomingShifts.length}
+          />
+        )}
 
-        {/* Quick Actions Row */}
-        <View style={styles.quickActionsRow}>
-          {quickActions.map((action, index) => (
-            <QuickActionButton
-              key={action.id}
-              icon={action.icon}
-              label={action.label}
-              onPress={action.onPress}
-              badge={action.badge}
-              gradient={action.gradient}
-              delay={index * 100}
-            />
-          ))}
-        </View>
+        {!isPersonnelRole && (
+          <View style={styles.quickActionsRow}>
+            {quickActions.map((action, index) => (
+              <QuickActionButton
+                key={action.id}
+                icon={action.icon}
+                label={action.label}
+                onPress={action.onPress}
+                badge={action.badge}
+                gradient={action.gradient}
+                delay={index * 100}
+              />
+            ))}
+          </View>
+        )}
 
-        {/* Today's Shift Card - Enhanced */}
         {role === "personnel" && (
           todayShift ? (
             <EnhancedTodayShift
               venueName={todayShift.venue_name || "Unknown Venue"}
               eventName={todayShift.event_name || "Security Shift"}
-              startTime={new Date(todayShift.scheduled_start).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-              endTime={new Date(todayShift.scheduled_end).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+              date={new Date(todayShift.scheduled_start).toLocaleDateString("en-GB", {
+                weekday: "short",
+                day: "numeric",
+                month: "short",
+              })}
+              startTime={new Date(todayShift.scheduled_start).toLocaleTimeString("en-GB", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+              endTime={new Date(todayShift.scheduled_end).toLocaleTimeString("en-GB", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
               role={todayShift.role || "Security"}
               hourlyRate={todayShift.hourly_rate || 0}
               isActive={!!activeShift}
@@ -909,7 +1082,6 @@ export default function AccountTab() {
           )
         )}
 
-        {/* Enhanced Stats Card */}
         <EnhancedStats
           earnings={Math.round(totalEarnings)}
           completed={completedShifts.length}
@@ -917,7 +1089,23 @@ export default function AccountTab() {
           onPress={() => router.push("/stats")}
         />
 
-        {/* Upcoming Shifts List */}
+        {isPersonnelRole && (
+          <View style={styles.quickActionsGrid}>
+            {quickActions.map((action, index) => (
+              <QuickActionButton
+                key={action.id}
+                icon={action.icon}
+                label={action.label}
+                onPress={action.onPress}
+                badge={action.badge}
+                gradient={action.gradient}
+                delay={index * 80}
+                columns={2}
+              />
+            ))}
+          </View>
+        )}
+
         {upcomingForList.length > 0 && (
           <View style={styles.upcomingSection}>
             <View style={styles.sectionHeader}>
@@ -937,31 +1125,77 @@ export default function AccountTab() {
           </View>
         )}
 
-        {/* Secondary Actions */}
-        <View style={styles.secondarySection}>
-          <Text style={styles.sectionTitle}>🛠️ More Actions</Text>
-          <View style={styles.secondaryGrid}>
-            {secondaryActions.map((action, index) => (
-              <TouchableOpacity
-                key={action.id}
-                style={styles.secondaryItem}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  action.onPress();
-                }}
-                activeOpacity={0.7}
-              >
-                <LinearGradient
-                  colors={gradients.card}
-                  style={styles.secondaryItemGradient}
-                >
-                  <Text style={styles.secondaryIcon}>{action.icon}</Text>
-                  <Text style={styles.secondaryLabel}>{action.label}</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            ))}
+        {isPersonnelRole ? (
+          <View style={styles.accountSectionsWrap}>
+            <Text style={styles.accountSectionHeading}>Profile and work</Text>
+            <View style={styles.accountGroup}>
+              <AccountSettingsRow
+                icon="✏️"
+                label="Edit profile"
+                onPress={() => router.push("/profile-edit")}
+                isFirst
+              />
+              <AccountSettingsRow icon="📋" label="My digital CV" onPress={() => router.push("/cv")} />
+              <AccountSettingsRow icon="📄" label="Documents" onPress={() => router.push("/documents")} />
+              <AccountSettingsRow icon="🎓" label="Training" onPress={() => router.push("/training")} />
+              <AccountSettingsRow icon="🏆" label="Trophies" onPress={() => router.push("/trophies")} />
+            </View>
+
+            <Text style={styles.accountSectionHeading}>Work preferences</Text>
+            <View style={styles.accountGroup}>
+              <AccountSettingsRow
+                icon="📅"
+                label="Availability"
+                onPress={() => router.push("/availability")}
+                isFirst
+              />
+              <AccountSettingsRow icon="🛡️" label="Shield score" onPress={() => router.push("/stats")} />
+              <AccountSettingsRow icon="⭐" label="Reviews" onPress={() => router.push("/reviews")} />
+            </View>
+
+            <Text style={styles.accountSectionHeading}>App</Text>
+            <View style={styles.accountGroup}>
+              <AccountSettingsRow
+                icon="⚙️"
+                label="Settings"
+                onPress={() => router.push("/(tabs)/settings")}
+                isFirst
+              />
+              <AccountSettingsRow
+                icon="❓"
+                label="Help center"
+                onPress={() =>
+                  Alert.alert(
+                    "Help center",
+                    "Visit help.shield-security.app for FAQs and guides."
+                  )
+                }
+              />
+            </View>
           </View>
-        </View>
+        ) : (
+          <View style={styles.secondarySection}>
+            <Text style={styles.sectionTitle}>🛠️ More Actions</Text>
+            <View style={styles.secondaryGrid}>
+              {secondaryActions.map((action) => (
+                <TouchableOpacity
+                  key={action.id}
+                  style={styles.secondaryItem}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    action.onPress();
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <LinearGradient colors={gradients.card} style={styles.secondaryItemGradient}>
+                    <Text style={styles.secondaryIcon}>{action.icon}</Text>
+                    <Text style={styles.secondaryLabel}>{action.label}</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
 
         {/* Logout Button */}
         <View style={styles.logoutSection}>
@@ -978,13 +1212,6 @@ export default function AccountTab() {
         </View>
       </ScrollView>
 
-      {/* Shield AI Modal */}
-      <ShieldAI
-        visible={showAI}
-        onClose={() => setShowAI(false)}
-        userRole={(role || authRole || "personnel") as "venue" | "personnel" | "agency"}
-        userName={displayName || undefined}
-      />
     </View>
   );
 }
@@ -1458,4 +1685,161 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: colors.error,
   },
+
+  profileHeaderCard: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.lg,
+    borderRadius: radius.xl,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+  },
+  profileHeaderInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  profileAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "rgba(0,212,170,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  profileAvatarText: {
+    color: colors.accent,
+    fontWeight: "800",
+    fontSize: 18,
+  },
+  profileHeaderBody: {
+    flex: 1,
+    minWidth: 0,
+  },
+  profileHeaderName: {
+    ...typography.title,
+    color: colors.text,
+    fontWeight: "700",
+    marginBottom: 6,
+  },
+  profileHeaderMeta: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 4,
+  },
+  shieldScoreBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(0,212,170,0.12)",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: "rgba(0,212,170,0.35)",
+  },
+  shieldScoreBadgeText: {
+    ...typography.caption,
+    color: colors.accent,
+    fontWeight: "700",
+    fontSize: 12,
+  },
+  verificationStatus: {
+    ...typography.caption,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  verificationOk: {
+    color: colors.success,
+  },
+  verificationPending: {
+    color: colors.warning,
+  },
+  profileHeaderChevron: {
+    fontSize: 22,
+    color: colors.textMuted,
+    fontWeight: "300",
+  },
+  quickActionsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    rowGap: spacing.sm,
+    columnGap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.lg,
+  },
+  accountSectionsWrap: {
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.lg,
+  },
+  accountSectionHeading: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: spacing.sm,
+    marginTop: spacing.md,
+  },
+  accountGroup: {
+    backgroundColor: "rgba(255,255,255,0.03)",
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    overflow: "hidden",
+  },
+  accountRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 14,
+    paddingHorizontal: spacing.md,
+    gap: spacing.md,
+  },
+  accountRowBorder: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.glassBorder,
+  },
+  accountRowIcon: {
+    fontSize: 20,
+    width: 28,
+    textAlign: "center",
+  },
+  accountRowLabel: {
+    ...typography.body,
+    color: colors.text,
+    flex: 1,
+  },
+  accountRowChevron: {
+    fontSize: 20,
+    color: colors.textMuted,
+    fontWeight: "300",
+  },
 });
+
+function AccountSettingsRow({
+  icon,
+  label,
+  onPress,
+  isFirst,
+}: {
+  icon: string;
+  label: string;
+  onPress: () => void;
+  isFirst?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.accountRow, !isFirst && styles.accountRowBorder]}
+      onPress={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        onPress();
+      }}
+      activeOpacity={0.75}
+    >
+      <Text style={styles.accountRowIcon}>{icon}</Text>
+      <Text style={styles.accountRowLabel}>{label}</Text>
+      <Text style={styles.accountRowChevron}>›</Text>
+    </TouchableOpacity>
+  );
+}

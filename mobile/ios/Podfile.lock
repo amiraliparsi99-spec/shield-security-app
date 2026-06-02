@@ -41,6 +41,16 @@ PODS:
   - AgoraRtcEngine_iOS/VideoCodecEnc (4.5.2)
   - AgoraRtcEngine_iOS/VirtualBackground (4.5.2)
   - AgoraRtcEngine_iOS/VQA (4.5.2)
+  - AppAuth (2.0.0):
+    - AppAuth/Core (= 2.0.0)
+    - AppAuth/ExternalUserAgent (= 2.0.0)
+  - AppAuth/Core (2.0.0)
+  - AppAuth/ExternalUserAgent (2.0.0):
+    - AppAuth/Core
+  - AppCheckCore (11.2.0):
+    - GoogleUtilities/Environment (~> 8.0)
+    - GoogleUtilities/UserDefaults (~> 8.0)
+    - PromisesObjC (~> 2.4)
   - EXApplication (7.0.8):
     - ExpoModulesCore
   - EXAV (16.0.8):
@@ -252,6 +262,12 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - ExpoAdapterGoogleSignIn (16.1.2):
+    - ExpoModulesCore
+    - GoogleSignIn (~> 9.0)
+    - React-Core
+  - ExpoAppleAuthentication (8.0.8):
+    - ExpoModulesCore
   - ExpoAsset (12.0.12):
     - ExpoModulesCore
   - ExpoBlur (15.0.8):
@@ -311,12 +327,36 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - ExpoPrint (55.0.13):
+    - ExpoModulesCore
+  - ExpoSharing (14.0.8):
+    - ExpoModulesCore
+  - ExpoWebBrowser (15.0.10):
+    - ExpoModulesCore
   - EXTaskManager (14.0.9):
     - ExpoModulesCore
     - UMAppLoader
   - EXUpdatesInterface (2.0.0):
     - ExpoModulesCore
   - FBLazyVector (0.81.5)
+  - GoogleSignIn (9.1.0):
+    - AppAuth (~> 2.0)
+    - AppCheckCore (~> 11.0)
+    - GTMAppAuth (~> 5.0)
+    - GTMSessionFetcher/Core (~> 3.3)
+  - GoogleUtilities/Environment (8.1.0):
+    - GoogleUtilities/Privacy
+  - GoogleUtilities/Logger (8.1.0):
+    - GoogleUtilities/Environment
+    - GoogleUtilities/Privacy
+  - GoogleUtilities/Privacy (8.1.0)
+  - GoogleUtilities/UserDefaults (8.1.0):
+    - GoogleUtilities/Logger
+    - GoogleUtilities/Privacy
+  - GTMAppAuth (5.0.0):
+    - AppAuth/Core (~> 2.0)
+    - GTMSessionFetcher/Core (< 4.0, >= 3.3)
+  - GTMSessionFetcher/Core (3.5.0)
   - hermes-engine (0.81.5):
     - hermes-engine/Pre-built (= 0.81.5)
   - hermes-engine/Pre-built (0.81.5)
@@ -337,6 +377,7 @@ PODS:
   - libwebp/sharpyuv (1.5.0)
   - libwebp/webp (1.5.0):
     - libwebp/sharpyuv
+  - PromisesObjC (2.4.0)
   - RCTDeprecation (0.81.5)
   - RCTRequired (0.81.5)
   - RCTTypeSafety (0.81.5):
@@ -2105,6 +2146,29 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - RNGoogleSignin (16.1.2):
+    - GoogleSignIn (~> 9.0)
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - RNReanimated (4.1.6):
     - hermes-engine
     - RCTRequired
@@ -2226,6 +2290,51 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
+  - RNSVG (15.12.1):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - RNSVG/common (= 15.12.1)
+    - Yoga
+  - RNSVG/common (15.12.1):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - RNWorklets (0.5.0):
     - hermes-engine
     - RCTRequired
@@ -2308,17 +2417,13 @@ PODS:
   - SDWebImageWebPCoder (0.14.6):
     - libwebp (~> 1.0)
     - SDWebImage/Core (~> 5.17)
-  - Stripe (25.7.1):
-    - StripeApplePay (= 25.7.1)
-    - StripeCore (= 25.7.1)
-    - StripeIssuing (= 25.7.1)
-    - StripePayments (= 25.7.1)
-    - StripePaymentsUI (= 25.7.1)
-    - StripeUICore (= 25.7.1)
-  - stripe-identity-react-native (0.6.0):
-    - React-Core
-    - StripeIdentity (~> 25.7.0)
-  - stripe-react-native (0.59.2):
+  - Stripe (24.19.0):
+    - StripeApplePay (= 24.19.0)
+    - StripeCore (= 24.19.0)
+    - StripePayments (= 24.19.0)
+    - StripePaymentsUI (= 24.19.0)
+    - StripeUICore (= 24.19.0)
+  - stripe-react-native (0.50.3):
     - hermes-engine
     - RCTRequired
     - RCTTypeSafety
@@ -2339,10 +2444,15 @@ PODS:
     - ReactCommon/turbomodule/bridging
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
-    - stripe-react-native/Core (= 0.59.2)
-    - stripe-react-native/NewArch (= 0.59.2)
+    - Stripe (~> 24.19.0)
+    - stripe-react-native/NewArch (= 0.50.3)
+    - StripeApplePay (~> 24.19.0)
+    - StripeFinancialConnections (~> 24.19.0)
+    - StripePayments (~> 24.19.0)
+    - StripePaymentSheet (~> 24.19.0)
+    - StripePaymentsUI (~> 24.19.0)
     - Yoga
-  - stripe-react-native/Core (0.59.2):
+  - stripe-react-native/NewArch (0.50.3):
     - hermes-engine
     - RCTRequired
     - RCTTypeSafety
@@ -2363,67 +2473,35 @@ PODS:
     - ReactCommon/turbomodule/bridging
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
-    - Stripe (~> 25.7.0)
-    - StripeApplePay (~> 25.7.0)
-    - StripeFinancialConnections (~> 25.7.0)
-    - StripePayments (~> 25.7.0)
-    - StripePaymentSheet (~> 25.7.0)
-    - StripePaymentsUI (~> 25.7.0)
+    - Stripe (~> 24.19.0)
+    - StripeApplePay (~> 24.19.0)
+    - StripeFinancialConnections (~> 24.19.0)
+    - StripePayments (~> 24.19.0)
+    - StripePaymentSheet (~> 24.19.0)
+    - StripePaymentsUI (~> 24.19.0)
     - Yoga
-  - stripe-react-native/NewArch (0.59.2):
-    - hermes-engine
-    - RCTRequired
-    - RCTTypeSafety
-    - React-Core
-    - React-Core-prebuilt
-    - React-debug
-    - React-Fabric
-    - React-featureflags
-    - React-graphics
-    - React-ImageManager
-    - React-jsi
-    - React-NativeModulesApple
-    - React-RCTFabric
-    - React-renderercss
-    - React-rendererdebug
-    - React-utils
-    - ReactCodegen
-    - ReactCommon/turbomodule/bridging
-    - ReactCommon/turbomodule/core
-    - ReactNativeDependencies
-    - Yoga
-  - StripeApplePay (25.7.1):
-    - StripeCore (= 25.7.1)
-  - StripeCameraCore (25.7.1):
-    - StripeCore (= 25.7.1)
-  - StripeCore (25.7.1)
-  - StripeFinancialConnections (25.7.1):
-    - StripeCore (= 25.7.1)
-    - StripeUICore (= 25.7.1)
-  - StripeIdentity (25.7.1):
-    - StripeCameraCore (= 25.7.1)
-    - StripeCore (= 25.7.1)
-    - StripeUICore (= 25.7.1)
-  - StripeIssuing (25.7.1):
-    - StripeCore (= 25.7.1)
-    - StripePayments (= 25.7.1)
-    - StripePaymentsUI (= 25.7.1)
-  - StripePayments (25.7.1):
-    - StripeCore (= 25.7.1)
-    - StripePayments/Stripe3DS2 (= 25.7.1)
-  - StripePayments/Stripe3DS2 (25.7.1):
-    - StripeCore (= 25.7.1)
-  - StripePaymentSheet (25.7.1):
-    - StripeApplePay (= 25.7.1)
-    - StripeCore (= 25.7.1)
-    - StripePayments (= 25.7.1)
-    - StripePaymentsUI (= 25.7.1)
-  - StripePaymentsUI (25.7.1):
-    - StripeCore (= 25.7.1)
-    - StripePayments (= 25.7.1)
-    - StripeUICore (= 25.7.1)
-  - StripeUICore (25.7.1):
-    - StripeCore (= 25.7.1)
+  - StripeApplePay (24.19.0):
+    - StripeCore (= 24.19.0)
+  - StripeCore (24.19.0)
+  - StripeFinancialConnections (24.19.0):
+    - StripeCore (= 24.19.0)
+    - StripeUICore (= 24.19.0)
+  - StripePayments (24.19.0):
+    - StripeCore (= 24.19.0)
+    - StripePayments/Stripe3DS2 (= 24.19.0)
+  - StripePayments/Stripe3DS2 (24.19.0):
+    - StripeCore (= 24.19.0)
+  - StripePaymentSheet (24.19.0):
+    - StripeApplePay (= 24.19.0)
+    - StripeCore (= 24.19.0)
+    - StripePayments (= 24.19.0)
+    - StripePaymentsUI (= 24.19.0)
+  - StripePaymentsUI (24.19.0):
+    - StripeCore (= 24.19.0)
+    - StripePayments (= 24.19.0)
+    - StripeUICore (= 24.19.0)
+  - StripeUICore (24.19.0):
+    - StripeCore (= 24.19.0)
   - UMAppLoader (6.0.8)
   - Yoga (0.0.0)
 
@@ -2440,6 +2518,8 @@ DEPENDENCIES:
   - expo-dev-launcher (from `../node_modules/expo-dev-launcher`)
   - expo-dev-menu (from `../node_modules/expo-dev-menu`)
   - expo-dev-menu-interface (from `../node_modules/expo-dev-menu-interface/ios`)
+  - "ExpoAdapterGoogleSignIn (from `../node_modules/@react-native-google-signin/google-signin/expo/ios`)"
+  - ExpoAppleAuthentication (from `../node_modules/expo-apple-authentication/ios`)
   - ExpoAsset (from `../node_modules/expo-asset/ios`)
   - ExpoBlur (from `../node_modules/expo-blur/ios`)
   - ExpoClipboard (from `../node_modules/expo-clipboard/ios`)
@@ -2456,6 +2536,9 @@ DEPENDENCIES:
   - ExpoLinking (from `../node_modules/expo-linking/ios`)
   - ExpoLocation (from `../node_modules/expo-location/ios`)
   - ExpoModulesCore (from `../node_modules/expo-modules-core`)
+  - ExpoPrint (from `../node_modules/expo-print/ios`)
+  - ExpoSharing (from `../node_modules/expo-sharing/ios`)
+  - ExpoWebBrowser (from `../node_modules/expo-web-browser/ios`)
   - EXTaskManager (from `../node_modules/expo-task-manager/ios`)
   - EXUpdatesInterface (from `../node_modules/expo-updates-interface/ios`)
   - FBLazyVector (from `../node_modules/react-native/Libraries/FBLazyVector`)
@@ -2530,10 +2613,11 @@ DEPENDENCIES:
   - ReactNativeDependencies (from `../node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec`)
   - "RNCAsyncStorage (from `../node_modules/@react-native-async-storage/async-storage`)"
   - "RNDateTimePicker (from `../node_modules/@react-native-community/datetimepicker`)"
+  - "RNGoogleSignin (from `../node_modules/@react-native-google-signin/google-signin`)"
   - RNReanimated (from `../node_modules/react-native-reanimated`)
   - RNScreens (from `../node_modules/react-native-screens`)
+  - RNSVG (from `../node_modules/react-native-svg`)
   - RNWorklets (from `../node_modules/react-native-worklets`)
-  - "stripe-identity-react-native (from `../node_modules/@stripe/stripe-identity-react-native`)"
   - "stripe-react-native (from `../node_modules/@stripe/stripe-react-native`)"
   - UMAppLoader (from `../node_modules/unimodules-app-loader/ios`)
   - Yoga (from `../node_modules/react-native/ReactCommon/yoga`)
@@ -2543,20 +2627,24 @@ SPEC REPOS:
     - AgoraInfra_iOS
     - AgoraIrisRTC_iOS
     - AgoraRtcEngine_iOS
+    - AppAuth
+    - AppCheckCore
+    - GoogleSignIn
+    - GoogleUtilities
+    - GTMAppAuth
+    - GTMSessionFetcher
     - libavif
     - libdav1d
     - libwebp
+    - PromisesObjC
     - SDWebImage
     - SDWebImageAVIFCoder
     - SDWebImageSVGCoder
     - SDWebImageWebPCoder
     - Stripe
     - StripeApplePay
-    - StripeCameraCore
     - StripeCore
     - StripeFinancialConnections
-    - StripeIdentity
-    - StripeIssuing
     - StripePayments
     - StripePaymentSheet
     - StripePaymentsUI
@@ -2587,6 +2675,10 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-dev-menu"
   expo-dev-menu-interface:
     :path: "../node_modules/expo-dev-menu-interface/ios"
+  ExpoAdapterGoogleSignIn:
+    :path: "../node_modules/@react-native-google-signin/google-signin/expo/ios"
+  ExpoAppleAuthentication:
+    :path: "../node_modules/expo-apple-authentication/ios"
   ExpoAsset:
     :path: "../node_modules/expo-asset/ios"
   ExpoBlur:
@@ -2619,6 +2711,12 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-location/ios"
   ExpoModulesCore:
     :path: "../node_modules/expo-modules-core"
+  ExpoPrint:
+    :path: "../node_modules/expo-print/ios"
+  ExpoSharing:
+    :path: "../node_modules/expo-sharing/ios"
+  ExpoWebBrowser:
+    :path: "../node_modules/expo-web-browser/ios"
   EXTaskManager:
     :path: "../node_modules/expo-task-manager/ios"
   EXUpdatesInterface:
@@ -2766,14 +2864,16 @@ EXTERNAL SOURCES:
     :path: "../node_modules/@react-native-async-storage/async-storage"
   RNDateTimePicker:
     :path: "../node_modules/@react-native-community/datetimepicker"
+  RNGoogleSignin:
+    :path: "../node_modules/@react-native-google-signin/google-signin"
   RNReanimated:
     :path: "../node_modules/react-native-reanimated"
   RNScreens:
     :path: "../node_modules/react-native-screens"
+  RNSVG:
+    :path: "../node_modules/react-native-svg"
   RNWorklets:
     :path: "../node_modules/react-native-worklets"
-  stripe-identity-react-native:
-    :path: "../node_modules/@stripe/stripe-identity-react-native"
   stripe-react-native:
     :path: "../node_modules/@stripe/stripe-react-native"
   UMAppLoader:
@@ -2785,6 +2885,8 @@ SPEC CHECKSUMS:
   AgoraInfra_iOS: 3691b2b277a1712a35ae96de25af319de0d73d08
   AgoraIrisRTC_iOS: eab58c126439adf5ec99632828a558ea216860da
   AgoraRtcEngine_iOS: 97e2398a2addda9057815a2a583a658e36796ff6
+  AppAuth: 1c1a8afa7e12f2ec3a294d9882dfa5ab7d3cb063
+  AppCheckCore: cc8fd0a3a230ddd401f326489c99990b013f0c4f
   EXApplication: 1e98d4b1dccdf30627f92917f4b2c5a53c330e5f
   EXAV: b60fcf142fae6684d295bc28cd7cfcb3335570ea
   EXConstants: 8aebf75a1f4087bd9d5c4e8e45b57daf6dab2c29
@@ -2797,6 +2899,8 @@ SPEC CHECKSUMS:
   expo-dev-launcher: a4f4cdef064ab1fb8621e5b8c7c457cd6e9568c3
   expo-dev-menu: 05b18812110c175814c6af0d09dd658abcc5e00d
   expo-dev-menu-interface: 600df12ea01efecdd822daaf13cc0ac091775533
+  ExpoAdapterGoogleSignIn: ab4d9fc38cb91077a4138d178395525ec65d0c2e
+  ExpoAppleAuthentication: 9413ae9a5e631a424cc04c1b13b0694dbab7d594
   ExpoAsset: f867e55ceb428aab99e1e8c082b5aee7c159ea18
   ExpoBlur: b90747a3f22a8b6ceffd9cb0dc41a4184efdc656
   ExpoClipboard: b36b287d8356887844bb08ed5c84b5979bb4dd1e
@@ -2813,13 +2917,21 @@ SPEC CHECKSUMS:
   ExpoLinking: 8f0aaf69aa56f832913030503b6263dc6f647f37
   ExpoLocation: d5b61cb4970fa982e39ca94246a206a0c3b812ca
   ExpoModulesCore: f3da4f1ab5a8375d0beafab763739dbee8446583
+  ExpoPrint: 3b79c16d6778b4a89fb4eb9cc346925690cb0c74
+  ExpoSharing: 0d983394ed4a80334bab5a0d5384f75710feb7e8
+  ExpoWebBrowser: 17b064c621789e41d4816c95c93f429b84971f52
   EXTaskManager: 6f1a66e4c8cc6df6e24c3d90928704bc3013eae5
   EXUpdatesInterface: 5adf50cb41e079c861da6d9b4b954c3db9a50734
   FBLazyVector: e95a291ad2dadb88e42b06e0c5fb8262de53ec12
+  GoogleSignIn: fcee2257188d5eda57a5e2b6a715550ffff9206d
+  GoogleUtilities: 00c88b9a86066ef77f0da2fab05f65d7768ed8e1
+  GTMAppAuth: 217a876b249c3c585a54fd6f73e6b58c4f5c4238
+  GTMSessionFetcher: 5aea5ba6bd522a239e236100971f10cb71b96ab6
   hermes-engine: 9f4dfe93326146a1c99eb535b1cb0b857a3cd172
   libavif: 5f8e715bea24debec477006f21ef9e95432e254d
   libdav1d: 23581a4d8ec811ff171ed5e2e05cd27bad64c39f
   libwebp: 02b23773aedb6ff1fd38cec7a77b81414c6842a8
+  PromisesObjC: f5707f49cb48b9636751c5b2e7d227e43fba9f47
   RCTDeprecation: 943572d4be82d480a48f4884f670135ae30bf990
   RCTRequired: 8f3cfc90cc25cf6e420ddb3e7caaaabc57df6043
   RCTTypeSafety: 16a4144ca3f959583ab019b57d5633df10b5e97c
@@ -2889,26 +3001,24 @@ SPEC CHECKSUMS:
   ReactNativeDependencies: 71ce9c28beb282aa720ea7b46980fff9669f428a
   RNCAsyncStorage: 3a4f5e2777dae1688b781a487923a08569e27fe4
   RNDateTimePicker: be0e44bcb9ed0607c7c5f47dbedd88cf091f6791
+  RNGoogleSignin: 104dd7238c56fe354e4b0a8fd267f866039ffdf3
   RNReanimated: e5c702a3e24cc1c68b2de67671713f35461678f4
   RNScreens: d8d6f1792f6e7ac12b0190d33d8d390efc0c1845
+  RNSVG: 31d6639663c249b7d5abc9728dde2041eb2a3c34
   RNWorklets: dbe3b38c156d691a161ab2296859d3dec47cee45
   SDWebImage: e9fc87c1aab89a8ab1bbd74eba378c6f53be8abf
   SDWebImageAVIFCoder: afe194a084e851f70228e4be35ef651df0fc5c57
   SDWebImageSVGCoder: 15a300a97ec1c8ac958f009c02220ac0402e936c
   SDWebImageWebPCoder: e38c0a70396191361d60c092933e22c20d5b1380
-  Stripe: cba7aef14749955c8bbcbe71ecebd84088c6b364
-  stripe-identity-react-native: 9bb62c03867e54f6b13da328f3763bba9e675666
-  stripe-react-native: ea61df292aaa181fe49b30757e0265b4d2574973
-  StripeApplePay: c847abfd5297a42201e00f2609dd09ae791068b4
-  StripeCameraCore: eff756b0986e65b614055c2aff7602024e6423ad
-  StripeCore: dcdd533cf80ff202e54558ab465d38551985e523
-  StripeFinancialConnections: 9e4e4d5248e7a7949a27841e0c641d98152d5ab3
-  StripeIdentity: 7a08bc259c3f79b4f279628a23820697be8d6672
-  StripeIssuing: 887daedd9541b47961ac7a4e89e702d72f0db3f2
-  StripePayments: 6b39042c8e945fe38a83ea4db1370216ca6a1e0d
-  StripePaymentSheet: d6670b3b5d728c6d20df08e3c3e0b42b9fcc0796
-  StripePaymentsUI: d3fefb50d7dd7f227a8171c7244b632bbe5f8139
-  StripeUICore: 013c8874f1a4eb7c0ff142c40bf3876b3888ad4b
+  Stripe: d1824162e4bcb6ead10401a0dc8e8a3d5ffee41f
+  stripe-react-native: eb0d6fac02a31029c3c3d0fc43e6b25dbf9c61fd
+  StripeApplePay: eb64705d3c919492b1b28876652fd0aca2db38cc
+  StripeCore: b5bee05167f0c8ccce936244a031a9972fdeade8
+  StripeFinancialConnections: fd6c661f86f47b1d26a32f588b3a0b09826aba84
+  StripePayments: cf00b3c85cd7b57e40f622493f81bdf361cb3982
+  StripePaymentSheet: b126816213ae4f56ff4525ad25f94bb985a43e27
+  StripePaymentsUI: 05d4be35b34f821d5ddc8617dee04219f3646253
+  StripeUICore: d07bd63a4b53dee8cab4d6f81ce5a7ab3e28511e
   UMAppLoader: 145337733539f9af9b3dd97eeaa7f3bd97cacb23
   Yoga: 5934998fbeaef7845dbf698f698518695ab4cd1a
 

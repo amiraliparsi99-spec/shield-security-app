@@ -18,9 +18,9 @@ import { colors, typography, spacing, radius } from "../../theme";
 import { supabase } from "../../lib/supabase";
 import { getProfileIdAndRole, getVenueId } from "../../lib/auth";
 import { getPricingBreakdown } from "../../lib/pricing";
+import { GuestGate } from "../../components/auth/GuestGate";
 
-let WebView: any = null;
-try { WebView = require("react-native-webview").default; } catch {}
+import * as WebBrowser from "expo-web-browser";
 
 interface Wallet {
   available_balance: number;
@@ -284,6 +284,14 @@ const API_BASE = process.env.EXPO_PUBLIC_API_URL || "http://localhost:3000";
 const API_FETCH_TIMEOUT_MS = 8000;
 
 export default function PaymentsTab() {
+  return (
+    <GuestGate feature="payments" redirectAfter="/(tabs)/payments">
+      <PaymentsTabContent />
+    </GuestGate>
+  );
+}
+
+function PaymentsTabContent() {
   const insets = useSafeAreaInsets();
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -292,7 +300,7 @@ export default function PaymentsTab() {
   const [pendingPayouts, setPendingPayouts] = useState<PayoutRequest[]>([]);
   const [onboardingComplete, setOnboardingComplete] = useState(false);
   const [hasStripeAccount, setHasStripeAccount] = useState(false);
-  const [stripeConnectOnboardingUrl, setStripeConnectOnboardingUrl] = useState<string | null>(null);
+  
   const [role, setRole] = useState<string | null>(null);
   const [venuePayments, setVenuePayments] = useState<VenuePaymentItem[]>([]);
 
@@ -461,11 +469,6 @@ export default function PaymentsTab() {
     setIsSubmittingBank(true);
     if (!supabase) return;
     try {
-      if (!WebView) {
-        setBankError("Stripe onboarding needs a development build (native in-app WebView).");
-        return;
-      }
-
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
         setBankError("Please log in first");
@@ -497,8 +500,13 @@ export default function PaymentsTab() {
         return;
       }
 
-      setStripeConnectOnboardingUrl(data.onboarding_url);
       setHasStripeAccount(true);
+
+      // Open Stripe onboarding in the system browser (works in Expo Go)
+      await WebBrowser.openBrowserAsync(data.onboarding_url);
+
+      // When user returns from browser, refresh data to check if onboarding completed
+      fetchData();
     } catch (err: any) {
       setBankError(err.message || "Network error. Please try again.");
     } finally {
@@ -633,30 +641,7 @@ export default function PaymentsTab() {
           </View>
         </ScrollView>
 
-        {stripeConnectOnboardingUrl && WebView && (
-          <Modal visible animationType="slide" onRequestClose={() => setStripeConnectOnboardingUrl(null)}>
-            <View style={{ flex: 1, backgroundColor: colors.background }}>
-              <View style={styles.modalContentHeader}>
-                <Text style={styles.modalTitle}>Connect to Stripe</Text>
-                <TouchableOpacity onPress={() => setStripeConnectOnboardingUrl(null)} style={styles.modalCloseBtn}>
-                  <Text style={styles.modalCloseBtnText}>Done</Text>
-                </TouchableOpacity>
-              </View>
-              <WebView
-                source={{ uri: stripeConnectOnboardingUrl }}
-                style={{ flex: 1 }}
-                javaScriptEnabled
-                onNavigationStateChange={(navState: any) => {
-                  const url = navState?.url || "";
-                  if (url.includes("shield://payments") || url.includes("/api/stripe/connect/complete")) {
-                    setStripeConnectOnboardingUrl(null);
-                    fetchData();
-                  }
-                }}
-              />
-            </View>
-          </Modal>
-        )}
+        
       </View>
     );
   }
