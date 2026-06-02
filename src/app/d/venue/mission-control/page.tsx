@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSupabase } from "@/hooks/useSupabase";
+import Link from "next/link";
 import {
-  getUserGroupChats,
+  getMissionControlChats,
   getGroupChat,
   getGroupChatMessages,
   sendGroupMessage,
@@ -16,12 +17,35 @@ import {
   type GroupChatMember,
   type GroupChatMessage,
 } from "@/lib/db/mission-control";
+import {
+  fetchBookingStatusesForIds,
+  fetchShiftSummariesForBookings,
+  matchesPassedSubFilter,
+  venueMissionMeta,
+  type MissionBucket,
+  type PassedSubFilter,
+  type ShiftMissionSummary,
+} from "@/lib/mission-control/chatBuckets";
 import { CallButton } from "@/components/calling/CallButton";
 
 export default function MissionControlPage() {
   const supabase = useSupabase();
   const [chats, setChats] = useState<GroupChat[]>([]);
+  const [shiftsByBooking, setShiftsByBooking] = useState<
+    Record<string, ShiftMissionSummary[]>
+  >({});
+  const [bookingById, setBookingById] = useState<Record<string, { status: string }>>(
+    {}
+  );
+  const [bucketTab, setBucketTab] = useState<MissionBucket>("live");
+  const [passedSubFilter, setPassedSubFilter] = useState<PassedSubFilter>("all");
   const [activeChat, setActiveChat] = useState<GroupChat | null>(null);
+  const [activeShiftCover, setActiveShiftCover] = useState<{
+    searching: number;
+    failed: number;
+    replacementFound: number;
+    note: string | null;
+  } | null>(null);
   const [members, setMembers] = useState<GroupChatMember[]>([]);
   const [messages, setMessages] = useState<GroupChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState("");
@@ -31,6 +55,7 @@ export default function MissionControlPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [requestingReport, setRequestingReport] = useState(false);
+  const didPickInitialChat = useRef(false);
 
   // Get current user
   useEffect(() => {
@@ -39,24 +64,22 @@ export default function MissionControlPage() {
     });
   }, [supabase]);
 
-  // Load chats
-  useEffect(() => {
-    const loadChats = async () => {
-      setLoading(true);
-      try {
-        const data = await getUserGroupChats(supabase);
-        setChats(data as GroupChat[]);
-        if (data.length > 0 && !activeChat) {
-          selectChat(data[0] as GroupChat);
+  const visibleChats = useMemo(
+    () =>
+      chats.filter((c) => {
+        const meta = venueMissionMeta(
+          c.booking_id,
+          c.booking_id ? bookingById[c.booking_id]?.status : undefined,
+          c.booking_id ? shiftsByBooking[c.booking_id] : undefined
+        );
+        if (bucketTab === "live") return meta.bucket === "live";
+        if (!matchesPassedSubFilter(meta.bucket, meta.passedKind, passedSubFilter)) {
+          return false;
         }
-      } catch (e) {
-        console.error("Error loading chats:", e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadChats();
-  }, [supabase]);
+        return meta.bucket === "passed";
+      }),
+    [chats, bucketTab, passedSubFilter, shiftsByBooking, bookingById]
+  );
 
   // Subscribe to messages when chat is selected
   useEffect(() => {
@@ -79,6 +102,11 @@ export default function MissionControlPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => {
+    if (!activeChat || !userId) return;
+    ensureRatingPrompts(activeChat, messages);
+  }, [activeChat, userId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const selectChat = async (chat: GroupChat) => {
     setActiveChat(chat);
     
@@ -90,7 +118,91 @@ export default function MissionControlPage() {
     setMembers(chatData.members);
     setMessages(messagesData);
     markMessagesAsRead(supabase, chat.id);
+    ensureRatingPrompts(chat, messagesData);
+
+    if (chat.booking_id) {
+      const { data: shifts } = await supabase
+        .from("shifts")
+        .select("dispatcher_status, withdrawal_reason")
+        .eq("booking_id", chat.booking_id);
+
+      const searching =
+        shifts?.filter((s: any) => s.dispatcher_status === "searching").length ?? 0;
+      const failed =
+        shifts?.filter((s: any) => s.dispatcher_status === "failed").length ?? 0;
+      const replacementFound =
+        shifts?.filter((s: any) => s.dispatcher_status === "replacement_found").length ?? 0;
+      const latestNote =
+        (shifts || [])
+          .map((s: any) => (typeof s.withdrawal_reason === "string" ? s.withdrawal_reason.trim() : ""))
+          .find(Boolean) || null;
+
+      setActiveShiftCover({ searching, failed, replacementFound, note: latestNote });
+    } else {
+      setActiveShiftCover(null);
+    }
   };
+
+  // Load chats + shift/booking summaries for Live / Passed buckets
+  useEffect(() => {
+    const loadChats = async () => {
+      setLoading(true);
+      try {
+        const data = await getMissionControlChats(supabase);
+        setChats(data as GroupChat[]);
+        const bookingIds = [
+          ...new Set(
+            (data as GroupChat[]).map((c) => c.booking_id).filter(Boolean)
+          ),
+        ] as string[];
+        const [shiftsMap, bookingsMap] = await Promise.all([
+          fetchShiftSummariesForBookings(supabase, bookingIds),
+          fetchBookingStatusesForIds(supabase, bookingIds),
+        ]);
+        setShiftsByBooking(shiftsMap);
+        setBookingById(bookingsMap);
+
+        const metaFor = (c: GroupChat) =>
+          venueMissionMeta(
+            c.booking_id,
+            c.booking_id ? bookingsMap[c.booking_id]?.status : undefined,
+            c.booking_id ? shiftsMap[c.booking_id] : undefined
+          );
+
+        const firstLive = (data as GroupChat[]).find(
+          (c) => metaFor(c).bucket === "live"
+        );
+        const firstPassed = (data as GroupChat[]).find(
+          (c) => metaFor(c).bucket === "passed"
+        );
+        const pick = firstLive || firstPassed || null;
+        if (pick && !didPickInitialChat.current) {
+          didPickInitialChat.current = true;
+          void selectChat(pick);
+        }
+      } catch (e) {
+        console.error("Error loading chats:", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadChats();
+  }, [supabase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!activeChat) return;
+    const stillVisible = visibleChats.some((c) => c.id === activeChat.id);
+    if (stillVisible) return;
+    if (visibleChats.length > 0) {
+      void selectChat(visibleChats[0]);
+    } else {
+      setActiveChat(null);
+      setMembers([]);
+      setMessages([]);
+      setActiveShiftCover(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- selectChat closes over latest supabase/helpers
+  }, [bucketTab, passedSubFilter, visibleChats, activeChat]);
 
   const handleSend = async () => {
     if (!newMessage.trim() || !activeChat || sending) return;
@@ -169,6 +281,88 @@ export default function MissionControlPage() {
     return member?.role || "member";
   };
 
+  const resolveReviewerId = async (authUserId: string): Promise<string> => {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("user_id", authUserId)
+      .maybeSingle();
+    return profile?.id ?? authUserId;
+  };
+
+  const ensureRatingPrompts = async (chat: GroupChat, existingMessages: GroupChatMessage[]) => {
+    if (!chat.booking_id || !userId) return;
+
+    const { data: completedShifts } = await supabase
+      .from("shifts")
+      .select("id, booking_id, personnel_id, role")
+      .eq("booking_id", chat.booking_id)
+      .eq("status", "checked_out")
+      .not("personnel_id", "is", null);
+
+    if (!completedShifts || completedShifts.length === 0) return;
+
+    const personnelIds = Array.from(new Set(completedShifts.map((s: any) => s.personnel_id).filter(Boolean)));
+    const { data: personnelRows } = await supabase
+      .from("personnel")
+      .select("id, display_name, user_id")
+      .in("id", personnelIds);
+    const personnelById: Record<string, { display_name?: string; user_id?: string | null }> = {};
+    (personnelRows || []).forEach((p: any) => {
+      personnelById[p.id] = p;
+    });
+
+    const reviewerId = await resolveReviewerId(userId);
+    const reviewerCandidates = reviewerId === userId ? [userId] : [userId, reviewerId];
+    const { data: existingReviews } = await supabase
+      .from("reviews")
+      .select("booking_id, reviewee_id")
+      .eq("booking_id", chat.booking_id)
+      .in("reviewer_id", reviewerCandidates)
+      .in("reviewee_id", personnelIds);
+
+    const reviewedPairs = new Set(
+      (existingReviews || [])
+        .map((r: any) => (r.booking_id && r.reviewee_id ? `${r.booking_id}:${r.reviewee_id}` : null))
+        .filter(Boolean),
+    );
+
+    const promptedPairs = new Set(
+      existingMessages
+        .map((m) =>
+          m.message_type === "system" &&
+          m.metadata?.type === "rating_request" &&
+          m.metadata?.booking_id &&
+          m.metadata?.personnel_id
+            ? `${m.metadata.booking_id}:${m.metadata.personnel_id}`
+            : null,
+        )
+        .filter(Boolean) as string[],
+    );
+
+    for (const shift of completedShifts as any[]) {
+      if (!shift.booking_id || !shift.personnel_id) continue;
+      const key = `${shift.booking_id}:${shift.personnel_id}`;
+      if (reviewedPairs.has(key) || promptedPairs.has(key)) continue;
+
+      const staff = personnelById[shift.personnel_id];
+      const staffName = staff?.display_name || "this staff member";
+      await sendGroupMessage(
+        supabase,
+        chat.id,
+        `⭐ Rate this staff: ${staffName} completed their shift. Tap below to rate now.`,
+        "system",
+        {
+          type: "rating_request",
+          booking_id: shift.booking_id,
+          personnel_id: shift.personnel_id,
+          personnel_user_id: staff?.user_id || null,
+          role: shift.role || "Security",
+        },
+      );
+    }
+  };
+
   const handleRequestIncidentReport = async () => {
     if (!activeChat || requestingReport) return;
     
@@ -224,8 +418,21 @@ export default function MissionControlPage() {
   const getMessageStyle = (msg: GroupChatMessage) => {
     const isOwn = msg.sender_id === userId;
     const isSystem = msg.message_type === "system";
-    
+    const metaType = msg.metadata?.type as string | undefined;
+
     if (isSystem) {
+      if (metaType === "rating_request") {
+        return "mx-auto w-full max-w-xl bg-purple-500/10 border border-purple-500/30 text-purple-100";
+      }
+      if (metaType === "shift_checkin_confirmed") {
+        return "mx-auto w-full max-w-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-100 text-left text-sm whitespace-pre-wrap";
+      }
+      if (metaType === "shift_checkout_confirmed") {
+        return "mx-auto w-full max-w-xl bg-blue-500/10 border border-blue-500/30 text-blue-100 text-left text-sm whitespace-pre-wrap";
+      }
+      if (metaType?.startsWith("shift_reminder")) {
+        return "mx-auto w-full max-w-xl bg-amber-500/10 border border-amber-500/30 text-amber-100 text-left text-sm whitespace-pre-wrap";
+      }
       return "mx-auto bg-zinc-800/50 text-zinc-400 text-center text-xs px-4 py-2 rounded-full";
     }
     
@@ -255,34 +462,102 @@ export default function MissionControlPage() {
           <p className="text-sm text-zinc-400">Team communication for events</p>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
-          {chats.length > 0 ? (
-            chats.map((chat) => (
+        <div className="px-3 pb-2 border-b border-white/5 space-y-2">
+          <div className="flex rounded-lg bg-zinc-900 p-0.5 gap-0.5">
+            {(["live", "passed"] as const).map((tab) => (
               <button
-                key={chat.id}
-                onClick={() => selectChat(chat)}
-                className={`w-full p-4 text-left border-b border-white/5 transition ${
-                  activeChat?.id === chat.id
-                    ? "bg-purple-500/10"
-                    : "hover:bg-white/5"
+                key={tab}
+                type="button"
+                onClick={() => {
+                  setBucketTab(tab);
+                  if (tab === "live") setPassedSubFilter("all");
+                }}
+                className={`flex-1 rounded-md py-1.5 text-xs font-semibold transition ${
+                  bucketTab === tab
+                    ? "bg-purple-600 text-white"
+                    : "text-zinc-400 hover:text-white"
                 }`}
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center">
-                    <span className="text-lg">🛡️</span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-white font-medium truncate">{chat.name}</p>
-                    <p className="text-xs text-zinc-500">
-                      {chat.event_date && formatDate(chat.event_date)}
-                    </p>
-                  </div>
-                  {chat.is_active && (
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                  )}
-                </div>
+                {tab === "live" ? "Live" : "Passed"}
               </button>
-            ))
+            ))}
+          </div>
+          {bucketTab === "passed" && (
+            <div className="flex flex-wrap gap-1">
+              {(
+                [
+                  { id: "all" as const, label: "All" },
+                  { id: "cancelled" as const, label: "Cancelled" },
+                  { id: "completed" as const, label: "Completed" },
+                ] as const
+              ).map(({ id, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setPassedSubFilter(id)}
+                  className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium border transition ${
+                    passedSubFilter === id
+                      ? "border-purple-500/60 bg-purple-500/20 text-purple-100"
+                      : "border-white/10 text-zinc-400 hover:border-white/20"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {chats.length > 0 ? (
+            visibleChats.length > 0 ? (
+              visibleChats.map((chat) => {
+                const rowMeta = venueMissionMeta(
+                  chat.booking_id,
+                  chat.booking_id ? bookingById[chat.booking_id]?.status : undefined,
+                  chat.booking_id ? shiftsByBooking[chat.booking_id] : undefined
+                );
+                return (
+                  <button
+                    key={chat.id}
+                    onClick={() => selectChat(chat)}
+                    className={`w-full p-4 text-left border-b border-white/5 transition ${
+                      activeChat?.id === chat.id
+                        ? "bg-purple-500/10"
+                        : "hover:bg-white/5"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center">
+                        <span className="text-lg">🛡️</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white font-medium truncate">{chat.name}</p>
+                        <p className="text-xs text-zinc-500">
+                          {chat.event_date && formatDate(chat.event_date)}
+                          {rowMeta.bucket === "passed" && rowMeta.passedKind === "cancelled" ? (
+                            <span className="ml-1.5 text-amber-400/90">· Cancelled</span>
+                          ) : null}
+                        </p>
+                      </div>
+                      {rowMeta.bucket === "live" && chat.is_active && (
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="Live" />
+                      )}
+                    </div>
+                  </button>
+                );
+              })
+            ) : (
+              <div className="p-6 text-center text-sm text-zinc-500">
+                {bucketTab === "live"
+                  ? "No live missions. Open Passed to see ended or cancelled events."
+                  : passedSubFilter === "cancelled"
+                    ? "No cancelled shifts in Passed for this filter."
+                    : passedSubFilter === "completed"
+                      ? "No completed-only missions match this filter."
+                      : "Nothing in Passed yet."}
+              </div>
+            )
           ) : (
             <div className="p-8 text-center">
               <div className="w-16 h-16 rounded-full bg-zinc-800 flex items-center justify-center mx-auto mb-4">
@@ -360,6 +635,28 @@ export default function MissionControlPage() {
                 )}
               </div>
             </div>
+            {activeShiftCover && (activeShiftCover.searching > 0 || activeShiftCover.failed > 0 || activeShiftCover.replacementFound > 0) ? (
+              <div className="mt-3 space-y-2">
+                {activeShiftCover.searching > 0 ? (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+                    Searching for replacement cover ({activeShiftCover.searching} shift{activeShiftCover.searching === 1 ? "" : "s"} in search).
+                  </div>
+                ) : null}
+                {activeShiftCover.failed > 0 ? (
+                  <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-100">
+                    Replacement search failed for {activeShiftCover.failed} shift{activeShiftCover.failed === 1 ? "" : "s"}. Manual action needed.
+                  </div>
+                ) : null}
+                {activeShiftCover.replacementFound > 0 ? (
+                  <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100">
+                    Replacement found for {activeShiftCover.replacementFound} shift{activeShiftCover.replacementFound === 1 ? "" : "s"}.
+                  </div>
+                ) : null}
+                {activeShiftCover.note ? (
+                  <p className="text-xs text-zinc-500">Latest withdrawal reason: {activeShiftCover.note}</p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           {/* Messages */}
@@ -408,6 +705,42 @@ export default function MissionControlPage() {
                 )}
                 
                 <p className="text-sm">{msg.content}</p>
+
+                {msg.message_type === "system" && msg.metadata?.type === "rating_request" && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {msg.metadata?.personnel_id && (
+                      <Link
+                        href={`/d/venue/ratings?booking=${encodeURIComponent(String(msg.metadata.booking_id || ""))}&staff=${encodeURIComponent(String(msg.metadata.personnel_id))}`}
+                        className="inline-flex items-center rounded-lg bg-purple-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-600 transition"
+                      >
+                        Rate this staff
+                      </Link>
+                    )}
+                    {msg.metadata?.personnel_id && (
+                      <Link
+                        href={`/d/venue/personnel/${encodeURIComponent(String(msg.metadata.personnel_id))}`}
+                        className="inline-flex items-center rounded-lg bg-white/10 px-3 py-1.5 text-xs text-zinc-200 hover:bg-white/15 transition"
+                      >
+                        Open profile
+                      </Link>
+                    )}
+                  </div>
+                )}
+
+                {/* Live Check-In link on venue reminder messages */}
+                {msg.message_type === "system" &&
+                  (msg.metadata?.type === "shift_reminder_pre_start_venue" ||
+                    msg.metadata?.type === "shift_reminder_start_attendance" ||
+                    msg.metadata?.type === "shift_checkin_confirmed") && (
+                    <div className="mt-3">
+                      <Link
+                        href="/d/venue/live"
+                        className="inline-flex items-center rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 transition"
+                      >
+                        Open Live Check-In
+                      </Link>
+                    </div>
+                  )}
                 
                 {msg.message_type !== "system" && (
                   <p className="text-xs text-zinc-500 mt-1">{formatTime(msg.created_at)}</p>

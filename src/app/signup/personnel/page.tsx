@@ -143,8 +143,13 @@ export default function PersonnelSignUp() {
         console.error("Personnel creation error:", JSON.stringify(personnelError, null, 2));
       }
 
-      // Redirect directly to dashboard (email confirmation is disabled)
-      router.push("/d/personnel");
+      // If email confirmation is required, Supabase won't return a session
+      const hasSession = !!authData.session;
+      if (hasSession) {
+        router.push("/d/personnel");
+      } else {
+        router.push(`/signup/confirm?email=${encodeURIComponent(formData.email)}`);
+      }
     } catch (err: any) {
       setError(err.message || "Something went wrong");
     } finally {

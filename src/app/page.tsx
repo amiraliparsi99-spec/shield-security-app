@@ -271,12 +271,6 @@ function ExploreTabContent() {
           </div>
         </div>
         
-        <div className="absolute top-16 left-16">
-          <div className="relative">
-            <div className="w-4 h-4 bg-amber-500 rounded-full shadow-lg shadow-amber-500/50 flex items-center justify-center text-[8px] font-bold">!</div>
-          </div>
-        </div>
-        
         {/* Current location */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 mt-4">
           <div className="w-3 h-3 bg-blue-500 rounded-full border-2 border-white shadow-lg" />
@@ -492,6 +486,384 @@ function AccountTabContent() {
             ) : (
               <span className="text-zinc-500 text-[12px]">→</span>
             )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Interactive Venue Phone with Tab Navigation
+type VenuePhoneTab = 'dashboard' | 'bookings' | 'staff' | 'spend' | 'settings';
+
+function VenueInteractivePhone({ className = "" }: { className?: string }) {
+  const [activeTab, setActiveTab] = useState<VenuePhoneTab>('dashboard');
+
+  const tabs: { id: VenuePhoneTab; icon: string; label: string }[] = [
+    { id: 'dashboard', icon: '📊', label: 'Home' },
+    { id: 'bookings', icon: '📅', label: 'Bookings' },
+    { id: 'staff', icon: '👥', label: 'Staff' },
+    { id: 'spend', icon: '💰', label: 'Spend' },
+    { id: 'settings', icon: '⚙️', label: 'Settings' },
+  ];
+
+  return (
+    <motion.div
+      className={`relative ${className}`}
+      initial={{ opacity: 0, y: 40 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      transition={{ duration: 0.8 }}
+    >
+      <div className="relative mx-auto w-[280px] h-[580px] rounded-[40px] border-[8px] border-zinc-800 bg-black shadow-2xl shadow-black/60 overflow-hidden cursor-pointer">
+        <div className="w-full h-full overflow-hidden rounded-[32px] flex flex-col bg-[#0a0a0f]">
+          {/* Status Bar */}
+          <div className="flex items-center justify-between px-6 pt-4 pb-2">
+            <span className="text-[10px] text-zinc-400">9:41</span>
+            <div className="flex items-center gap-1">
+              <div className="flex gap-0.5">
+                <div className="w-1 h-2 bg-zinc-400 rounded-sm" />
+                <div className="w-1 h-2.5 bg-zinc-400 rounded-sm" />
+                <div className="w-1 h-3 bg-zinc-400 rounded-sm" />
+                <div className="w-1 h-3.5 bg-white rounded-sm" />
+              </div>
+              <div className="w-6 h-3 border border-zinc-400 rounded-sm ml-1 relative">
+                <div className="absolute inset-0.5 bg-purple-500 rounded-sm" style={{ width: '80%' }} />
+              </div>
+            </div>
+          </div>
+
+          {/* Screen Content */}
+          <div className="flex-1 overflow-hidden">
+            <motion.div
+              key={activeTab}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.2 }}
+              className="h-full"
+            >
+              {activeTab === 'dashboard' && <VenueDashboardTab />}
+              {activeTab === 'bookings' && <VenueBookingsTab />}
+              {activeTab === 'staff' && <VenueStaffTab />}
+              {activeTab === 'spend' && <VenueSpendTab />}
+              {activeTab === 'settings' && <VenueSettingsTab />}
+            </motion.div>
+          </div>
+
+          {/* Bottom Tab Bar */}
+          <div className="bg-zinc-900/95 border-t border-zinc-800 px-2 py-2">
+            <div className="flex justify-around items-center">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex flex-col items-center transition-all ${
+                    activeTab === tab.id ? 'scale-110' : 'opacity-50 hover:opacity-75'
+                  }`}
+                >
+                  <span className="text-[14px]">{tab.icon}</span>
+                  <span className={`text-[8px] mt-0.5 ${
+                    activeTab === tab.id ? 'text-purple-400' : 'text-zinc-500'
+                  }`}>
+                    {tab.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex justify-center py-2 bg-zinc-900/95">
+            <div className="w-28 h-1 bg-white/30 rounded-full" />
+          </div>
+        </div>
+      </div>
+      <div className="absolute inset-0 -z-10 blur-3xl opacity-30 bg-gradient-to-b from-purple-500 to-transparent" />
+      <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 text-xs text-zinc-500 whitespace-nowrap">
+        👆 Click the tabs to explore
+      </div>
+    </motion.div>
+  );
+}
+
+function VenueDashboardTab() {
+  return (
+    <div className="h-full px-4 text-white">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <div className="text-lg font-bold">Venue Dashboard</div>
+          <div className="text-[11px] text-zinc-500">Good evening, The Night Owl</div>
+        </div>
+        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-400 to-purple-600 flex items-center justify-center text-sm font-bold shadow-lg shadow-purple-500/40">
+          N
+        </div>
+      </div>
+
+      <div className="bg-gradient-to-br from-purple-500/25 to-purple-600/10 border border-purple-500/30 rounded-2xl p-4 mb-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-[9px] text-purple-300 uppercase tracking-wider font-medium">Security Spend</div>
+            <div className="text-2xl font-bold text-white">£4,280</div>
+            <div className="text-[10px] text-purple-400 mt-0.5">This month · 6 events</div>
+          </div>
+          <div className="text-right">
+            <div className="text-xl font-bold text-purple-400">8</div>
+            <div className="text-[9px] text-zinc-400">Guards</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        <div className="bg-zinc-800/70 rounded-xl p-2 text-center">
+          <div className="text-lg font-bold text-emerald-400">3</div>
+          <div className="text-[8px] text-zinc-500">Upcoming</div>
+        </div>
+        <div className="bg-zinc-800/70 rounded-xl p-2 text-center">
+          <div className="text-lg font-bold text-amber-400">1</div>
+          <div className="text-[8px] text-zinc-500">Pending</div>
+        </div>
+        <div className="bg-zinc-800/70 rounded-xl p-2 text-center">
+          <div className="text-lg font-bold text-blue-400">12</div>
+          <div className="text-[8px] text-zinc-500">Completed</div>
+        </div>
+      </div>
+
+      <div className="text-[9px] text-zinc-500 mb-1.5 font-semibold uppercase tracking-wider">Tonight&apos;s Shift</div>
+      <div className="bg-zinc-800/60 border border-zinc-700/60 rounded-xl p-3 mb-3">
+        <div className="flex justify-between items-start">
+          <div>
+            <div className="text-sm font-semibold">Friday Night Security</div>
+            <div className="text-[10px] text-zinc-400 mt-0.5">21:00 – 03:00 · 4 guards</div>
+            <div className="text-[10px] text-purple-400 mt-1 font-medium">£18/hr · £432 total</div>
+          </div>
+          <div className="bg-emerald-500 text-[9px] px-2 py-1 rounded-full font-semibold">
+            Confirmed
+          </div>
+        </div>
+      </div>
+
+      <div className="text-[9px] text-zinc-500 mb-1.5 font-semibold uppercase tracking-wider">Quick Actions</div>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="bg-purple-500/15 border border-purple-500/30 rounded-xl p-2.5 text-center">
+          <span className="text-base">🛡️</span>
+          <div className="text-[9px] font-medium text-purple-300 mt-1">Book Security</div>
+        </div>
+        <div className="bg-zinc-800/60 border border-zinc-700/50 rounded-xl p-2.5 text-center">
+          <span className="text-base">📋</span>
+          <div className="text-[9px] font-medium text-zinc-400 mt-1">Post Request</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function VenueBookingsTab() {
+  return (
+    <div className="h-full px-4 text-white">
+      <div className="text-lg font-bold mb-1">Bookings</div>
+      <div className="text-[10px] text-zinc-500 mb-4">Manage your security events</div>
+
+      <div className="flex gap-1 bg-zinc-800/70 rounded-lg p-0.5 mb-3">
+        <div className="flex-1 py-1.5 text-center text-[9px] bg-purple-500/20 text-purple-400 rounded font-semibold">Upcoming</div>
+        <div className="flex-1 py-1.5 text-center text-[9px] text-zinc-500">Past</div>
+        <div className="flex-1 py-1.5 text-center text-[9px] text-zinc-500">Drafts</div>
+      </div>
+
+      <div className="space-y-2">
+        {[
+          { name: "Saturday Main Event", date: "Sat 5 Apr", time: "20:00–04:00", guards: 6, status: "Confirmed", statusColor: "bg-emerald-500" },
+          { name: "Friday Night", date: "Fri 11 Apr", time: "21:00–03:00", guards: 4, status: "Pending", statusColor: "bg-amber-500" },
+          { name: "Private Function", date: "Sat 12 Apr", time: "19:00–01:00", guards: 3, status: "Confirmed", statusColor: "bg-emerald-500" },
+          { name: "Bank Holiday Special", date: "Mon 21 Apr", time: "20:00–04:00", guards: 8, status: "Draft", statusColor: "bg-zinc-500" },
+        ].map((b) => (
+          <div key={b.name} className="bg-zinc-800/60 border border-zinc-700/50 rounded-xl p-3">
+            <div className="flex justify-between items-start">
+              <div>
+                <div className="text-[11px] font-semibold">{b.name}</div>
+                <div className="text-[9px] text-zinc-500 mt-0.5">{b.date} · {b.time}</div>
+                <div className="text-[9px] text-purple-400 mt-1">{b.guards} guards</div>
+              </div>
+              <div className={`${b.statusColor} text-[8px] px-2 py-0.5 rounded-full font-semibold text-white`}>
+                {b.status}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3">
+        <button className="w-full bg-purple-500 text-white text-[10px] py-2.5 rounded-xl font-semibold">
+          + Book Security
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function VenueStaffTab() {
+  return (
+    <div className="h-full px-4 text-white">
+      <div className="text-lg font-bold mb-1">Staff</div>
+      <div className="text-[10px] text-zinc-500 mb-4">Your security team</div>
+
+      <div className="bg-zinc-800/70 rounded-lg px-2.5 py-2 mb-3 text-[9px] text-zinc-500 flex items-center gap-1.5">
+        <span className="text-[10px]">🔍</span>
+        Search staff...
+      </div>
+
+      <div className="text-[8px] text-zinc-500 mb-1.5 font-semibold uppercase tracking-wider">On Duty Tonight</div>
+      <div className="space-y-2 mb-3">
+        {[
+          { name: "Marcus Johnson", role: "Door Supervisor", rating: "4.9", checked: true },
+          { name: "Sarah Williams", role: "Door Supervisor", rating: "4.8", checked: true },
+          { name: "James Carter", role: "Close Protection", rating: "5.0", checked: false },
+        ].map((s) => (
+          <div key={s.name} className="bg-zinc-800/60 border border-zinc-700/50 rounded-xl p-2.5 flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-teal-400 to-teal-600 flex items-center justify-center text-[11px] font-bold shadow-lg shadow-teal-500/30">
+              {s.name[0]}
+            </div>
+            <div className="flex-1">
+              <div className="text-[10px] font-semibold">{s.name}</div>
+              <div className="text-[8px] text-zinc-500">{s.role}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-[9px] text-amber-400">★ {s.rating}</div>
+              <div className={`text-[7px] mt-0.5 ${s.checked ? "text-emerald-400" : "text-zinc-500"}`}>
+                {s.checked ? "Checked in" : "Expected"}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="text-[8px] text-zinc-500 mb-1.5 font-semibold uppercase tracking-wider">Preferred Staff</div>
+      <div className="space-y-2">
+        {[
+          { name: "David Brown", role: "Door Supervisor", shifts: 24 },
+          { name: "Emma Davis", role: "Event Security", shifts: 18 },
+        ].map((s) => (
+          <div key={s.name} className="bg-zinc-800/40 border border-zinc-700/40 rounded-xl p-2.5 flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-purple-400 to-purple-600 flex items-center justify-center text-[11px] font-bold">
+              {s.name[0]}
+            </div>
+            <div className="flex-1">
+              <div className="text-[10px] font-semibold">{s.name}</div>
+              <div className="text-[8px] text-zinc-500">{s.role} · {s.shifts} shifts</div>
+            </div>
+            <div className="text-zinc-500 text-[10px]">→</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function VenueSpendTab() {
+  return (
+    <div className="h-full px-4 text-white">
+      <div className="text-lg font-bold mb-1">Spend</div>
+      <div className="text-[10px] text-zinc-500 mb-4">Track your security costs</div>
+
+      <div className="bg-gradient-to-br from-purple-500/20 to-purple-600/10 border border-purple-500/30 rounded-2xl p-4 mb-3">
+        <div className="text-[9px] text-purple-300 uppercase tracking-wider font-medium">This Month</div>
+        <div className="text-3xl font-bold text-white mt-1">£4,280</div>
+        <div className="flex items-center gap-2 mt-2">
+          <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
+            <div className="h-full bg-purple-500 rounded-full" style={{ width: '54%' }} />
+          </div>
+          <span className="text-[9px] text-purple-400">54% of budget</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <div className="bg-zinc-800/70 rounded-xl p-3 text-center">
+          <div className="text-sm font-bold text-emerald-400">£3,020</div>
+          <div className="text-[8px] text-zinc-500">Paid</div>
+        </div>
+        <div className="bg-zinc-800/70 rounded-xl p-3 text-center">
+          <div className="text-sm font-bold text-amber-400">£1,260</div>
+          <div className="text-[8px] text-zinc-500">Pending</div>
+        </div>
+      </div>
+
+      <div className="text-[8px] text-zinc-500 mb-1.5 font-semibold uppercase tracking-wider">Export</div>
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-2.5 text-center">
+          <span className="text-base">📄</span>
+          <div className="text-[8px] font-medium text-red-400 mt-1">PDF Report</div>
+        </div>
+        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-2.5 text-center">
+          <span className="text-base">📊</span>
+          <div className="text-[8px] font-medium text-emerald-400 mt-1">CSV Export</div>
+        </div>
+      </div>
+
+      <div className="text-[8px] text-zinc-500 mb-1.5 font-semibold uppercase tracking-wider">Recent Invoices</div>
+      <div className="space-y-1.5">
+        {[
+          { name: "Saturday Event", amount: "£1,440", date: "29 Mar" },
+          { name: "Friday Night", amount: "£810", date: "28 Mar" },
+          { name: "Private Function", amount: "£360", date: "25 Mar" },
+        ].map((inv) => (
+          <div key={inv.name} className="flex items-center justify-between bg-zinc-800/50 rounded-lg p-2.5">
+            <div>
+              <div className="text-[10px] font-medium">{inv.name}</div>
+              <div className="text-[8px] text-zinc-500">{inv.date}</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-semibold">{inv.amount}</span>
+              <span className="text-[10px] text-purple-400">↓</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function VenueSettingsTab() {
+  return (
+    <div className="h-full px-4 text-white">
+      <div className="flex items-center gap-4 mb-5">
+        <div className="w-16 h-16 rounded-full bg-gradient-to-br from-purple-400 to-purple-600 flex items-center justify-center text-2xl font-bold shadow-lg shadow-purple-500/40">
+          N
+        </div>
+        <div>
+          <div className="text-lg font-bold">The Night Owl</div>
+          <div className="text-[10px] text-zinc-400">Nightclub · Birmingham</div>
+          <div className="flex items-center gap-1 mt-1">
+            <span className="bg-emerald-500/20 text-emerald-400 text-[9px] px-2 py-0.5 rounded-full font-medium">Verified ✓</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-gradient-to-r from-zinc-800/80 to-zinc-800/40 border border-zinc-700/50 rounded-xl p-3 mb-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">📍</span>
+            <div>
+              <div className="text-[11px] font-medium">Location</div>
+              <div className="text-[9px] text-zinc-500">Broad St, Birmingham B1</div>
+            </div>
+          </div>
+          <span className="text-zinc-500 text-[12px]">→</span>
+        </div>
+      </div>
+
+      <div className="space-y-1">
+        {[
+          { icon: '📝', label: 'Venue Details' },
+          { icon: '💳', label: 'Payment Methods' },
+          { icon: '🔔', label: 'Notifications' },
+          { icon: '👥', label: 'Team Members' },
+          { icon: '📄', label: 'Invoices & Reports' },
+          { icon: '⚙️', label: 'Account Settings' },
+        ].map((item) => (
+          <div key={item.label} className="flex items-center justify-between bg-zinc-800/40 rounded-xl p-3">
+            <div className="flex items-center gap-3">
+              <span className="text-base">{item.icon}</span>
+              <span className="text-[11px] font-medium">{item.label}</span>
+            </div>
+            <span className="text-zinc-500 text-[12px]">→</span>
           </div>
         ))}
       </div>
@@ -864,6 +1236,7 @@ export default function Home() {
                         "See real-time availability of verified staff",
                         "Book instantly or review applications",
                         "Manage all security from one dashboard",
+                        "Export spend reports & download invoices",
                         "Track live check-ins and shift progress",
                       ].map((item, i) => (
                         <li key={i} className="flex items-center gap-3">
@@ -917,7 +1290,7 @@ export default function Home() {
               </GlowCard>
             </motion.div>
 
-            {/* Interactive Phone */}
+            {/* Interactive Phone — different for each role */}
             <motion.div
               key={`device-${activeRole}`}
               initial={{ opacity: 0, scale: 0.95 }}
@@ -925,7 +1298,7 @@ export default function Home() {
               transition={{ duration: 0.4 }}
               className="flex justify-center"
             >
-              <InteractivePhone />
+              {activeRole === 'venue' ? <VenueInteractivePhone /> : <InteractivePhone />}
             </motion.div>
           </div>
         </div>
@@ -958,6 +1331,8 @@ export default function Home() {
               "Analytics Dashboard",
               "Live Check-In",
               "Secure Payments",
+              "Export Reports",
+              "Download Invoices",
             ].map((feature, i) => (
               <span
                 key={i}
@@ -966,6 +1341,189 @@ export default function Home() {
                 {feature}
               </span>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Reporting & Exports Section */}
+      <section className="relative border-b border-white/[0.06] py-20 sm:py-28 overflow-hidden">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6">
+          <div className="grid lg:grid-cols-2 gap-12 items-center">
+            {/* Left: Description */}
+            <FadeIn direction="left">
+              <span className="inline-block rounded-full bg-purple-500/15 px-4 py-1.5 text-xs font-medium text-purple-400 mb-4">
+                📊 Reporting & Invoices
+              </span>
+              <h2 className="font-display text-3xl font-semibold sm:text-4xl">
+                Full financial <span className="text-gradient-teal">visibility</span>
+              </h2>
+              <p className="mt-4 text-zinc-400 leading-relaxed">
+                Track every pound spent on security. Export detailed spend reports, download invoices 
+                for any event or time period, and keep your accounts in perfect order — all from your dashboard.
+              </p>
+              <ul className="mt-8 space-y-4">
+                {[
+                  {
+                    icon: "📄",
+                    title: "PDF Spend Reports",
+                    desc: "Export branded reports by week, month, quarter, or year with full cost breakdowns",
+                  },
+                  {
+                    icon: "🧾",
+                    title: "Event Invoices",
+                    desc: "Download individual invoices per event, or bulk download all invoices for a period",
+                  },
+                  {
+                    icon: "📊",
+                    title: "CSV Exports",
+                    desc: "Export raw data to Excel or Google Sheets for your own analysis and accounting",
+                  },
+                  {
+                    icon: "💰",
+                    title: "Budget Tracking",
+                    desc: "Set monthly budgets and get alerts when you're approaching your limit",
+                  },
+                ].map((item, i) => (
+                  <li key={i} className="flex items-start gap-4">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.06] text-lg">
+                      {item.icon}
+                    </span>
+                    <div>
+                      <h4 className="font-medium text-white">{item.title}</h4>
+                      <p className="text-sm text-zinc-400 mt-0.5">{item.desc}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <Link href="/signup/venue" className="mt-8 inline-flex items-center gap-2 text-shield-400 hover:text-shield-300 font-medium transition">
+                Start tracking spend
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </Link>
+            </FadeIn>
+
+            {/* Right: Visual mockup of export feature */}
+            <FadeIn direction="right">
+              <div className="relative">
+                {/* Dashboard card mockup */}
+                <div className="glass rounded-2xl overflow-hidden border border-white/10">
+                  {/* Header */}
+                  <div className="bg-zinc-900/80 px-6 py-4 border-b border-white/10 flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-white">Spend Dashboard</div>
+                      <div className="text-xs text-zinc-500">This Month</div>
+                    </div>
+                    <div className="flex gap-1.5">
+                      {["Week", "Month", "Quarter", "Year"].map((t, i) => (
+                        <span key={t} className={`text-[10px] px-2.5 py-1 rounded-md ${i === 1 ? "bg-purple-500 text-white" : "bg-white/5 text-zinc-500"}`}>
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Stats */}
+                  <div className="grid grid-cols-4 gap-px bg-white/5">
+                    {[
+                      { label: "Total Spend", value: "£8,420", color: "text-white" },
+                      { label: "Avg / Event", value: "£702", color: "text-blue-400" },
+                      { label: "Pending", value: "£1,260", color: "text-amber-400" },
+                      { label: "Paid", value: "£7,160", color: "text-emerald-400" },
+                    ].map((s) => (
+                      <div key={s.label} className="bg-zinc-900/60 p-4 text-center">
+                        <div className="text-[10px] text-zinc-500">{s.label}</div>
+                        <div className={`text-lg font-bold ${s.color}`}>{s.value}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Events list */}
+                  <div className="px-5 py-3 border-t border-white/5">
+                    <div className="text-xs font-medium text-zinc-400 mb-3">Recent Events</div>
+                    {[
+                      { name: "Saturday Main Event", date: "29 Mar", guards: 4, cost: "£1,440", status: "Paid" },
+                      { name: "Friday Night Security", date: "28 Mar", guards: 3, cost: "£810", status: "Paid" },
+                      { name: "Private Function", date: "25 Mar", guards: 2, cost: "£360", status: "Pending" },
+                    ].map((ev) => (
+                      <div key={ev.name} className="flex items-center justify-between py-2.5 border-b border-white/5 last:border-0">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-purple-500/15 flex items-center justify-center text-[10px] font-bold text-purple-400">
+                            {ev.date.split(" ")[0]}
+                          </div>
+                          <div>
+                            <div className="text-xs font-medium text-white">{ev.name}</div>
+                            <div className="text-[10px] text-zinc-500">{ev.date} · {ev.guards} guards</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className={`text-[9px] px-2 py-0.5 rounded-full ${ev.status === "Paid" ? "bg-emerald-500/20 text-emerald-400" : "bg-amber-500/20 text-amber-400"}`}>
+                            {ev.status}
+                          </span>
+                          <span className="text-xs font-semibold text-white">{ev.cost}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Export bar */}
+                  <div className="bg-zinc-900/80 px-5 py-3 border-t border-white/10 flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 bg-purple-500/15 text-purple-400 px-3 py-1.5 rounded-lg text-[10px] font-medium">
+                      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Export Report
+                    </div>
+                    <div className="flex items-center gap-1.5 bg-white/5 text-zinc-400 px-3 py-1.5 rounded-lg text-[10px] font-medium">
+                      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      Download Invoices
+                    </div>
+                  </div>
+                </div>
+
+                {/* Decorative floating invoice card */}
+                <motion.div
+                  className="absolute -right-4 -bottom-4 w-48 glass rounded-xl p-3 border border-white/10 shadow-xl"
+                  initial={{ opacity: 0, y: 20 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: 0.4, duration: 0.6 }}
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-6 h-6 rounded bg-red-500/15 flex items-center justify-center">
+                      <svg className="h-3 w-3 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <span className="text-[10px] font-semibold text-white">Invoice_March.pdf</span>
+                  </div>
+                  <div className="h-1 bg-emerald-500 rounded-full" />
+                  <div className="text-[9px] text-emerald-400 mt-1">Downloaded</div>
+                </motion.div>
+
+                {/* Decorative floating CSV card */}
+                <motion.div
+                  className="absolute -left-4 top-8 w-40 glass rounded-xl p-3 border border-white/10 shadow-xl"
+                  initial={{ opacity: 0, y: -20 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: 0.6, duration: 0.6 }}
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-6 h-6 rounded bg-emerald-500/15 flex items-center justify-center">
+                      <svg className="h-3 w-3 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                    </div>
+                    <span className="text-[10px] font-semibold text-white">Spend_Q1.csv</span>
+                  </div>
+                  <div className="h-1 bg-emerald-500 rounded-full w-3/4" />
+                  <div className="text-[9px] text-zinc-500 mt-1">Ready for Excel</div>
+                </motion.div>
+              </div>
+            </FadeIn>
           </div>
         </div>
       </section>
@@ -1044,7 +1602,7 @@ export default function Home() {
                     "Post a shift and get matched in minutes",
                     "Every professional is SIA verified on signup",
                     "Venues pay nothing — guards pay a small 10% fee",
-                    "Fast payouts direct to your bank",
+                    "Export reports & invoices — full financial visibility",
                     "Instant notifications to available staff nearby",
                   ].map((item, i) => (
                     <li key={i} className="flex items-start gap-3 text-sm text-zinc-400">
@@ -1076,7 +1634,7 @@ export default function Home() {
               { icon: "🪪", title: "SIA License Check", desc: "Every guard uploads and verifies their SIA licence before they can accept shifts" },
               { icon: "⭐", title: "Ratings & Reviews", desc: "Venues rate guards after every shift, building transparent reputations" },
               { icon: "📍", title: "Live Check-In", desc: "GPS-verified clock-in and clock-out so venues always know who's on site" },
-              { icon: "💳", title: "Secure Payments", desc: "All payments processed securely through Stripe with full transaction history" },
+              { icon: "💳", title: "Payments & Invoices", desc: "Secure Stripe payments with exportable invoices, spend reports, and full transaction history" },
             ].map((feature, i) => (
               <StaggerItem key={i}>
                 <div className="glass glass-hover rounded-2xl p-6 h-full">

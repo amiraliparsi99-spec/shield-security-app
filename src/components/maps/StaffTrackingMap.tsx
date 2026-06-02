@@ -15,6 +15,8 @@ interface StaffLocation {
   lng: number;
   accuracy?: number;
   isOnShift: boolean;
+  isEnRoute?: boolean;
+  distanceFromVenue?: string | null;
   venueName?: string;
   lastUpdated: string;
 }
@@ -30,6 +32,7 @@ interface VenueGeofence {
 interface StaffTrackingMapProps {
   staffLocations: StaffLocation[];
   venueGeofences?: VenueGeofence[];
+  trailPaths?: Array<{ id: string; coordinates: [number, number][] }>;
   selectedStaffId?: string | null;
   onStaffSelect?: (staffId: string | null) => void;
   className?: string;
@@ -38,6 +41,7 @@ interface StaffTrackingMapProps {
 export function StaffTrackingMap({
   staffLocations,
   venueGeofences = [],
+  trailPaths = [],
   selectedStaffId,
   onStaffSelect,
   className = "",
@@ -215,19 +219,56 @@ export function StaffTrackingMap({
                 selectedStaffId === staff.id ? "scale-125" : ""
               }`}
             >
-              {/* Pulse animation for on-shift staff */}
-              {staff.isOnShift && (
-                <span className="absolute inset-0 animate-ping rounded-full bg-emerald-400 opacity-75" />
+              {/* Pulse animation for on-shift or en-route staff */}
+              {(staff.isOnShift || staff.isEnRoute) && (
+                <span className={`absolute inset-0 animate-ping rounded-full opacity-75 ${
+                  staff.isOnShift ? "bg-emerald-400" : "bg-amber-400"
+                }`} />
               )}
               {/* Marker dot */}
               <div
                 className={`relative h-4 w-4 rounded-full border-2 border-white shadow-lg ${
-                  staff.isOnShift ? "bg-emerald-500" : "bg-shield-500"
+                  staff.isOnShift
+                    ? "bg-emerald-500"
+                    : staff.isEnRoute
+                      ? "bg-amber-500"
+                      : "bg-shield-500"
                 }`}
               />
             </div>
           </Marker>
         ))}
+
+        {trailPaths
+          .filter((trail) => trail.coordinates.length >= 2)
+          .map((trail) => {
+            const trailData = {
+              type: "FeatureCollection" as const,
+              features: [
+                {
+                  type: "Feature" as const,
+                  properties: { id: trail.id },
+                  geometry: {
+                    type: "LineString" as const,
+                    coordinates: trail.coordinates,
+                  },
+                },
+              ],
+            };
+            return (
+              <Source key={`trail-${trail.id}`} id={`trail-${trail.id}`} type="geojson" data={trailData}>
+                <Layer
+                  id={`trail-line-${trail.id}`}
+                  type="line"
+                  paint={{
+                    "line-color": "#F59E0B",
+                    "line-width": 2.5,
+                    "line-opacity": 0.8,
+                  }}
+                />
+              </Source>
+            );
+          })}
 
         {/* Venue geofence center markers */}
         {venueGeofences.map((venue) => (
@@ -259,15 +300,25 @@ export function StaffTrackingMap({
             closeOnClick={false}
             className="staff-popup"
           >
-            <div className="min-w-[180px] p-1">
+            <div className="min-w-[200px] p-1">
               <div className="flex items-center gap-2">
                 <div
                   className={`h-2 w-2 rounded-full ${
-                    popupInfo.isOnShift ? "bg-emerald-500" : "bg-zinc-400"
+                    popupInfo.isOnShift
+                      ? "bg-emerald-500"
+                      : popupInfo.isEnRoute
+                        ? "bg-amber-500"
+                        : "bg-zinc-400"
                   }`}
                 />
                 <span className="font-medium text-zinc-900">{popupInfo.name}</span>
               </div>
+              {popupInfo.isEnRoute && !popupInfo.isOnShift && (
+                <p className="mt-1 text-xs font-medium text-amber-600">En route to venue</p>
+              )}
+              {popupInfo.distanceFromVenue && (
+                <p className="mt-0.5 text-xs text-zinc-600">📍 {popupInfo.distanceFromVenue}</p>
+              )}
               {popupInfo.venueName && (
                 <p className="mt-1 text-xs text-zinc-600">@ {popupInfo.venueName}</p>
               )}
@@ -287,11 +338,11 @@ export function StaffTrackingMap({
         <div className="flex items-center gap-4 text-xs">
           <div className="flex items-center gap-1.5">
             <div className="h-3 w-3 rounded-full bg-emerald-500" />
-            <span className="text-zinc-300">On Shift</span>
+            <span className="text-zinc-300">On Site</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <div className="h-3 w-3 rounded-full bg-shield-500" />
-            <span className="text-zinc-300">Tracking</span>
+            <div className="h-3 w-3 rounded-full bg-amber-500" />
+            <span className="text-zinc-300">En Route</span>
           </div>
           <div className="flex items-center gap-1.5">
             <div className="h-3 w-3 rounded border border-dashed border-shield-400 bg-shield-500/10" />

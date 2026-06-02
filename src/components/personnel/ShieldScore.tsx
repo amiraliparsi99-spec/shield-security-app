@@ -45,7 +45,7 @@ const staticBadges: Badge[] = [
   { id: "8", name: "First Aider", icon: "🏥", description: "First aid certified", locked: true },
 ];
 
-const scoreBreakdown: ScoreBreakdown[] = [
+const scoreBreakdownBase: ScoreBreakdown[] = [
   { category: "Reliability", score: 98, weight: 30, description: "Check-ins, no-shows, cancellations" },
   { category: "Reviews", score: 4.8, weight: 25, description: "Average venue rating" },
   { category: "Experience", score: 85, weight: 20, description: "Shifts completed, years active" },
@@ -54,8 +54,11 @@ const scoreBreakdown: ScoreBreakdown[] = [
 ];
 
 export function ShieldScore() {
-  const [badges] = useState<Badge[]>(staticBadges);
+  const [badges, setBadges] = useState<Badge[]>(staticBadges);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [overallScore, setOverallScore] = useState(94);
+  const [trainingPoints, setTrainingPoints] = useState(0);
+  const [trainingCount, setTrainingCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -71,6 +74,39 @@ export function ShieldScore() {
         setLoading(false);
         return;
       }
+      const { data: personRow } = await supabase
+        .from("personnel")
+        .select("shield_score")
+        .eq("id", personnel.id)
+        .single();
+      if (typeof personRow?.shield_score === "number") {
+        setOverallScore(personRow.shield_score);
+      }
+
+      const { data: trainingRows } = await supabase
+        .from("training_completions")
+        .select("course_id,badge_name,points_earned,completed_at")
+        .eq("personnel_id", personnel.id);
+      const tRows = trainingRows || [];
+      setTrainingCount(tRows.length);
+      setTrainingPoints(tRows.reduce((s: number, r: any) => s + Number(r.points_earned || 0), 0));
+
+      if (tRows.length > 0) {
+        setBadges((prev) => {
+          const next = [...prev];
+          const idx = next.findIndex((b) => b.id === "6");
+          if (idx !== -1) {
+            next[idx] = {
+              ...next[idx],
+              name: "Training Certified",
+              description: `${tRows.length} module${tRows.length !== 1 ? "s" : ""} passed`,
+              locked: false,
+            };
+          }
+          return next;
+        });
+      }
+
       const { data: reviewRows } = await supabase
         .from("reviews")
         .select("id, reviewer_id, overall_rating, professionalism_rating, punctuality_rating, communication_rating, comment, created_at")
@@ -104,10 +140,19 @@ export function ShieldScore() {
     load();
   }, []);
 
-  const overallScore = 94;
   const reviewCount = reviews.length;
   const avgRating = reviewCount > 0 ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviewCount : 0;
   const earnedBadges = badges.filter(b => !b.locked).length;
+  const trainingMetric = Math.min(100, Math.round((trainingPoints / 600) * 100));
+  const scoreBreakdown: ScoreBreakdown[] = [
+    ...scoreBreakdownBase,
+    {
+      category: "Training",
+      score: trainingMetric,
+      weight: 10,
+      description: `${trainingCount} modules completed`,
+    },
+  ];
 
   const getScoreColor = (score: number) => {
     if (score >= 90) return "text-emerald-400";
@@ -203,6 +248,10 @@ export function ShieldScore() {
           <div>
             <p className="text-2xl font-bold text-white">{earnedBadges}</p>
             <p className="text-xs text-zinc-400">Badges</p>
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-white">{trainingCount}</p>
+            <p className="text-xs text-zinc-400">Training</p>
           </div>
         </div>
       </div>

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useSupabase, useUser } from "@/hooks";
+import Link from "next/link";
 
 type Shift = {
   id: string;
@@ -14,7 +15,14 @@ type Shift = {
   venue_name: string;
   venue_city: string;
   event_name: string;
+  attire_requirement?: string | null;
 };
+
+function extractAttireRequirement(briefNotes?: string | null): string | null {
+  if (!briefNotes) return null;
+  const match = briefNotes.match(/Attire requirement:\s*(.+)/i);
+  return match?.[1]?.trim() || null;
+}
 
 export default function JobsPage() {
   const supabase = useSupabase();
@@ -74,7 +82,7 @@ export default function JobsPage() {
       if (bookingIds.length > 0) {
         const { data: bookings, error: bookingsError } = await supabase
           .from('bookings')
-          .select('id, event_name, venue_id')
+          .select('id, event_name, venue_id, brief_notes')
           .in('id', bookingIds);
         
         console.log('Bookings fetched:', bookings, 'Error:', bookingsError);
@@ -97,7 +105,8 @@ export default function JobsPage() {
           bookings.forEach(b => {
             bookingsMap[b.id] = {
               event_name: b.event_name,
-              venue: venuesMap[b.venue_id] || { name: 'Venue', city: '' }
+              venue: venuesMap[b.venue_id] || { name: 'Venue', city: '' },
+              attire_requirement: extractAttireRequirement(b.brief_notes),
             };
           });
           
@@ -117,6 +126,7 @@ export default function JobsPage() {
           venue_name: booking.venue?.name || 'Venue',
           venue_city: booking.venue?.city || '',
           event_name: booking.event_name || 'Event',
+          attire_requirement: booking.attire_requirement || null,
         };
       };
 
@@ -182,6 +192,7 @@ export default function JobsPage() {
       `📅 ${formatDate(shift.scheduled_start)}\n` +
       `🕐 ${formatTime(shift.scheduled_start)} - ${formatTime(shift.scheduled_end)}\n` +
       `💰 £${pay}\n\n` +
+      `${shift.attire_requirement ? `👔 Attire: ${shift.attire_requirement}\n\n` : ""}` +
       `You're committing to this shift.`
     );
     
@@ -344,7 +355,7 @@ export default function JobsPage() {
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                 >
-                  <div className="p-4">
+                  <Link href={`/d/personnel/jobs/${shift.id}`} className="block p-4">
                     <div className="flex justify-between items-start mb-3">
                       <div>
                         <h3 className="font-bold text-white text-lg">{shift.event_name}</h3>
@@ -366,8 +377,13 @@ export default function JobsPage() {
                       <span className="bg-white/10 text-zinc-300 text-sm px-3 py-1.5 rounded-lg">
                         {shift.role}
                       </span>
+                      {shift.attire_requirement && (
+                        <span className="bg-blue-500/20 border border-blue-400/40 text-blue-300 text-sm px-3 py-1.5 rounded-lg">
+                          👔 {shift.attire_requirement}
+                        </span>
+                      )}
                     </div>
-                  </div>
+                  </Link>
                   
                   <button
                     onClick={() => claimShift(shift)}
@@ -414,6 +430,7 @@ export default function JobsPage() {
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                 >
+                  <Link href={`/d/personnel/jobs/${shift.id}`} className="block">
                   <div className="flex items-center gap-2 mb-3">
                     <span className="bg-emerald-500 text-black text-xs font-bold px-2.5 py-1 rounded-full">
                       CONFIRMED
@@ -441,7 +458,13 @@ export default function JobsPage() {
                     <span className="bg-black/30 text-zinc-300 text-sm px-3 py-1.5 rounded-lg">
                       {shift.role}
                     </span>
+                    {shift.attire_requirement && (
+                      <span className="bg-blue-500/20 border border-blue-400/40 text-blue-300 text-sm px-3 py-1.5 rounded-lg">
+                        👔 {shift.attire_requirement}
+                      </span>
+                    )}
                   </div>
+                  </Link>
                 </motion.div>
               );
             })

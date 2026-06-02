@@ -42,7 +42,9 @@ export function AppNav({ compact }: AppNavProps) {
     router.refresh();
   }
 
-  const hasRole = !!role;
+  // Only treat as "signed in dashboard user" when an auth session exists.
+  // This avoids showing "Your Venue" from stale guest-role localStorage.
+  const hasRole = !!user && !!role;
   const dashboardPath = role ? getRoleDashboardPath(role) : "/dashboard";
   const dashboardLabel = role ? `Your ${getRoleLabel(role)}` : "Your dashboard";
 
@@ -92,6 +94,7 @@ export function AppNav({ compact }: AppNavProps) {
           <div className="hidden md:flex items-center gap-0.5">
             <NavLink href="/how-it-works">How it works</NavLink>
             <NavLink href="/why-shield">Why Shield HQ</NavLink>
+            <NavLink href="/blog">Shield Weekly</NavLink>
             <NavLink href="/signup/venue">For Venues</NavLink>
             <NavLink href="/signup/personnel">For Security</NavLink>
           </div>

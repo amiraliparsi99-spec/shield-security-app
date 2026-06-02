@@ -39,21 +39,50 @@ function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const message = searchParams.get("message");
+  const redirectTo = searchParams.get("redirect");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showResend, setShowResend] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [resent, setResent] = useState(false);
+
+  async function handleResend() {
+    if (!email) return;
+    setResending(true);
+    const supabase = createClient();
+    await supabase.auth.resend({ type: "signup", email });
+    setResending(false);
+    setResent(true);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setShowResend(false);
+    setResent(false);
     setLoading(true);
 
     const supabase = createClient();
     const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
 
     if (signInError) {
-      setError("Invalid email or password.");
+      const msg = signInError.message.toLowerCase();
+
+      if (msg.includes("email not confirmed") || msg.includes("not confirmed")) {
+        setError("Your email has not been confirmed yet. Check your inbox for a verification link.");
+        setShowResend(true);
+      } else if (msg.includes("invalid login") || msg.includes("invalid email or password")) {
+        setError("Invalid email or password.");
+      } else if (msg.includes("rate") || msg.includes("too many")) {
+        setError("Too many login attempts. Please wait a minute and try again.");
+      } else if (msg.includes("disabled") || msg.includes("banned")) {
+        setError("This account has been disabled. Please contact support.");
+      } else {
+        setError(signInError.message);
+      }
+
       setLoading(false);
       return;
     }
@@ -66,8 +95,18 @@ function LoginContent() {
     }
 
     const role = await getProfileRole(supabase, userId);
-    const path = role ? getRoleDashboardPath(role) : "/dashboard";
-    router.push(path);
+    if (role && ["venue", "personnel", "agency", "admin"].includes(role)) {
+      localStorage.setItem("shield_guest_role", role);
+      document.cookie = `shield_guest_role=${role}; path=/; max-age=${60 * 60 * 24 * 30}`;
+    }
+
+    // Honour the redirect param from middleware, otherwise go to role dashboard
+    if (redirectTo && redirectTo.startsWith("/")) {
+      router.push(redirectTo);
+    } else {
+      const path = role ? getRoleDashboardPath(role) : "/dashboard";
+      router.push(path);
+    }
     router.refresh();
   }
 
@@ -131,10 +170,32 @@ function LoginContent() {
               </div>
             )}
 
+            {message === "password_updated" && (
+              <div className="mt-6 rounded-2xl border border-[#00d4aa]/30 bg-[#00d4aa]/10 px-4 py-3 text-sm text-[#5eead4]">
+                Your password has been updated. Log in with your new password.
+              </div>
+            )}
+
             <form className="mt-8 space-y-5" onSubmit={handleSubmit}>
               {error && (
                 <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
                   {error}
+                  {showResend && (
+                    <div className="mt-3 pt-3 border-t border-red-500/20">
+                      {resent ? (
+                        <span className="text-[#5eead4]">Verification email sent! Check your inbox.</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleResend}
+                          disabled={resending}
+                          className="text-[#00d4aa] hover:text-[#5eead4] font-medium transition disabled:opacity-50"
+                        >
+                          {resending ? "Sending..." : "Resend verification email"}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 

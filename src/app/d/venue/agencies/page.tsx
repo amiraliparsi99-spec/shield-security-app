@@ -209,7 +209,7 @@ export default function VenueAgenciesPage() {
                     </Link>
                   )}
                   <Link
-                    href={`/d/venue/messages`}
+                    href={`/d/venue/mission-control`}
                     className="rounded-lg border border-white/10 px-4 py-2 text-sm font-medium text-zinc-300 transition hover:bg-white/5"
                   >
                     Message

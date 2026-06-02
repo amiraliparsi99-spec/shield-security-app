@@ -9,6 +9,7 @@ interface PersonnelProfileProps {
   personnel: Personnel;
   avatarUrl?: string | null;
   reviews: PersonnelReviewWithAuthor[];
+  showMessageButton?: boolean;
 }
 
 function Stars({ value, size = "md" }: { value: number; size?: "sm" | "md" }) {
@@ -54,7 +55,7 @@ function StatusBadge({ status }: { status: Personnel["status"] }) {
   );
 }
 
-export function PersonnelProfile({ personnel, avatarUrl, reviews }: PersonnelProfileProps) {
+export function PersonnelProfile({ personnel, avatarUrl, reviews, showMessageButton = true }: PersonnelProfileProps) {
   const avgRating = reviews.length
     ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length
     : null;
@@ -99,7 +100,7 @@ export function PersonnelProfile({ personnel, avatarUrl, reviews }: PersonnelPro
             <span>{formatExperience(personnel)}</span>
           </div>
 
-          {personnel.user_id && (
+          {showMessageButton && personnel.user_id && (
             <Link
               href={"/chat/start?with=" + encodeURIComponent(personnel.user_id)}
               className="mt-4 inline-flex items-center gap-2 rounded-xl bg-shield-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-shield-500/20 transition hover:bg-shield-600 active:scale-[0.98]"

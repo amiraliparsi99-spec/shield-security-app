@@ -1,1 +1,5 @@
-export { default } from "../../venue/ai/page";
+import { redirect } from "next/navigation";
+
+export default function AgencyAIPage() {
+  redirect("/d/agency");
+}

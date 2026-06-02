@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSupabase } from "@/hooks/useSupabase";
 import {
-  getUserGroupChats,
+  getMissionControlChats,
   getGroupChat,
   getGroupChatMessages,
   sendGroupMessage,
@@ -16,11 +16,29 @@ import {
   type GroupChatMember,
   type GroupChatMessage,
 } from "@/lib/db/mission-control";
+import {
+  fetchBookingStatusesForIds,
+  fetchShiftSummariesForBookings,
+  matchesPassedSubFilter,
+  venueMissionMeta,
+  type MissionBucket,
+  type PassedSubFilter,
+  type ShiftMissionSummary,
+} from "@/lib/mission-control/chatBuckets";
 import { CallButton } from "@/components/calling/CallButton";
 
 export default function AgencyMissionControlPage() {
   const supabase = useSupabase();
   const [chats, setChats] = useState<GroupChat[]>([]);
+  const [shiftsByBooking, setShiftsByBooking] = useState<
+    Record<string, ShiftMissionSummary[]>
+  >({});
+  const [bookingById, setBookingById] = useState<Record<string, { status: string }>>(
+    {}
+  );
+  const [bucketTab, setBucketTab] = useState<MissionBucket>("live");
+  const [passedSubFilter, setPassedSubFilter] = useState<PassedSubFilter>("all");
+  const didPickInitialChat = useRef(false);
   const [activeChat, setActiveChat] = useState<GroupChat | null>(null);
   const [members, setMembers] = useState<GroupChatMember[]>([]);
   const [messages, setMessages] = useState<GroupChatMessage[]>([]);
@@ -36,25 +54,6 @@ export default function AgencyMissionControlPage() {
     supabase.auth.getUser().then(({ data: { user } }) => {
       setUserId(user?.id || null);
     });
-  }, [supabase]);
-
-  // Load chats
-  useEffect(() => {
-    const loadChats = async () => {
-      setLoading(true);
-      try {
-        const data = await getUserGroupChats(supabase);
-        setChats(data as GroupChat[]);
-        if (data.length > 0 && !activeChat) {
-          selectChat(data[0] as GroupChat);
-        }
-      } catch (e) {
-        console.error("Error loading chats:", e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadChats();
   }, [supabase]);
 
   // Subscribe to messages when chat is selected
@@ -90,6 +89,82 @@ export default function AgencyMissionControlPage() {
     setMessages(messagesData);
     markMessagesAsRead(supabase, chat.id);
   };
+
+  const visibleChats = useMemo(
+    () =>
+      chats.filter((c) => {
+        const meta = venueMissionMeta(
+          c.booking_id,
+          c.booking_id ? bookingById[c.booking_id]?.status : undefined,
+          c.booking_id ? shiftsByBooking[c.booking_id] : undefined
+        );
+        if (bucketTab === "live") return meta.bucket === "live";
+        if (!matchesPassedSubFilter(meta.bucket, meta.passedKind, passedSubFilter)) {
+          return false;
+        }
+        return meta.bucket === "passed";
+      }),
+    [chats, bucketTab, passedSubFilter, shiftsByBooking, bookingById]
+  );
+
+  useEffect(() => {
+    const loadChats = async () => {
+      setLoading(true);
+      try {
+        const data = await getMissionControlChats(supabase);
+        setChats(data as GroupChat[]);
+        const bookingIds = [
+          ...new Set(
+            (data as GroupChat[]).map((c) => c.booking_id).filter(Boolean)
+          ),
+        ] as string[];
+        const [shiftsMap, bookingsMap] = await Promise.all([
+          fetchShiftSummariesForBookings(supabase, bookingIds),
+          fetchBookingStatusesForIds(supabase, bookingIds),
+        ]);
+        setShiftsByBooking(shiftsMap);
+        setBookingById(bookingsMap);
+
+        const metaFor = (c: GroupChat) =>
+          venueMissionMeta(
+            c.booking_id,
+            c.booking_id ? bookingsMap[c.booking_id]?.status : undefined,
+            c.booking_id ? shiftsMap[c.booking_id] : undefined
+          );
+
+        const firstLive = (data as GroupChat[]).find(
+          (c) => metaFor(c).bucket === "live"
+        );
+        const firstPassed = (data as GroupChat[]).find(
+          (c) => metaFor(c).bucket === "passed"
+        );
+        const pick = firstLive || firstPassed || null;
+        if (pick && !didPickInitialChat.current) {
+          didPickInitialChat.current = true;
+          void selectChat(pick);
+        }
+      } catch (e) {
+        console.error("Error loading chats:", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadChats();
+  }, [supabase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!activeChat) return;
+    const stillVisible = visibleChats.some((c) => c.id === activeChat.id);
+    if (stillVisible) return;
+    if (visibleChats.length > 0) {
+      void selectChat(visibleChats[0]);
+    } else {
+      setActiveChat(null);
+      setMembers([]);
+      setMessages([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bucketTab, passedSubFilter, visibleChats, activeChat]);
 
   const handleSend = async () => {
     if (!newMessage.trim() || !activeChat || sending) return;
@@ -202,34 +277,102 @@ export default function AgencyMissionControlPage() {
           <p className="text-sm text-zinc-400">Manage staff communications</p>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
-          {chats.length > 0 ? (
-            chats.map((chat) => (
+        <div className="px-3 pb-2 border-b border-white/5 space-y-2">
+          <div className="flex rounded-lg bg-zinc-900 p-0.5 gap-0.5">
+            {(["live", "passed"] as const).map((tab) => (
               <button
-                key={chat.id}
-                onClick={() => selectChat(chat)}
-                className={`w-full p-4 text-left border-b border-white/5 transition ${
-                  activeChat?.id === chat.id
-                    ? "bg-shield-500/10"
-                    : "hover:bg-white/5"
+                key={tab}
+                type="button"
+                onClick={() => {
+                  setBucketTab(tab);
+                  if (tab === "live") setPassedSubFilter("all");
+                }}
+                className={`flex-1 rounded-md py-1.5 text-xs font-semibold transition ${
+                  bucketTab === tab
+                    ? "bg-shield-600 text-white"
+                    : "text-zinc-400 hover:text-white"
                 }`}
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-shield-500 to-shield-600 flex items-center justify-center">
-                    <span className="text-lg">🛡️</span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-white font-medium truncate">{chat.name}</p>
-                    <p className="text-xs text-zinc-500">
-                      {chat.event_date && formatDate(chat.event_date)}
-                    </p>
-                  </div>
-                  {chat.is_active && (
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                  )}
-                </div>
+                {tab === "live" ? "Live" : "Passed"}
               </button>
-            ))
+            ))}
+          </div>
+          {bucketTab === "passed" && (
+            <div className="flex flex-wrap gap-1">
+              {(
+                [
+                  { id: "all" as const, label: "All" },
+                  { id: "cancelled" as const, label: "Cancelled" },
+                  { id: "completed" as const, label: "Completed" },
+                ] as const
+              ).map(({ id, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setPassedSubFilter(id)}
+                  className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium border transition ${
+                    passedSubFilter === id
+                      ? "border-shield-500/60 bg-shield-500/20 text-shield-100"
+                      : "border-white/10 text-zinc-400 hover:border-white/20"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {chats.length > 0 ? (
+            visibleChats.length > 0 ? (
+              visibleChats.map((chat) => {
+                const rowMeta = venueMissionMeta(
+                  chat.booking_id,
+                  chat.booking_id ? bookingById[chat.booking_id]?.status : undefined,
+                  chat.booking_id ? shiftsByBooking[chat.booking_id] : undefined
+                );
+                return (
+                  <button
+                    key={chat.id}
+                    onClick={() => selectChat(chat)}
+                    className={`w-full p-4 text-left border-b border-white/5 transition ${
+                      activeChat?.id === chat.id
+                        ? "bg-shield-500/10"
+                        : "hover:bg-white/5"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-shield-500 to-shield-600 flex items-center justify-center">
+                        <span className="text-lg">🛡️</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white font-medium truncate">{chat.name}</p>
+                        <p className="text-xs text-zinc-500">
+                          {chat.event_date && formatDate(chat.event_date)}
+                          {rowMeta.bucket === "passed" && rowMeta.passedKind === "cancelled" ? (
+                            <span className="ml-1.5 text-amber-400/90">· Cancelled</span>
+                          ) : null}
+                        </p>
+                      </div>
+                      {rowMeta.bucket === "live" && chat.is_active && (
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      )}
+                    </div>
+                  </button>
+                );
+              })
+            ) : (
+              <div className="p-6 text-center text-sm text-zinc-500">
+                {bucketTab === "live"
+                  ? "No live missions. Open Passed for ended or cancelled events."
+                  : passedSubFilter === "cancelled"
+                    ? "No cancelled shifts in Passed for this filter."
+                    : passedSubFilter === "completed"
+                      ? "No completed-only missions match this filter."
+                      : "Nothing in Passed yet."}
+              </div>
+            )
           ) : (
             <div className="p-8 text-center">
               <div className="w-16 h-16 rounded-full bg-zinc-800 flex items-center justify-center mx-auto mb-4">

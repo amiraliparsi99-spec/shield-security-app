@@ -3,8 +3,6 @@ import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { getProfileRole, getRoleDashboardPath } from "@/lib/auth";
 import { PersonnelSidebar, PersonnelMobileNav } from "@/components/personnel/PersonnelSidebar";
-import { ShieldAIWrapper } from "@/components/ai/ShieldAIWrapper";
-
 async function getPersonnelDetails(supabase: any, userId: string) {
   // Try to get personnel details
   const { data: personnel } = await supabase
@@ -60,9 +58,6 @@ export default async function PersonnelDashboardLayout({
 
       {/* Mobile bottom navigation */}
       <PersonnelMobileNav />
-
-      {/* Shield AI Assistant */}
-      <ShieldAIWrapper userRole="personnel" />
     </div>
   );
 }

@@ -83,11 +83,6 @@ const icons = {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
     </svg>
   ),
-  ai: (
-    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l.8 1.2a2.25 2.25 0 01-.387 2.97l-5.463 4.91a2.25 2.25 0 01-3 0l-5.463-4.91a2.25 2.25 0 01-.387-2.97l.8-1.2" />
-    </svg>
-  ),
   currency: (
     <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -133,17 +128,6 @@ const navGroups: NavGroup[] = [
     defaultOpen: true,
     items: [
       { href: "/d/venue/bookings", label: "Bookings", icon: icons.calendar },
-      { href: "/d/venue/requests", label: "Requests", icon: icons.briefcase },
-    ],
-  },
-  {
-    label: "Agencies",
-    icon: icons.building,
-    defaultOpen: false,
-    comingSoon: true,
-    items: [
-      { href: "/d/venue/agencies", label: "Browse Agencies", icon: icons.building },
-      { href: "/d/venue/partnerships", label: "Partnerships", icon: icons.users },
     ],
   },
   {
@@ -166,19 +150,10 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    label: "Communication",
-    icon: icons.chat,
-    defaultOpen: false,
-    items: [
-      { href: "/d/venue/messages", label: "Messages", icon: icons.chat },
-    ],
-  },
-  {
     label: "Analytics & Finance",
     icon: icons.chart,
     defaultOpen: false,
     items: [
-      { href: "/d/venue/ai", label: "Shield AI", icon: icons.ai, badge: "AI" },
       { href: "/d/venue/spend", label: "Spend Dashboard", icon: icons.currency },
     ],
   },
@@ -194,7 +169,7 @@ const mobileNavItems: NavItem[] = [
   { href: "/d/venue", label: "Overview", icon: icons.home },
   { href: "/d/venue/bookings", label: "Bookings", icon: icons.calendar },
   { href: "/d/venue/live", label: "Live", icon: icons.eye },
-  { href: "/d/venue/messages", label: "Messages", icon: icons.chat },
+  { href: "/d/venue/mission-control", label: "Mission Control", icon: icons.chat },
 ];
 
 interface VenueSidebarProps {
@@ -426,15 +401,6 @@ export function VenueSidebar({ venueName, isVerified }: VenueSidebarProps) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
           Book Security
-        </Link>
-        <Link
-          href="/d/venue/requests/new"
-          className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-sm font-medium text-zinc-300 transition hover:bg-white/5"
-        >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-          </svg>
-          Post Request
         </Link>
       </div>
     </aside>

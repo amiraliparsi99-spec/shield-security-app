@@ -152,7 +152,7 @@ export default function VenuePartnershipsPage() {
                   </Link>
                 )}
                 <Link
-                  href="/d/venue/messages"
+                  href="/d/venue/mission-control"
                   className="rounded-lg border border-white/10 px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-white/5"
                 >
                   Message

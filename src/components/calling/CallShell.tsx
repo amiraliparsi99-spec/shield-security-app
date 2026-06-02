@@ -16,7 +16,7 @@ export function CallShell({ children }: CallShellProps) {
   const pathname = usePathname();
   const callEnabled =
     pathname?.startsWith("/d/venue/mission-control") ||
-    pathname?.startsWith("/d/venue/messages") ||
+    pathname?.startsWith("/d/venue/mission-control") ||
     pathname?.startsWith("/d/venue/bookings/") ||
     pathname?.startsWith("/chat");
 

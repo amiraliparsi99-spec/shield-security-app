@@ -94,6 +94,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe();
   }, [supabase.auth, fetchRole]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const validRoles: Role[] = ["venue", "personnel", "agency", "admin"];
+
+    if (user && role && validRoles.includes(role)) {
+      localStorage.setItem("shield_guest_role", role);
+      document.cookie = `shield_guest_role=${role}; path=/; max-age=${60 * 60 * 24 * 30}`;
+      return;
+    }
+
+    if (!user) {
+      localStorage.removeItem("shield_guest_role");
+      document.cookie = "shield_guest_role=; path=/; max-age=0";
+    }
+  }, [user, role]);
+
   return (
     <AuthContext.Provider value={{ user, role, loading, refetchRole }}>
       {children}

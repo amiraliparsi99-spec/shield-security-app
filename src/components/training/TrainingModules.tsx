@@ -1,7 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { createClient } from "@/lib/supabase/client";
+import {
+  getQuizForCourse,
+  TRAINING_PASS_CORRECT,
+  TRAINING_QUIZ_LENGTH,
+  type QuizQuestion,
+} from "@/data/training-quizzes";
 
 interface TrainingCourse {
   id: string;
@@ -18,14 +25,6 @@ interface TrainingCourse {
   progress?: number;
   thumbnail?: string;
   elite_required?: boolean;
-}
-
-interface QuizQuestion {
-  id: string;
-  question: string;
-  options: string[];
-  correct_index: number;
-  explanation: string;
 }
 
 const CATEGORIES = [
@@ -161,46 +160,6 @@ const COURSES: TrainingCourse[] = [
   },
 ];
 
-// Sample quiz for Counter-Terrorism module
-const CT_QUIZ: QuizQuestion[] = [
-  {
-    id: "1",
-    question: "What does the ACT acronym stand for in counter-terrorism?",
-    options: [
-      "Alert, Control, Take action",
-      "Action Counters Terrorism",
-      "Assess, Contain, Terminate",
-      "Awareness Creates Trust",
-    ],
-    correct_index: 1,
-    explanation: "ACT stands for 'Action Counters Terrorism' - the national campaign encouraging everyone to report suspicious activity.",
-  },
-  {
-    id: "2",
-    question: "You notice someone photographing security cameras and emergency exits. What should you do FIRST?",
-    options: [
-      "Confront them immediately",
-      "Call the police",
-      "Observe and report to your supervisor",
-      "Take their phone",
-    ],
-    correct_index: 2,
-    explanation: "Always observe and report suspicious behavior to your supervisor first. They can assess the situation and escalate appropriately.",
-  },
-  {
-    id: "3",
-    question: "If you discover an unattended bag, the correct procedure is to:",
-    options: [
-      "Open it to check contents",
-      "Move it outside",
-      "Do not touch it, clear the area, report to supervisor",
-      "Announce it over the PA system",
-    ],
-    correct_index: 2,
-    explanation: "Never touch or move suspicious items. Clear the area and report immediately. The 4 Cs: Confirm, Clear, Cordon, Control.",
-  },
-];
-
 export function TrainingModules() {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedCourse, setSelectedCourse] = useState<TrainingCourse | null>(null);
@@ -210,6 +169,73 @@ export function TrainingModules() {
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [showExplanation, setShowExplanation] = useState(false);
   const [correctAnswers, setCorrectAnswers] = useState(0);
+  const [sessionCompletedIds, setSessionCompletedIds] = useState<Set<string>>(() => new Set());
+  const [dbCompletedIds, setDbCompletedIds] = useState<Set<string>>(() => new Set());
+
+  const activeQuiz: QuizQuestion[] | null = useMemo(
+    () => (selectedCourse ? getQuizForCourse(selectedCourse.id) : null),
+    [selectedCourse?.id]
+  );
+
+  const sessionPoints = useMemo(() => {
+    let pts = 0;
+    for (const c of COURSES) {
+      if (sessionCompletedIds.has(c.id)) pts += c.points;
+    }
+    return pts;
+  }, [sessionCompletedIds]);
+
+  useEffect(() => {
+    const loadCompletions = async () => {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: personnel } = await supabase.from("personnel").select("id").eq("user_id", user.id).single();
+      if (!personnel?.id) return;
+      const { data: rows } = await supabase
+        .from("training_completions")
+        .select("course_id")
+        .eq("personnel_id", personnel.id);
+      setDbCompletedIds(new Set((rows || []).map((r: any) => r.course_id as string)));
+    };
+    loadCompletions();
+  }, []);
+
+  useEffect(() => {
+    if (courseState !== "complete" || !selectedCourse || !activeQuiz?.length) return;
+    if (correctAnswers < TRAINING_PASS_CORRECT) return;
+    setSessionCompletedIds((prev) => {
+      if (prev.has(selectedCourse.id)) return prev;
+      const next = new Set(prev);
+      next.add(selectedCourse.id);
+      return next;
+    });
+  }, [courseState, selectedCourse?.id, correctAnswers, activeQuiz?.length]);
+
+  useEffect(() => {
+    const persistPass = async () => {
+      if (courseState !== "complete" || !selectedCourse || !activeQuiz?.length) return;
+      if (correctAnswers < TRAINING_PASS_CORRECT) return;
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: personnel } = await supabase.from("personnel").select("id").eq("user_id", user.id).single();
+      if (!personnel?.id) return;
+      await supabase.rpc("apply_training_completion", {
+        p_personnel_id: personnel.id,
+        p_course_id: selectedCourse.id,
+        p_badge_name: selectedCourse.badge_name,
+        p_points_earned: selectedCourse.points,
+        p_quiz_score: Math.round((correctAnswers / Math.max(activeQuiz.length, 1)) * 100),
+      });
+      setDbCompletedIds((prev) => {
+        const next = new Set(prev);
+        next.add(selectedCourse.id);
+        return next;
+      });
+    };
+    persistPass();
+  }, [courseState, selectedCourse?.id, correctAnswers, activeQuiz?.length]);
 
   const filteredCourses = selectedCategory === "all" 
     ? COURSES 
@@ -224,22 +250,33 @@ export function TrainingModules() {
   };
 
   const handleAnswerSelect = (index: number) => {
-    if (selectedAnswer !== null) return;
+    if (selectedAnswer !== null || !activeQuiz?.length) return;
+    const q = activeQuiz[quizIndex];
+    if (!q) return;
     setSelectedAnswer(index);
     setShowExplanation(true);
-    if (index === CT_QUIZ[quizIndex].correct_index) {
-      setCorrectAnswers(prev => prev + 1);
+    if (index === q.correct_index) {
+      setCorrectAnswers((prev) => prev + 1);
     }
   };
 
   const nextQuestion = () => {
-    if (quizIndex < CT_QUIZ.length - 1) {
-      setQuizIndex(prev => prev + 1);
+    if (!activeQuiz?.length) return;
+    if (quizIndex < activeQuiz.length - 1) {
+      setQuizIndex((prev) => prev + 1);
       setSelectedAnswer(null);
       setShowExplanation(false);
     } else {
       setCourseState("complete");
     }
+  };
+
+  const retryQuiz = () => {
+    setQuizIndex(0);
+    setSelectedAnswer(null);
+    setShowExplanation(false);
+    setCorrectAnswers(0);
+    setCourseState("quiz");
   };
 
   const closeCourse = () => {
@@ -273,16 +310,23 @@ export function TrainingModules() {
             <span className="text-2xl">🎓</span>
             <div>
               <p className="text-sm font-medium text-white">Your Progress</p>
-              <p className="text-xs text-zinc-500">3 of {COURSES.length} courses completed</p>
+              <p className="text-xs text-zinc-500">
+                {new Set([...Array.from(sessionCompletedIds), ...Array.from(dbCompletedIds)]).size} of {COURSES.length} courses completed
+              </p>
             </div>
           </div>
           <div className="text-right">
-            <p className="text-lg font-bold text-white">145 pts</p>
-            <p className="text-xs text-zinc-500">Total earned</p>
+            <p className="text-lg font-bold text-white">{sessionPoints} pts</p>
+            <p className="text-xs text-zinc-500">Earned this session</p>
           </div>
         </div>
         <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-          <div className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full" style={{ width: "30%" }} />
+          <div
+            className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full"
+            style={{
+              width: `${COURSES.length ? Math.min(100, (new Set([...Array.from(sessionCompletedIds), ...Array.from(dbCompletedIds)]).size / COURSES.length) * 100) : 0}%`,
+            }}
+          />
         </div>
       </div>
 
@@ -322,7 +366,7 @@ export function TrainingModules() {
                   ⭐ Elite
                 </span>
               )}
-              {course.completed && (
+              {(course.completed || sessionCompletedIds.has(course.id) || dbCompletedIds.has(course.id)) && (
                 <span className="px-2 py-0.5 rounded-full bg-green-500/20 text-xs text-green-400 font-medium">
                   ✓ Done
                 </span>
@@ -470,14 +514,19 @@ export function TrainingModules() {
                       <button
                         onClick={() => {
                           if (currentLesson < selectedCourse.lessons - 1) {
-                            setCurrentLesson(prev => prev + 1);
-                          } else {
+                            setCurrentLesson((prev) => prev + 1);
+                          } else if (activeQuiz?.length) {
                             setCourseState("quiz");
                           }
                         }}
-                        className="flex-1 py-2 rounded-xl bg-blue-600 text-white font-medium hover:bg-blue-500 transition-colors"
+                        disabled={currentLesson >= selectedCourse.lessons - 1 && !activeQuiz?.length}
+                        className="flex-1 py-2 rounded-xl bg-blue-600 text-white font-medium hover:bg-blue-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                       >
-                        {currentLesson < selectedCourse.lessons - 1 ? "Next Lesson →" : "Take Quiz →"}
+                        {currentLesson < selectedCourse.lessons - 1
+                          ? "Next Lesson →"
+                          : activeQuiz?.length
+                            ? "Take Quiz →"
+                            : "Quiz unavailable"}
                       </button>
                     </div>
                   </div>
@@ -485,125 +534,177 @@ export function TrainingModules() {
               )}
 
               {/* Quiz View */}
-              {courseState === "quiz" && (
-                <div className="p-6">
-                  <div className="flex items-center justify-between mb-6">
-                    <h2 className="text-lg font-semibold text-white">Knowledge Check</h2>
-                    <span className="text-sm text-zinc-500">
-                      Question {quizIndex + 1} of {CT_QUIZ.length}
-                    </span>
-                  </div>
-
-                  <div className="mb-6">
-                    <p className="text-white mb-4">{CT_QUIZ[quizIndex].question}</p>
-                    
-                    <div className="space-y-3">
-                      {CT_QUIZ[quizIndex].options.map((option, i) => {
-                        const isSelected = selectedAnswer === i;
-                        const isCorrect = i === CT_QUIZ[quizIndex].correct_index;
-                        const showResult = selectedAnswer !== null;
-                        
-                        return (
-                          <button
-                            key={i}
-                            onClick={() => handleAnswerSelect(i)}
-                            disabled={selectedAnswer !== null}
-                            className={`w-full p-4 rounded-xl text-left transition-all border ${
-                              showResult
-                                ? isCorrect
-                                  ? "bg-green-500/20 border-green-500/50 text-green-300"
-                                  : isSelected
-                                  ? "bg-red-500/20 border-red-500/50 text-red-300"
-                                  : "bg-white/5 border-white/10 text-zinc-500"
-                                : "bg-white/5 border-white/10 text-white hover:bg-white/10 hover:border-blue-500/50"
-                            }`}
-                          >
-                            <div className="flex items-center gap-3">
-                              <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium ${
-                                showResult && isCorrect
-                                  ? "bg-green-500 text-white"
-                                  : showResult && isSelected
-                                  ? "bg-red-500 text-white"
-                                  : "bg-white/10 text-zinc-400"
-                              }`}>
-                                {showResult && isCorrect ? "✓" : showResult && isSelected ? "✗" : String.fromCharCode(65 + i)}
-                              </span>
-                              {option}
-                            </div>
-                          </button>
-                        );
-                      })}
+              {courseState === "quiz" &&
+                (activeQuiz && activeQuiz[quizIndex] ? (
+                  <div className="p-6">
+                    <div className="flex items-center justify-between mb-6">
+                      <h2 className="text-lg font-semibold text-white">Knowledge Check</h2>
+                      <span className="text-sm text-zinc-500">
+                        Question {quizIndex + 1} of {activeQuiz.length}
+                      </span>
                     </div>
+
+                    <p className="text-xs text-zinc-500 mb-4">
+                      Pass mark: {TRAINING_PASS_CORRECT}/{TRAINING_QUIZ_LENGTH} ({Math.round((TRAINING_PASS_CORRECT / TRAINING_QUIZ_LENGTH) * 100)}%). Free retries until you pass.
+                    </p>
+
+                    <div className="mb-6">
+                      <p className="text-white mb-4">{activeQuiz[quizIndex].question}</p>
+
+                      <div className="space-y-3">
+                        {activeQuiz[quizIndex].options.map((option, i) => {
+                          const isSelected = selectedAnswer === i;
+                          const isCorrect = i === activeQuiz[quizIndex].correct_index;
+                          const showResult = selectedAnswer !== null;
+
+                          return (
+                            <button
+                              key={i}
+                              onClick={() => handleAnswerSelect(i)}
+                              disabled={selectedAnswer !== null}
+                              className={`w-full p-4 rounded-xl text-left transition-all border ${
+                                showResult
+                                  ? isCorrect
+                                    ? "bg-green-500/20 border-green-500/50 text-green-300"
+                                    : isSelected
+                                      ? "bg-red-500/20 border-red-500/50 text-red-300"
+                                      : "bg-white/5 border-white/10 text-zinc-500"
+                                  : "bg-white/5 border-white/10 text-white hover:bg-white/10 hover:border-blue-500/50"
+                              }`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <span
+                                  className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium ${
+                                    showResult && isCorrect
+                                      ? "bg-green-500 text-white"
+                                      : showResult && isSelected
+                                        ? "bg-red-500 text-white"
+                                        : "bg-white/10 text-zinc-400"
+                                  }`}
+                                >
+                                  {showResult && isCorrect
+                                    ? "✓"
+                                    : showResult && isSelected
+                                      ? "✗"
+                                      : String.fromCharCode(65 + i)}
+                                </span>
+                                {option}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {showExplanation && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 mb-6"
+                      >
+                        <p className="text-sm text-blue-300">
+                          <strong>Explanation:</strong> {activeQuiz[quizIndex].explanation}
+                        </p>
+                      </motion.div>
+                    )}
+
+                    {showExplanation && (
+                      <button
+                        onClick={nextQuestion}
+                        className="w-full py-3 rounded-xl bg-blue-600 text-white font-medium hover:bg-blue-500 transition-colors"
+                      >
+                        {quizIndex < activeQuiz.length - 1 ? "Next Question →" : "See results →"}
+                      </button>
+                    )}
                   </div>
-
-                  {/* Explanation */}
-                  {showExplanation && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 mb-6"
-                    >
-                      <p className="text-sm text-blue-300">
-                        <strong>Explanation:</strong> {CT_QUIZ[quizIndex].explanation}
-                      </p>
-                    </motion.div>
-                  )}
-
-                  {showExplanation && (
+                ) : (
+                  <div className="p-6 text-center">
+                    <p className="text-zinc-400 mb-4">No quiz is available for this module yet.</p>
                     <button
-                      onClick={nextQuestion}
-                      className="w-full py-3 rounded-xl bg-blue-600 text-white font-medium hover:bg-blue-500 transition-colors"
+                      onClick={closeCourse}
+                      className="w-full py-3 rounded-xl bg-white/10 text-white font-medium hover:bg-white/20 transition-colors"
                     >
-                      {quizIndex < CT_QUIZ.length - 1 ? "Next Question →" : "Complete Course →"}
+                      Close
                     </button>
-                  )}
-                </div>
-              )}
+                  </div>
+                ))}
 
               {/* Completion View */}
-              {courseState === "complete" && (
-                <div className="p-6 text-center">
-                  <motion.div
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    transition={{ type: "spring", delay: 0.2 }}
-                    className="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center"
-                  >
-                    <span className="text-5xl">{selectedCourse.badge}</span>
-                  </motion.div>
+              {courseState === "complete" && (() => {
+                const totalQ = activeQuiz?.length ?? TRAINING_QUIZ_LENGTH;
+                const passed = correctAnswers >= TRAINING_PASS_CORRECT;
+                return (
+                  <div className="p-6 text-center">
+                    <motion.div
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ type: "spring", delay: 0.2 }}
+                      className="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center"
+                    >
+                      <span className="text-5xl">{selectedCourse.badge}</span>
+                    </motion.div>
 
-                  <h2 className="text-2xl font-bold text-white mb-2">Course Complete!</h2>
-                  <p className="text-zinc-400 mb-6">
-                    You scored {correctAnswers}/{CT_QUIZ.length} on the quiz
-                  </p>
-
-                  <div className="grid grid-cols-2 gap-4 mb-6">
-                    <div className="p-4 rounded-xl bg-white/5">
-                      <p className="text-2xl mb-1">{selectedCourse.badge}</p>
-                      <p className="text-sm text-white font-medium">"{selectedCourse.badge_name}"</p>
-                      <p className="text-xs text-zinc-500">Badge Earned</p>
-                    </div>
-                    <div className="p-4 rounded-xl bg-white/5">
-                      <p className="text-2xl font-bold text-blue-400">+{selectedCourse.points}</p>
-                      <p className="text-sm text-white font-medium">Points Earned</p>
-                      <p className="text-xs text-zinc-500">Toward next tier</p>
-                    </div>
-                  </div>
-
-                  <div className="p-4 rounded-xl bg-gradient-to-br from-green-500/10 to-emerald-500/10 border border-green-500/20 mb-6">
-                    <p className="text-green-400 text-sm">
-                      ✓ Added to your Training Passport • Visible to all venues
+                    <h2 className="text-2xl font-bold text-white mb-2">
+                      {passed ? "Course complete!" : "Not quite — try again"}
+                    </h2>
+                    <p className="text-zinc-400 mb-2">
+                      You scored {correctAnswers}/{totalQ} (
+                      {totalQ ? Math.round((correctAnswers / totalQ) * 100) : 0}%)
                     </p>
-                  </div>
+                    {!passed && (
+                      <p className="text-sm text-amber-400/90 mb-6">
+                        You need {TRAINING_PASS_CORRECT}/{TRAINING_QUIZ_LENGTH} to pass. Retry the quiz for free as many
+                        times as you need.
+                      </p>
+                    )}
+                    {passed && <p className="text-zinc-500 text-sm mb-6">Great work — you met the pass mark.</p>}
 
-                  <button
-                    onClick={closeCourse}
-                    className="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-500 transition-colors"
-                  >
-                    Continue Learning
-                  </button>
-                </div>
-              )}
+                    {passed ? (
+                      <>
+                        <div className="grid grid-cols-2 gap-4 mb-6">
+                          <div className="p-4 rounded-xl bg-white/5">
+                            <p className="text-2xl mb-1">{selectedCourse.badge}</p>
+                            <p className="text-sm text-white font-medium">&quot;{selectedCourse.badge_name}&quot;</p>
+                            <p className="text-xs text-zinc-500">Badge earned</p>
+                          </div>
+                          <div className="p-4 rounded-xl bg-white/5">
+                            <p className="text-2xl font-bold text-blue-400">+{selectedCourse.points}</p>
+                            <p className="text-sm text-white font-medium">Points (this session)</p>
+                            <p className="text-xs text-zinc-500">Toward next tier</p>
+                          </div>
+                        </div>
+
+                        <div className="p-4 rounded-xl bg-gradient-to-br from-green-500/10 to-emerald-500/10 border border-green-500/20 mb-6">
+                          <p className="text-green-400 text-sm">
+                            ✓ Saved to your Shield Passport and linked to Shield Score
+                          </p>
+                        </div>
+                      </>
+                    ) : null}
+
+                    <div className="flex flex-col gap-3">
+                      {!passed && (
+                        <button
+                          onClick={retryQuiz}
+                          className="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-500 transition-colors"
+                        >
+                          Retry quiz (free)
+                        </button>
+                      )}
+                      <button
+                        onClick={closeCourse}
+                        className={`w-full py-3 rounded-xl font-semibold transition-colors ${
+                          passed
+                            ? "bg-blue-600 text-white hover:bg-blue-500"
+                            : "bg-white/10 text-white hover:bg-white/20"
+                        }`}
+                      >
+                        {passed ? "Continue learning" : "Back to courses"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
             </motion.div>
           </motion.div>
         )}

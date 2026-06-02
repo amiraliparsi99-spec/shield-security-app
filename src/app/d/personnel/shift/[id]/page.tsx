@@ -7,6 +7,8 @@ import Link from "next/link";
 import { useSupabase } from "@/hooks/useSupabase";
 import { usePersonnelProfile } from "@/hooks";
 import { CallButton } from "@/components/calling";
+import { isMissingColumnError } from "@/lib/postgresErrors";
+import { bookingDirectionsLine } from "@/lib/bookingDirections";
 
 type ShiftWithDetails = {
   id: string;
@@ -28,6 +30,14 @@ type ShiftWithDetails = {
     event_name: string;
     event_date: string;
     brief_notes: string | null;
+    site_label: string | null;
+    site_address_text?: string | null;
+    venue_location?: {
+      label?: string | null;
+      address_line1?: string | null;
+      city?: string | null;
+      postcode?: string | null;
+    } | null;
     venue: {
       id: string;
       user_id: string;
@@ -57,15 +67,16 @@ export default function ShiftDetailPage() {
   // Fetch shift details
   useEffect(() => {
     const fetchShift = async () => {
-      const { data, error } = await supabase
-        .from('shifts')
-        .select(`
+      const selectWithSiteAddress = `
           *,
           booking:bookings (
             id,
             event_name,
             event_date,
             brief_notes,
+            site_label,
+            site_address_text,
+            venue_location:venue_locations!venue_location_id(label, address_line1, city, postcode),
             venue:venues (
               id,
               user_id,
@@ -77,9 +88,44 @@ export default function ShiftDetailPage() {
               longitude
             )
           )
-        `)
-        .eq('id', params.id)
+        `;
+      const selectLegacy = `
+          *,
+          booking:bookings (
+            id,
+            event_name,
+            event_date,
+            brief_notes,
+            site_label,
+            venue_location:venue_locations!venue_location_id(label, address_line1, city, postcode),
+            venue:venues (
+              id,
+              user_id,
+              name,
+              city,
+              address_line1,
+              postcode,
+              latitude,
+              longitude
+            )
+          )
+        `;
+
+      let { data, error } = await supabase
+        .from("shifts")
+        .select(selectWithSiteAddress)
+        .eq("id", params.id)
         .single();
+
+      if (error && isMissingColumnError(error)) {
+        const retry = await supabase
+          .from("shifts")
+          .select(selectLegacy)
+          .eq("id", params.id)
+          .single();
+        data = retry.data;
+        error = retry.error;
+      }
 
       if (!error && data) {
         setShift(data as ShiftWithDetails);
@@ -146,27 +192,28 @@ export default function ShiftDetailPage() {
       const loc = await getCurrentLocation();
       setLocation(loc);
 
-      const { error } = await supabase
-        .from('shifts')
-        .update({
-          status: 'checked_in',
-          actual_start: new Date().toISOString(),
-          check_in_latitude: loc.lat,
-          check_in_longitude: loc.lng,
-        })
-        .eq('id', shift.id);
+      const res = await fetch("/api/shifts/checkin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shift_id: shift.id,
+          action: "check_in",
+          latitude: loc.lat,
+          longitude: loc.lng,
+        }),
+      });
+      const result = await res.json();
 
-      if (error) {
-        console.error("Check-in error:", error);
-        alert("Failed to check in. Please try again.");
+      if (!res.ok) {
+        console.error("Check-in error:", result.error);
+        alert(result.error || "Failed to check in. Please try again.");
         return;
       }
 
-      // Refresh shift data
       setShift(prev => prev ? {
         ...prev,
         status: 'checked_in',
-        actual_start: new Date().toISOString(),
+        actual_start: result.actual_start,
         check_in_latitude: loc.lat,
         check_in_longitude: loc.lng,
       } : null);
@@ -188,39 +235,35 @@ export default function ShiftDetailPage() {
     try {
       const loc = await getCurrentLocation();
       
-      const actualEnd = new Date();
       const actualStart = new Date(shift.actual_start);
-      const hoursWorked = (actualEnd.getTime() - actualStart.getTime()) / (1000 * 60 * 60);
-      const totalPay = hoursWorked * shift.hourly_rate;
+      const hoursWorked = (Date.now() - actualStart.getTime()) / (1000 * 60 * 60);
 
-      const { error } = await supabase
-        .from('shifts')
-        .update({
-          status: 'checked_out',
-          actual_end: actualEnd.toISOString(),
-          check_out_latitude: loc.lat,
-          check_out_longitude: loc.lng,
-          hours_worked: Math.round(hoursWorked * 100) / 100,
-          total_pay: Math.round(totalPay * 100) / 100,
-        })
-        .eq('id', shift.id);
+      const res = await fetch("/api/shifts/checkin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shift_id: shift.id,
+          action: "check_out",
+          latitude: loc.lat,
+          longitude: loc.lng,
+        }),
+      });
+      const result = await res.json();
 
-      if (error) {
-        console.error("Check-out error:", error);
-        alert("Failed to check out. Please try again.");
+      if (!res.ok) {
+        console.error("Check-out error:", result.error);
+        alert(result.error || "Failed to check out. Please try again.");
         return;
       }
 
-      // Update local state
       setShift(prev => prev ? {
         ...prev,
         status: 'checked_out',
-        actual_end: actualEnd.toISOString(),
-        hours_worked: Math.round(hoursWorked * 100) / 100,
-        total_pay: Math.round(totalPay * 100) / 100,
+        actual_end: result.actual_end,
+        hours_worked: result.hours_worked,
+        total_pay: result.total_pay,
       } : null);
 
-      // Update personnel stats
       if (personnel) {
         await supabase
           .from('personnel')
@@ -337,9 +380,11 @@ export default function ShiftDetailPage() {
               <div>
                 <p className="text-sm text-zinc-400">Venue</p>
                 <p className="text-white font-medium">{shift.booking?.venue?.name}</p>
+                {shift.booking?.site_label && (
+                  <p className="text-sm text-emerald-400/90 mt-0.5">{shift.booking.site_label}</p>
+                )}
                 <p className="text-sm text-zinc-500">
-                  {shift.booking?.venue?.address_line1}
-                  {shift.booking?.venue?.postcode && `, ${shift.booking.venue.postcode}`}
+                  {shift.booking ? bookingDirectionsLine(shift.booking) : ""}
                 </p>
               </div>
               {shift.booking?.venue?.user_id && (
