@@ -5,8 +5,24 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/auto-checkout-shifts",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/auto-confirm-shifts",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/mission-control-shift-reminders",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/check-pre-shift-eta",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/cover-wave-broadening",
+      "schedule": "* * * * *"
     }
   ]
 }
