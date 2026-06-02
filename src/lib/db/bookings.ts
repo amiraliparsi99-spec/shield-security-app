@@ -8,7 +8,7 @@ import type {
   BookingStatus 
 } from '../database.types';
 
-type TypedSupabaseClient = SupabaseClient<Database>;
+type TypedSupabaseClient = SupabaseClient<any>;
 
 export async function getBookingById(
   supabase: TypedSupabaseClient,

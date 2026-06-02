@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 
-type TypedSupabaseClient = SupabaseClient<Database>;
+type TypedSupabaseClient = SupabaseClient<any>;
 
 // Hook to get Supabase client
 export function useSupabase() {

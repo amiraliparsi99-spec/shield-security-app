@@ -7,7 +7,7 @@ import type {
   DocumentStatus 
 } from '../database.types';
 
-type TypedSupabaseClient = SupabaseClient<Database>;
+type TypedSupabaseClient = SupabaseClient<any>;
 
 export async function getPersonnelDocuments(
   supabase: TypedSupabaseClient,

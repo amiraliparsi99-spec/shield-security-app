@@ -25,7 +25,7 @@ const SEARCH_RADIUS_MILES = 5;
 const SEARCH_RADIUS_KM = SEARCH_RADIUS_MILES * MILES_TO_KM; // ~8.05 km
 const LATE_THRESHOLD_MINUTES = 10; // Guard is "late" after this many minutes past start
 
-type TypedSupabaseClient = SupabaseClient<Database>;
+type TypedSupabaseClient = SupabaseClient<any>;
 
 // ——— Helpers ———
 
@@ -34,7 +34,7 @@ type TypedSupabaseClient = SupabaseClient<Database>;
  * Used by cron/server-side only.
  */
 function getAdminClient(): TypedSupabaseClient {
-  return createClient<Database>(supabaseUrl, supabaseServiceKey);
+  return createClient(supabaseUrl, supabaseServiceKey);
 }
 
 /**

@@ -1,7 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Profile, ProfileUpdate, UserRole } from '../database.types';
 
-type TypedSupabaseClient = SupabaseClient<Database>;
+type TypedSupabaseClient = SupabaseClient<any>;
 
 export async function getProfile(
   supabase: TypedSupabaseClient,

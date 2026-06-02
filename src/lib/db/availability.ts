@@ -6,7 +6,7 @@ import type {
   SpecialAvailability 
 } from '../database.types';
 
-type TypedSupabaseClient = SupabaseClient<Database>;
+type TypedSupabaseClient = SupabaseClient<any>;
 
 // =====================================================
 // WEEKLY AVAILABILITY

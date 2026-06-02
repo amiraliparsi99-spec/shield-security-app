@@ -6,7 +6,7 @@ import type {
   NotificationType 
 } from '../database.types';
 
-type TypedSupabaseClient = SupabaseClient<Database>;
+type TypedSupabaseClient = SupabaseClient<any>;
 
 export async function getUserNotifications(
   supabase: TypedSupabaseClient,

@@ -7,7 +7,7 @@ import type {
   PersonnelWithAvailability 
 } from '../database.types';
 
-type TypedSupabaseClient = SupabaseClient<Database>;
+type TypedSupabaseClient = SupabaseClient<any>;
 
 export async function getPersonnelByUserId(
   supabase: TypedSupabaseClient,

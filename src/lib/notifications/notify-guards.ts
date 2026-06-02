@@ -25,7 +25,7 @@ export type NotifyGuardsOptions = {
   excludePersonnelIds?: string[];
 };
 
-type TypedSupabase = SupabaseClient<Database>;
+type TypedSupabase = SupabaseClient<any>;
 
 /** London calendar date + clock times for availability checks */
 function shiftToLondonDateAndTimes(

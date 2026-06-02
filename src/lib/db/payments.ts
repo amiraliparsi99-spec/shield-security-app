@@ -7,7 +7,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Shift } from '../database.types';
 import { calculatePaymentFees, PLATFORM_CONFIG } from '../stripe';
 
-type TypedSupabaseClient = SupabaseClient<Database>;
+type TypedSupabaseClient = SupabaseClient<any>;
 
 export type PaymentStatus = 'pending' | 'awaiting_payment' | 'processing' | 'succeeded' | 'failed' | 'refunded';
 

@@ -2,7 +2,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Personnel, Shift } from '../database.types';
 import { checkPersonnelAvailabilityDetailed, type AvailabilityCheckResult } from './availability';
 
-type TypedSupabaseClient = SupabaseClient<Database>;
+type TypedSupabaseClient = SupabaseClient<any>;
 
 export interface AssignmentCandidate {
   personnel: Personnel;

@@ -8,7 +8,7 @@ import type {
   ShiftStatus 
 } from '../database.types';
 
-type TypedSupabaseClient = SupabaseClient<Database>;
+type TypedSupabaseClient = SupabaseClient<any>;
 
 // =====================================================
 // SHIFT STATE MACHINE

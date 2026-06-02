@@ -1,7 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Venue, VenueInsert, VenueUpdate, VenueWithProfile } from '../database.types';
 
-type TypedSupabaseClient = SupabaseClient<Database>;
+type TypedSupabaseClient = SupabaseClient<any>;
 
 export async function getVenueByUserId(
   supabase: TypedSupabaseClient,
