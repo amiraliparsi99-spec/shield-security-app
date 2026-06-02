@@ -80,7 +80,7 @@ export default function PersonnelJobDetailPage() {
           .select(selectLegacy)
           .eq("id", params.id)
           .single();
-        data = retry.data;
+        data = retry.data as typeof data;
         error = retry.error;
       }
       if (!cancelled) {

@@ -138,7 +138,7 @@ export default async function AnalyticsPage() {
 
   return (
     <div className="space-y-8 px-4 py-6 sm:px-6">
-      <AgencyAnalytics data={data?.analytics} />
+      <AgencyAnalytics />
       
       <div>
         <h2 className="mb-4 font-display text-lg font-medium text-white">Staff Performance</h2>

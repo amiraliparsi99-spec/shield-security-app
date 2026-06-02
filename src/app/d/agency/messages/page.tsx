@@ -456,8 +456,9 @@ export default function StaffMessagesPage() {
                 <div className="flex items-center gap-2">
                   {selectedStaff.personnel.user_id && (
                     <CallButton
-                      targetUserId={selectedStaff.personnel.user_id}
-                      targetName={selectedStaff.personnel.display_name || "Unknown"}
+                      userId={selectedStaff.personnel.user_id}
+                      name={selectedStaff.personnel.display_name || "Unknown"}
+                      role="personnel"
                       variant="icon"
                     />
                   )}
@@ -573,7 +574,7 @@ export default function StaffMessagesPage() {
       <BulkMessageModal
         isOpen={showBulkModal}
         onClose={() => setShowBulkModal(false)}
-        staff={staff.filter((s) => s.is_active && s.personnel)}
+        staff={staff.filter((s) => s.is_active && s.personnel) as any}
         onSend={async (staffIds, message) => {
           for (const staffId of staffIds) {
             const s = staff.find((st) => st.id === staffId);

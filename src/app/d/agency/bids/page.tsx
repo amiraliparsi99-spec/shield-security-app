@@ -60,7 +60,7 @@ export default function AgencyBidsPage() {
       .eq("agency_id", agency.id)
       .order("created_at", { ascending: false });
 
-    setBids(list || []);
+    setBids((list ?? []) as unknown as BidWithRequest[]);
     setLoading(false);
   };
 

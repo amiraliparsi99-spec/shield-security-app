@@ -516,8 +516,9 @@ export default function MessagesPage() {
                 <div className="flex items-center gap-2">
                   {selectedContact.user_id && (
                     <CallButton
-                      targetUserId={selectedContact.user_id}
-                      targetName={selectedContact.name || "Unknown"}
+                      userId={selectedContact.user_id}
+                      name={selectedContact.name || "Unknown"}
+                      role={selectedContact.type as "venue" | "personnel" | "agency"}
                       variant="icon"
                     />
                   )}

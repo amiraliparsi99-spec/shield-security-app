@@ -38,7 +38,8 @@ export type NotificationType =
   | "referral_reward"
   | "marketing"
   | "incoming_call"
-  | "missed_call";
+  | "missed_call"
+  | "agency_invitation";
 
 // Expo push notification endpoint
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";

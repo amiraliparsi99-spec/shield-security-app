@@ -66,6 +66,9 @@ export interface Personnel {
   lng: number | null;
   status: PersonnelStatus;
   insurance_verified: boolean;
+  skills?: string[]; // schema column: personnel.skills (e.g. ["Door Security", ...])
+  shield_score?: number; // schema column: personnel.shield_score (0-100)
+  total_shifts?: number; // schema column: personnel.total_shifts
   created_at: string;
   updated_at: string;
 }
@@ -250,6 +253,7 @@ export interface AgencyStaff {
   status: AgencyStaffStatus;
   hourly_rate: number | null; // Agency-specific rate override
   notes: string | null;
+  is_active?: boolean; // schema column: agency_staff.is_active
   joined_at: string;
   created_at: string;
   updated_at: string;

@@ -83,7 +83,7 @@ export default function VenueRequestsPage() {
       const byRequest: Record<string, Bid[]> = {};
       (bids || []).forEach((b) => {
         if (!byRequest[b.request_id]) byRequest[b.request_id] = [];
-        byRequest[b.request_id].push(b);
+        byRequest[b.request_id].push(b as unknown as Bid);
       });
       setBidsByRequest(byRequest);
     }

@@ -469,13 +469,13 @@ function AccountTabContent() {
 
       {/* Menu Items */}
       <div className="space-y-1">
-        {[
+        {([
           { icon: '📝', label: 'Edit Profile' },
           { icon: '📅', label: 'My Availability' },
           { icon: '📄', label: 'Documents' },
           { icon: '⚙️', label: 'Settings' },
           { icon: '📊', label: 'Analytics' },
-        ].map((item) => (
+        ] as { icon: string; label: string; badge?: string }[]).map((item) => (
           <div key={item.label} className="flex items-center justify-between bg-zinc-800/40 rounded-xl p-3">
             <div className="flex items-center gap-3">
               <span className="text-base">{item.icon}</span>

@@ -80,7 +80,7 @@ export function StaffTrackingMap({
   }, [staffLocations]);
 
   // Update view to fit bounds on initial load
-  const onMapLoad = useCallback((evt: { target: MapRef }) => {
+  const onMapLoad = useCallback((evt: { target: any }) => {
     if (bounds && staffLocations.length > 0) {
       evt.target.fitBounds(
         [[bounds.minLng, bounds.minLat], [bounds.maxLng, bounds.maxLat]],
