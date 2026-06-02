@@ -384,7 +384,7 @@ async function createPaymentForShift(
   // Get booking with venue info
   const { data: booking } = await supabase
     .from('bookings')
-    .select('venue_id, venues(id, owner_id)')
+    .select('venue_id, stripe_payment_intent_id, venues(id, user_id)')
     .eq('id', shift.booking_id)
     .single();
 
@@ -393,7 +393,7 @@ async function createPaymentForShift(
     return;
   }
 
-  const venue = (booking as any).venues;
+  const venue = (booking as { venues?: { id: string; user_id: string } }).venues;
   if (!venue) {
     console.error('Could not find venue for shift payment');
     return;
@@ -423,13 +423,17 @@ async function createPaymentForShift(
     }
   }
 
-  // Create the payment
+  const bookingRow = booking as {
+    stripe_payment_intent_id?: string | null;
+  };
+
   await createShiftPayment(supabase, {
     shift,
     venueId: venue.id,
-    venueOwnerId: venue.owner_id,
+    venueOwnerId: venue.user_id,
     agencyId,
     agencyCommissionRate,
+    stripePaymentIntentId: bookingRow.stripe_payment_intent_id ?? null,
   });
 }
 
@@ -544,14 +548,14 @@ async function notifyShiftStatusChange(
   // Get booking and venue info
   const { data: booking } = await supabase
     .from('bookings')
-    .select('id, event_name, venue_id, venues(id, name, owner_id)')
+    .select('id, event_name, venue_id, venues(id, name, owner_id, user_id)')
     .eq('id', shift.booking_id)
     .single();
 
   if (!booking) return;
 
   const venueName = (booking as any).venues?.name || 'Unknown Venue';
-  const venueOwnerId = (booking as any).venues?.owner_id;
+  const venueOwnerId = (booking as any).venues?.owner_id ?? (booking as any).venues?.user_id;
 
   // Get personnel info if assigned
   let personnelUserId: string | null = null;

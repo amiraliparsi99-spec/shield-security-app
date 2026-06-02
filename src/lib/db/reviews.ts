@@ -386,7 +386,7 @@ export async function getPendingReviews(
             actual_end,
             role,
             status,
-            personnel:personnel(id, display_name)
+            personnel:personnel!personnel_id(id, display_name)
           )
         `)
         .eq('venue_id', venue.id)

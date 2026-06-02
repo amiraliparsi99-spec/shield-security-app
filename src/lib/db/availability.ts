@@ -330,8 +330,13 @@ export async function checkPersonnelAvailabilityDetailed(
     .single();
 
   if (specialAvail) {
+    const norm = (t: string) => (t || '').slice(0, 8);
+    const st = norm(startTime);
+    const en = norm(endTime);
+    const spS = norm(specialAvail.start_time);
+    const spE = norm(specialAvail.end_time);
     // Check if requested time falls within special availability
-    const isWithinSpecial = startTime >= specialAvail.start_time && endTime <= specialAvail.end_time;
+    const isWithinSpecial = st >= spS && en <= spE;
     if (isWithinSpecial) {
       return {
         available: true,
@@ -346,8 +351,12 @@ export async function checkPersonnelAvailabilityDetailed(
     }
   }
 
-  // Check regular weekly availability
-  const dayOfWeek = new Date(date).getDay();
+  // Calendar weekday for YYYY-MM-DD (avoid UTC/local midnight shifting the day)
+  const [yy, mm, dd] = date.split('-').map((x) => parseInt(x, 10));
+  const cal = Number.isFinite(yy) && Number.isFinite(mm) && Number.isFinite(dd)
+    ? new Date(Date.UTC(yy, mm - 1, dd, 12, 0, 0))
+    : new Date(`${date}T12:00:00`);
+  const dayOfWeek = cal.getUTCDay();
   const { data: weeklyAvail } = await supabase
     .from('availability')
     .select('*')
@@ -365,19 +374,31 @@ export async function checkPersonnelAvailabilityDetailed(
 
   // Check if requested time falls within weekly availability
   if (weeklyAvail.start_time && weeklyAvail.end_time) {
+    const padT = (t: string) => {
+      const s = (t || '').slice(0, 5);
+      return s.length === 5 ? `${s}:00` : (t || '').slice(0, 8);
+    };
+    const st = padT(startTime);
+    const en = padT(endTime);
     // Handle overnight shifts (e.g., 22:00 - 04:00)
-    const availStart = weeklyAvail.start_time;
-    const availEnd = weeklyAvail.end_time;
+    const availStart = padT(weeklyAvail.start_time);
+    const availEnd = padT(weeklyAvail.end_time);
     
     let isWithinTime = false;
-    
-    // Simple case: availability doesn't cross midnight
+    const shiftCrossesMidnight = st > en;
+
     if (availStart < availEnd) {
-      isWithinTime = startTime >= availStart && endTime <= availEnd;
+      if (shiftCrossesMidnight) {
+        isWithinTime = false;
+      } else {
+        isWithinTime = st >= availStart && en <= availEnd;
+      }
     } else {
-      // Overnight availability (e.g., 18:00 - 02:00)
-      // Request is valid if it starts after availStart OR ends before availEnd
-      isWithinTime = startTime >= availStart || endTime <= availEnd;
+      if (shiftCrossesMidnight) {
+        isWithinTime = st >= availStart && en <= availEnd;
+      } else {
+        isWithinTime = st >= availStart || en <= availEnd;
+      }
     }
     
     if (isWithinTime) {

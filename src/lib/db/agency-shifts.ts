@@ -285,7 +285,7 @@ export async function getAgencyBookingAssignments(
       shifts(
         id,
         status,
-        personnel:personnel(id, display_name, shield_score)
+        personnel:personnel!personnel_id(id, display_name, shield_score)
       ),
       agency_staff(
         id,

@@ -7,22 +7,50 @@ export async function getVenueByUserId(
   supabase: TypedSupabaseClient,
   userId: string
 ): Promise<Venue | null> {
-  // Try user_id first (TypeScript types expect this)
+  // 1) Most direct: venue linked to auth user id
   let { data, error } = await supabase
     .from('venues')
     .select('*')
     .eq('user_id', userId)
     .maybeSingle();
 
-  // If no data found with user_id, try owner_id (some schemas use this)
+  // 2) Some schemas use owner_id = auth user id
   if (!data && !error) {
-    const result = await supabase
+    const byOwner = await supabase
       .from('venues')
       .select('*')
       .eq('owner_id', userId)
       .maybeSingle();
-    data = result.data;
-    error = result.error;
+    data = byOwner.data;
+    error = byOwner.error;
+  }
+
+  // 3) Hybrid schemas: venues.user_id stores profile id, not auth user id
+  if (!data && !error) {
+    const { data: profileByUser } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('user_id', userId)
+      .maybeSingle();
+    const profileId = profileByUser?.id ?? userId;
+
+    const byProfileUserId = await supabase
+      .from('venues')
+      .select('*')
+      .eq('user_id', profileId)
+      .maybeSingle();
+    data = byProfileUserId.data;
+    error = byProfileUserId.error;
+
+    if (!data && !error) {
+      const byProfileOwner = await supabase
+        .from('venues')
+        .select('*')
+        .eq('owner_id', profileId)
+        .maybeSingle();
+      data = byProfileOwner.data;
+      error = byProfileOwner.error;
+    }
   }
 
   if (error) {

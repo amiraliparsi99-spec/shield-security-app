@@ -12,22 +12,35 @@ export async function getProfileRole(
   supabase: SupabaseClient,
   userId: string
 ): Promise<Role | null> {
-  // Try id first (current structure where id = user_id)
+  const validRoles = ["venue", "personnel", "agency", "admin"];
+
+  // Try user_id first (matches AuthProvider order)
   const { data } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (data?.role && validRoles.includes(data.role)) {
+    return data.role as Role;
+  }
+
+  // Fallback: try id (older structure where id = auth user id)
+  const { data: dataById } = await supabase
     .from("profiles")
     .select("role")
     .eq("id", userId)
     .maybeSingle();
-  
-  if (data?.role && ["venue", "personnel", "agency", "admin"].includes(data.role)) {
-    return data.role as Role;
+
+  if (dataById?.role && validRoles.includes(dataById.role)) {
+    return dataById.role as Role;
   }
 
-  // Fallback: Check user_metadata.role from auth
+  // Last resort: check user_metadata.role from auth
   const { data: { user } } = await supabase.auth.getUser();
   if (user?.user_metadata?.role) {
     const metaRole = user.user_metadata.role as string;
-    if (["venue", "personnel", "agency", "admin"].includes(metaRole)) {
+    if (validRoles.includes(metaRole)) {
       return metaRole as Role;
     }
   }

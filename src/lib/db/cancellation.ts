@@ -49,7 +49,7 @@ export async function handleShiftCancellation(
       scheduled_start,
       scheduled_end,
       status,
-      personnel:personnel(id, user_id, display_name),
+      personnel:personnel!personnel_id(id, user_id, display_name),
       booking:bookings(
         id,
         event_name,
@@ -275,7 +275,7 @@ async function findReplacementPersonnel(
     // Get the personnel name for the notification
     const { data: newShift } = await supabase
       .from('shifts')
-      .select('id, personnel:personnel(display_name)')
+      .select('id, personnel:personnel!personnel_id(display_name)')
       .eq('id', successfulAssignment.shiftId)
       .single();
 

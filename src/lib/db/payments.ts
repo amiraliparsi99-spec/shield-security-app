@@ -36,6 +36,8 @@ export interface CreateShiftPaymentParams {
   venueOwnerId: string;
   agencyId?: string | null;
   agencyCommissionRate?: number; // e.g., 0.15 for 15%
+  /** Booking upfront PaymentIntent id (platform hold) for traceability */
+  stripePaymentIntentId?: string | null;
 }
 
 /**
@@ -86,6 +88,7 @@ export async function createShiftPayment(
       personnel_net: personnelNet,
       currency: PLATFORM_CONFIG.currency,
       status: 'awaiting_payment',
+      stripe_payment_intent_id: stripePaymentIntentId ?? null,
     })
     .select()
     .single();

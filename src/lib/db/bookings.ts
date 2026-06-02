@@ -32,7 +32,9 @@ export async function getBookingWithShifts(
   supabase: TypedSupabaseClient,
   bookingId: string
 ): Promise<BookingWithShifts | null> {
-  const { data: booking, error: bookingError } = await supabase
+  // Try with venue join first; fall back to booking-only if RLS blocks the join
+  let booking: any = null;
+  const { data, error: bookingError } = await supabase
     .from('bookings')
     .select(`
       *,
@@ -41,22 +43,30 @@ export async function getBookingWithShifts(
     .eq('id', bookingId)
     .single();
 
-  if (bookingError || !booking) {
-    console.error('Error fetching booking:', bookingError);
-    return null;
+  if (bookingError || !data) {
+    if (bookingError?.message?.includes('infinite recursion') || bookingError?.code === '42P17') {
+      const { data: fallback } = await supabase
+        .from('bookings')
+        .select('*')
+        .eq('id', bookingId)
+        .single();
+      booking = fallback ? { ...fallback, venue: null } : null;
+    }
+    if (!booking) {
+      console.error('Error fetching booking:', bookingError?.message, bookingError?.code, bookingError?.details, bookingError?.hint);
+      return null;
+    }
+  } else {
+    booking = data;
   }
 
   const { data: shifts, error: shiftsError } = await supabase
     .from('shifts')
     .select(`
       *,
-      personnel:personnel(id, user_id, display_name, phone, shield_score)
+      personnel:personnel!personnel_id(id, user_id, display_name, phone, shield_score)
     `)
     .eq('booking_id', bookingId);
-
-  console.log('Fetching shifts for booking:', bookingId);
-  console.log('Shifts result:', shifts);
-  console.log('Shifts error:', shiftsError);
 
   // Flatten personnel data into shift for easier access
   const shiftsWithPersonnel = (shifts || []).map(shift => ({

@@ -109,6 +109,40 @@ export async function getUserGroupChats(
 }
 
 /**
+ * Mission Control chats for the current user (includes inactive / "Passed"
+ * rooms). RLS still limits rows to memberships.
+ */
+export async function getMissionControlChats(
+  supabase: TypedSupabaseClient
+): Promise<GroupChat[]> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return [];
+    }
+
+    const { data, error } = await supabase
+      .from('group_chats')
+      .select('*')
+      .eq('chat_type', 'mission_control')
+      .order('updated_at', { ascending: false });
+
+    if (error) {
+      if (error.code === '42P01' || error.message?.includes('does not exist')) {
+        return [];
+      }
+      console.error('Error fetching mission control chats:', error.message || error.code);
+      return [];
+    }
+
+    return data || [];
+  } catch (e: any) {
+    console.error('Exception fetching mission control chats:', e.message || e);
+    return [];
+  }
+}
+
+/**
  * Get a specific group chat with members
  */
 export async function getGroupChat(

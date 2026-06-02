@@ -32,6 +32,20 @@ export interface Profile {
   is_active: boolean;
 }
 
+/** Saved physical site under a venue account (e.g. one branch of a chain). */
+export interface VenueLocation {
+  id: string;
+  venue_id: string;
+  label: string;
+  address_line1: string | null;
+  city: string | null;
+  postcode: string | null;
+  latitude: number;
+  longitude: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Venue {
   id: string;
   user_id: string;
@@ -169,6 +183,14 @@ export interface StaffRequirement {
 export interface Booking {
   id: string;
   venue_id: string;
+  /** Optional link to a saved site row; check-in uses snapshot fields below. */
+  venue_location_id?: string | null;
+  /** Snapshot for this job — which physical site guards must check in at. */
+  site_label?: string | null;
+  /** Snapshot: formatted address for directions (may differ from venue profile). */
+  site_address_text?: string | null;
+  site_latitude?: number | null;
+  site_longitude?: number | null;
   event_name: string;
   event_date: string;
   start_time: string;
@@ -186,6 +208,8 @@ export interface Booking {
   completed_at: string | null;
   cancelled_at: string | null;
   cancellation_reason: string | null;
+  payment_status?: string | null;
+  stripe_payment_intent_id?: string | null;
 }
 
 export interface Shift {
@@ -224,6 +248,16 @@ export interface Shift {
   surge_rate: number | null;
   original_personnel_id: string | null;
   dispatcher_status: 'none' | 'at_risk' | 'searching' | 'replacement_found' | 'failed' | null;
+  /** Guard released shift — reopened for cover, not venue cancellation */
+  withdrawal_reason?: string | null;
+  withdrawal_at?: string | null;
+  cover_search_wave?: number;
+
+  /** Escrow / payout (see migrations 0027, 0030) */
+  venue_confirmed?: boolean | null;
+  venue_confirmed_at?: string | null;
+  auto_confirmed?: boolean | null;
+  dispute_status?: 'none' | 'raised' | 'under_review' | 'resolved_for_venue' | 'resolved_for_guard' | null;
 }
 
 export interface Document {
