@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
       .eq("user_id", user.id)
       .single();
 
-    let stripeAccountId: string;
+    let stripeAccountId: string = existingAccount?.stripe_account_id ?? "";
     let needsNewAccount = true;
 
     if (existingAccount) {

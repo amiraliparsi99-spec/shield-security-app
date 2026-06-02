@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { sendPushNotification } from "@/lib/notifications/push-service";
 import { requireCronAuth } from "@/lib/auth/cronAuth";
 
@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
 }
 
 async function getPersonnelName(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient<any>,
   personnelId: string | null,
 ): Promise<string> {
   if (!personnelId) return "Guard";
@@ -141,7 +141,7 @@ async function getPersonnelName(
 }
 
 async function notifyVenueAttendanceConfirmation(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient<any>,
   params: {
     shiftId: string;
     bookingId: string;
@@ -209,7 +209,7 @@ async function notifyVenueAttendanceConfirmation(
 }
 
 async function postStatusToMissionControl(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient<any>,
   shift: {
     id: string;
     booking_id: string;
