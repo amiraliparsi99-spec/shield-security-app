@@ -2,7 +2,10 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { getProfileRole, getRoleDashboardPath } from "@/lib/auth";
+import { guestPreviewRole } from "@/lib/auth/dashboardAccess";
 import { PersonnelSidebar, PersonnelMobileNav } from "@/components/personnel/PersonnelSidebar";
+import { OnboardingTour, PERSONNEL_TOUR } from "@/components/onboarding/OnboardingTour";
+import { ShieldAIFloating } from "@/components/ai/ShieldAIFloating";
 async function getPersonnelDetails(supabase: any, userId: string) {
   // Try to get personnel details
   const { data: personnel } = await supabase
@@ -20,19 +23,23 @@ export default async function PersonnelDashboardLayout({
   children: React.ReactNode;
 }) {
   const supabase = await createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { user } } = await supabase.auth.getUser();
   const cookieStore = await cookies();
-  const guestRole = cookieStore.get("shield_guest_role")?.value;
+  const guestRole = guestPreviewRole(
+    cookieStore.get("shield_guest_role")?.value,
+    Boolean(user),
+  );
 
-  const role = session ? await getProfileRole(supabase, session.user.id) : null;
-  const allow = (session && role === "personnel") || (!session && guestRole === "personnel");
-  
-  if (!allow) {
-    redirect(role ? getRoleDashboardPath(role) : "/signup");
+  const role = user ? await getProfileRole(supabase, user.id) : null;
+
+  if (!user) {
+    if (guestRole !== "personnel") redirect("/signup");
+  } else if (role !== "personnel") {
+    redirect(role ? getRoleDashboardPath(role) : "/dashboard");
   }
 
   // Get personnel details for sidebar
-  const personnel = session ? await getPersonnelDetails(supabase, session.user.id) : null;
+  const personnel = user ? await getPersonnelDetails(supabase, user.id) : null;
 
   return (
     <div className="relative min-h-screen">
@@ -58,6 +65,12 @@ export default async function PersonnelDashboardLayout({
 
       {/* Mobile bottom navigation */}
       <PersonnelMobileNav />
+
+      {/* First-run guided tour */}
+      <OnboardingTour steps={PERSONNEL_TOUR} tourId="personnel-v1" />
+
+      {/* Always-available AI helper */}
+      <ShieldAIFloating userRole="personnel" userName={personnel?.display_name ?? undefined} />
     </div>
   );
 }

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { validateClaimProximity } from "@/lib/shifts/claimProximity";
 import { resolvePersonnelByAuthOrProvidedId } from "@/lib/auth/resolvePersonnel";
+import { isClaimableOnMarketplace } from "@/lib/shifts/marketplace";
+import { withRateLimit } from "@/lib/ratelimit/limiter";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -23,6 +25,11 @@ export async function POST(request: NextRequest) {
     if (authError || !user) {
       return NextResponse.json({ error: "Invalid token" }, { status: 401 });
     }
+
+    // Claiming races other guards for the same shift, so it is worth scripting.
+    // Cap it per user before any lookup work happens.
+    const limited = await withRateLimit(request, "booking", user.id);
+    if (!limited.success && limited.response) return limited.response;
 
     const body = await request.json();
     const { shift_id, latitude, longitude, personnel_id } = body as {
@@ -96,7 +103,9 @@ export async function POST(request: NextRequest) {
         .maybeSingle(),
       supabase
         .from("shifts")
-        .select("id, booking_id, personnel_id, status")
+        .select(
+          "id, booking_id, personnel_id, status, scheduled_start, scheduled_end, is_urgent, dispatcher_status, cover_search_wave",
+        )
         .eq("id", shift_id)
         .single(),
     ]);
@@ -113,11 +122,49 @@ export async function POST(request: NextRequest) {
     if (!shift) {
       return NextResponse.json({ error: "Shift not found" }, { status: 404 });
     }
+
+    const { data: bookingMeta } = await supabase
+      .from("bookings")
+      .select("status, self_managed")
+      .eq("id", shift.booking_id)
+      .maybeSingle();
+
+    if (
+      !isClaimableOnMarketplace(shift as any, {
+        bookingStatus: (bookingMeta as { status?: string } | null)?.status,
+        selfManaged: !!(bookingMeta as { self_managed?: boolean } | null)?.self_managed,
+      })
+    ) {
+      const urgent = (shift as any).is_urgent && (shift as any).dispatcher_status === "searching";
+      return NextResponse.json(
+        {
+          error: urgent
+            ? "This urgent cover slot is no longer available."
+            : "This shift is no longer available to claim. It may have started, been cancelled, or already been filled.",
+          code: "shift_not_claimable",
+        },
+        { status: 409 },
+      );
+    }
+
     if (shift.status !== "pending" || shift.personnel_id) {
       return NextResponse.json(
         { error: "This shift has already been claimed by another guard." },
         { status: 409 },
       );
+    }
+
+    // Self-managed agency roster shifts are assigned directly by the agency and
+    // are NOT open for claiming from the public job board.
+    if (bookingMeta && (bookingMeta as any).self_managed) {
+        return NextResponse.json(
+          {
+            error:
+              "This shift is scheduled directly by an agency and isn't available to claim from the job board.",
+            code: "self_managed_shift",
+          },
+          { status: 403 },
+        );
     }
 
     const proximity = await validateClaimProximity({
@@ -151,6 +198,11 @@ export async function POST(request: NextRequest) {
         status: "accepted",
         accepted_at: nowIso,
         updated_at: nowIso,
+        is_urgent: false,
+        dispatcher_status: "none",
+        cover_search_wave: 0,
+        cover_search_started_at: null,
+        cover_search_last_wave_at: null,
       })
       .eq("id", shift_id)
       .eq("status", "pending")
@@ -158,7 +210,22 @@ export async function POST(request: NextRequest) {
       .select("id")
       .single();
 
-    if (claimErr || !updatedShift) {
+    // A DB-level error here is NOT a race — it's an unexpected failure (e.g. a
+    // trigger raising an exception). Surfacing it as "already claimed" hides
+    // real bugs, so distinguish the two cases.
+    if (claimErr) {
+      console.error("[SHIFT-CLAIM] Update failed:", claimErr.message, "shift:", shift_id);
+      return NextResponse.json(
+        {
+          error: "Couldn't claim this shift due to a server error. Please try again or contact support.",
+          code: "claim_update_failed",
+          debug: { db_error: claimErr.message, db_code: (claimErr as any).code ?? null },
+        },
+        { status: 500 },
+      );
+    }
+    if (!updatedShift) {
+      // No row matched the pending/unclaimed filter → genuinely taken already.
       return NextResponse.json(
         { error: "This shift has already been claimed by another guard." },
         { status: 409 },

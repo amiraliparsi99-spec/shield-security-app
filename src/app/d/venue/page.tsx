@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { getProfileRole, getRoleDashboardPath } from "@/lib/auth";
+import { guestPreviewRole } from "@/lib/auth/dashboardAccess";
 import { VenueOverview } from "@/components/venue/VenueOverview";
 import type { BookingSummary } from "@/components/venue/VenueOverview";
 
@@ -46,22 +47,25 @@ async function resolveVenueIds(
 export default async function VenueDashboard() {
   const supabase = await createClient();
   const {
-    data: { session },
-  } = await supabase.auth.getSession();
+    data: { user },
+  } = await supabase.auth.getUser();
   const cookieStore = await cookies();
-  const guestRole = cookieStore.get("shield_guest_role")?.value;
+  const guestRole = guestPreviewRole(
+    cookieStore.get("shield_guest_role")?.value,
+    Boolean(user),
+  );
 
-  const role = session ? await getProfileRole(supabase, session.user.id) : null;
-  // Resilience fallback: if session exists but role lookup is flaky,
-  // still allow venue dashboard when venue guest-role cookie is present.
-  const allow =
-    (session && (role === "venue" || role === null || guestRole === "venue")) ||
-    (!session && guestRole === "venue");
-  if (!allow) redirect(role ? getRoleDashboardPath(role) : "/signup");
+  const role = user ? await getProfileRole(supabase, user.id) : null;
+
+  if (!user) {
+    if (guestRole !== "venue") redirect("/signup");
+  } else if (role !== "venue") {
+    redirect(role ? getRoleDashboardPath(role) : "/dashboard");
+  }
 
   // ── 1. Resolve venue IDs + name ──
-  const { ids: venueIds, name: venueName } = session?.user?.id
-    ? await resolveVenueIds(supabase, session.user.id)
+  const { ids: venueIds, name: venueName } = user?.id
+    ? await resolveVenueIds(supabase, user.id)
     : { ids: [] as string[], name: "Your Venue" };
 
   // ── 2. Fetch all bookings ──

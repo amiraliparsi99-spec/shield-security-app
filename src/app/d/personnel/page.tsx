@@ -3,16 +3,24 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { getProfileRole, getRoleDashboardPath } from "@/lib/auth";
+import { guestPreviewRole } from "@/lib/auth/dashboardAccess";
 
 export default async function PersonnelDashboard() {
   const supabase = await createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { user } } = await supabase.auth.getUser();
   const cookieStore = await cookies();
-  const guestRole = cookieStore.get("shield_guest_role")?.value;
+  const guestRole = guestPreviewRole(
+    cookieStore.get("shield_guest_role")?.value,
+    Boolean(user),
+  );
 
-  const role = session ? await getProfileRole(supabase, session.user.id) : null;
-  const allow = (session && role === "personnel") || (!session && guestRole === "personnel");
-  if (!allow) redirect(role ? getRoleDashboardPath(role) : "/signup");
+  const role = user ? await getProfileRole(supabase, user.id) : null;
+
+  if (!user) {
+    if (guestRole !== "personnel") redirect("/signup");
+  } else if (role !== "personnel") {
+    redirect(role ? getRoleDashboardPath(role) : "/dashboard");
+  }
 
   // Fetch real data for the logged-in user
   let displayName = "Guard";
@@ -21,18 +29,18 @@ export default async function PersonnelDashboard() {
   let shieldScore: number | null = null;
   let totalShifts = 0;
 
-  if (session?.user?.id) {
+  if (user?.id) {
     const { data: profile } = await supabase
       .from("profiles")
       .select("display_name")
-      .eq("id", session.user.id)
+      .eq("id", user.id)
       .single();
     if (profile?.display_name) displayName = profile.display_name;
 
     const { data: personnel } = await supabase
       .from("personnel")
       .select("id, shield_score")
-      .eq("user_id", session.user.id)
+      .eq("user_id", user.id)
       .single();
 
     if (personnel) {

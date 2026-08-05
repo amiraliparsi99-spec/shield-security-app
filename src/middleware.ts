@@ -1,7 +1,11 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PROTECTED_PREFIXES = ["/d/venue", "/d/personnel", "/d/agency", "/admin"];
+import {
+  guestPreviewRole,
+  isGuestDashboardAccessAllowed,
+  requiredRoleForPath,
+} from "@/lib/auth/dashboardAccess";
 
 const SITE_ACCESS_COOKIE = "shield_site_access";
 const SITE_ACCESS_VALUE = "1";
@@ -56,18 +60,23 @@ function dashboardPathForRole(role: AppRole | undefined): string | null {
   }
 }
 
-/**
- * The `shield_guest_role` cookie lets unauthenticated visitors preview the
- * dashboards in demo mode. This is NOT an authorization boundary — actual data
- * access is governed by Supabase RLS. It is disabled in production by default
- * so a hand-set cookie can't reach dashboard shells; set
- * `ALLOW_GUEST_DASHBOARDS=true` to opt back in (e.g. for a public demo build).
- */
-function isGuestDashboardAccessAllowed(): boolean {
-  return (
-    process.env.NODE_ENV !== "production" ||
-    process.env.ALLOW_GUEST_DASHBOARDS === "true"
-  );
+/** The caller's role, checked against both profile shapes then user metadata. */
+async function resolveRole(
+  supabase: ReturnType<typeof createServerClient>,
+  userId: string,
+  metadataRole: unknown,
+): Promise<AppRole | undefined> {
+  const { data: byUserId } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  const { data: byId } = byUserId?.role
+    ? { data: null }
+    : await supabase.from("profiles").select("role").eq("id", userId).maybeSingle();
+
+  return (byUserId?.role || byId?.role || metadataRole) as AppRole | undefined;
 }
 
 export async function middleware(request: NextRequest) {
@@ -76,9 +85,17 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  const isProtected = PROTECTED_PREFIXES.some((p) => pathname.startsWith(p));
+  // Derived from the same map that decides which role a path needs, so a new
+  // dashboard can never be protected by one and ignored by the other.
+  const requiredRole = requiredRoleForPath(pathname);
+  const isProtected = requiredRole !== null;
   const guestRole = request.cookies.get("shield_guest_role")?.value;
   const guestAllowed = isGuestDashboardAccessAllowed();
+
+  // Public marketing/auth pages don't need a Supabase round-trip.
+  if (!isProtected && pathname !== "/signup") {
+    return NextResponse.next({ request });
+  }
 
   let response = NextResponse.next({ request });
 
@@ -117,17 +134,7 @@ export async function middleware(request: NextRequest) {
     let role: AppRole | undefined;
 
     if (user?.id) {
-      const { data: profileByUser } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      const { data: profileById } = profileByUser?.role
-        ? { data: null }
-        : await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
-      role = (profileByUser?.role || profileById?.role || user.user_metadata?.role) as
-        | AppRole
-        | undefined;
+      role = await resolveRole(supabase, user.id, user.user_metadata?.role);
     } else if (
       guestAllowed &&
       guestRole &&
@@ -150,13 +157,28 @@ export async function middleware(request: NextRequest) {
   // so refreshed Supabase auth cookies are persisted to the browser.
   if (!isProtected) return response;
 
-  // Guest demo preview (gated; not an auth boundary — RLS still governs data).
-  if (guestAllowed && guestRole) return response;
-
   if (!user) {
+    // Guest demo preview (gated; not an auth boundary — RLS still governs data).
+    // The cookie must name the role this path actually needs: previously any
+    // value let the request through and the layout had to catch it.
+    if (guestPreviewRole(guestRole, false) === requiredRole) return response;
+
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("redirect", pathname);
     return NextResponse.redirect(loginUrl);
+  }
+
+  // Authentication alone used to be enough here, so any signed-in account could
+  // open /d/agency or /admin. RLS kept the data out, but the shell, its nav and
+  // anything served by a service-role route were reachable.
+  const role = await resolveRole(supabase, user.id, user.user_metadata?.role);
+
+  // Role unresolved (profile row still being created, or a failed lookup) is
+  // treated as a mismatch: send them somewhere harmless rather than guessing in
+  // their favour.
+  if (role !== requiredRole) {
+    const fallback = role ? dashboardPathForRole(role) : null;
+    return NextResponse.redirect(new URL(fallback ?? "/dashboard", request.url));
   }
 
   return response;
@@ -167,8 +189,11 @@ export const config = {
     /*
      * Run middleware on all paths except:
      * - api (gate API, webhooks, cron)
+     * - monitoring (Sentry's tunnel — browser error reports POST here, and the
+     *   site gate would otherwise redirect them to /gate and lose every
+     *   client-side crash the moment SITE_PASSWORD is set)
      * - Next.js internals and favicon
      */
-    "/((?!api|_next/static|_next/image|favicon.ico).*)",
+    "/((?!api|monitoring|_next/static|_next/image|favicon.ico).*)",
   ],
 };

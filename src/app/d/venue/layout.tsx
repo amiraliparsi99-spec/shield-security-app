@@ -2,7 +2,10 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { getProfileRole, getRoleDashboardPath } from "@/lib/auth";
+import { guestPreviewRole } from "@/lib/auth/dashboardAccess";
 import { VenueSidebar, VenueMobileNav } from "@/components/venue/VenueSidebar";
+import { OnboardingTour, VENUE_TOUR } from "@/components/onboarding/OnboardingTour";
+import { ShieldAIFloating } from "@/components/ai/ShieldAIFloating";
 async function getVenueDetails(supabase: any, userId: string) {
   // Resolve profile ID reliably
   const { data: profile, error: profileError } = await supabase
@@ -52,23 +55,25 @@ export default async function VenueDashboardLayout({
   children: React.ReactNode;
 }) {
   const supabase = await createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { user } } = await supabase.auth.getUser();
   const cookieStore = await cookies();
-  const guestRole = cookieStore.get("shield_guest_role")?.value;
+  const guestRole = guestPreviewRole(
+    cookieStore.get("shield_guest_role")?.value,
+    Boolean(user),
+  );
 
-  const role = session ? await getProfileRole(supabase, session.user.id) : null;
-  // Resilience fallback: if session exists but role lookup is flaky,
-  // still allow venue dashboard when venue guest-role cookie is present.
-  const allow =
-    (session && (role === "venue" || role === null || guestRole === "venue")) ||
-    (!session && guestRole === "venue");
+  const role = user ? await getProfileRole(supabase, user.id) : null;
 
-  if (!allow) {
-    redirect(role ? getRoleDashboardPath(role) : "/signup");
+  if (!user) {
+    if (guestRole !== "venue") redirect("/signup");
+  } else if (role !== "venue") {
+    // No "role is null so let them in" escape hatch, and no honouring the guest
+    // cookie for a signed-in user: both let any account open this dashboard.
+    redirect(role ? getRoleDashboardPath(role) : "/dashboard");
   }
 
   // Get venue details for sidebar
-  const venue = session ? await getVenueDetails(supabase, session.user.id) : null;
+  const venue = user ? await getVenueDetails(supabase, user.id) : null;
 
   return (
     <div className="relative min-h-screen">
@@ -94,6 +99,12 @@ export default async function VenueDashboardLayout({
 
       {/* Mobile bottom navigation */}
       <VenueMobileNav />
+
+      {/* First-run guided tour */}
+      <OnboardingTour steps={VENUE_TOUR} tourId="venue-v1" />
+
+      {/* Always-available AI helper */}
+      <ShieldAIFloating userRole="venue" userName={venue?.name ?? undefined} />
     </div>
   );
 }

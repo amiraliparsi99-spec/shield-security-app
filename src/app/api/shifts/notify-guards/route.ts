@@ -11,6 +11,8 @@ import {
   notifyGuardsForBooking,
   DEFAULT_SEARCH_RADIUS_MILES,
 } from "@/lib/notifications/notify-guards";
+import { userOwnsBookingId } from "@/lib/booking/ownership";
+import { withRateLimit } from "@/lib/ratelimit/limiter";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -51,6 +53,21 @@ export async function POST(request: NextRequest) {
     if (!booking_id || typeof booking_id !== "string") {
       return NextResponse.json({ error: "booking_id is required" }, { status: 400 });
     }
+
+    // This fans out push notifications to every matching guard and writes offer
+    // rows, all under the service-role key. Without an ownership check any
+    // signed-in account could blast guards on someone else's booking.
+    const admin = createClient(supabaseUrl, supabaseServiceKey);
+    if (!(await userOwnsBookingId(admin, userId, booking_id))) {
+      // 404 rather than 403 so the response cannot be used to discover which
+      // booking ids exist.
+      return NextResponse.json({ error: "Booking not found" }, { status: 404 });
+    }
+
+    // Guards get a push per notified shift, so repeated calls are spam even
+    // from a legitimate owner.
+    const limited = await withRateLimit(request, "messaging", userId);
+    if (!limited.success && limited.response) return limited.response;
 
     const searchRadiusMiles = radius_miles ?? DEFAULT_SEARCH_RADIUS_MILES;
 
