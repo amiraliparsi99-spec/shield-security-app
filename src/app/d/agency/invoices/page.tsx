@@ -1,9 +1,10 @@
-import { InvoiceGenerator } from "@/components/agency/InvoiceGenerator";
+import { redirect } from "next/navigation";
 
-export default function InvoicesPage() {
-  return (
-    <div className="p-4 sm:p-6 lg:p-8">
-      <InvoiceGenerator />
-    </div>
-  );
+/**
+ * Not ready for beta — hidden from nav and redirected so testers cannot
+ * reach a half-built screen by URL. The previous implementation is in git
+ * history; restore it here when the feature is finished.
+ */
+export default function UnfinishedAgencyPage() {
+  redirect("/d/agency");
 }

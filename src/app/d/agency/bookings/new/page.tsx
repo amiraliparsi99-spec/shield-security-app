@@ -1,7 +1,10 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { NewBookingFlow } from "@/components/bookings/NewBookingFlow";
-
+/**
+ * Agencies do not use the venue pay-to-post flow — guard pay runs through
+ * their own payroll. New work is scheduled onto the roster instead, so this
+ * route exists only to catch old links and bookmarks.
+ */
 export default function AgencyNewBookingPage() {
-  return <NewBookingFlow ownerType="agency" />;
+  redirect("/d/agency/scheduler");
 }

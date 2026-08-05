@@ -416,7 +416,9 @@ export function BookingsList({ ownerType }: BookingsListProps) {
             {pipelineValue.toLocaleString("en-GB", { maximumFractionDigits: 0 })} total pipeline
           </p>
         </div>
-        <Link href={`${basePath}/bookings/new`}>
+        {/* Agencies staff jobs from their own roster via the scheduler — the
+            pay-to-post flow is venue-only. */}
+        <Link href={isAgency ? `${basePath}/scheduler` : `${basePath}/bookings/new`}>
           <motion.button
             type="button"
             className="inline-flex items-center gap-2 rounded-xl bg-shield-500 px-5 py-2.5 text-sm font-semibold text-white shadow-glow-sm transition hover:bg-shield-400"
@@ -426,7 +428,7 @@ export function BookingsList({ ownerType }: BookingsListProps) {
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
-            Post new job
+            {isAgency ? "Schedule shifts" : "Post new job"}
           </motion.button>
         </Link>
       </div>
@@ -508,11 +510,17 @@ export function BookingsList({ ownerType }: BookingsListProps) {
             description={
               search
                 ? "Try a different search term or clear the filter."
-                : "Post your first job to find security staff for your events."
+                : isAgency
+                  ? "Schedule your first shifts to put your roster to work."
+                  : "Post your first job to find security staff for your events."
             }
             action={
               !search ? (
-                <EmptyStateCTA href={`${basePath}/bookings/new`}>Post a job</EmptyStateCTA>
+                <EmptyStateCTA
+                  href={isAgency ? `${basePath}/scheduler` : `${basePath}/bookings/new`}
+                >
+                  {isAgency ? "Open scheduler" : "Post a job"}
+                </EmptyStateCTA>
               ) : undefined
             }
           />
@@ -536,6 +544,7 @@ export function BookingsList({ ownerType }: BookingsListProps) {
                       key={booking.id}
                       booking={booking}
                       basePath={basePath}
+                      isAgency={isAgency}
                       isLast={index === items.length - 1}
                     />
                   ))}
@@ -552,10 +561,12 @@ export function BookingsList({ ownerType }: BookingsListProps) {
 function BookingRow({
   booking,
   basePath,
+  isAgency,
   isLast,
 }: {
   booking: Booking;
   basePath: string;
+  isAgency: boolean;
   isLast: boolean;
 }) {
   const displayTotal = getBookingTotalGBP(booking);
@@ -563,7 +574,9 @@ function BookingRow({
   const dateParts = formatEventDate(booking.event_date);
   const status = getStatusMeta(booking);
   const staffingPct = getStaffingPct(booking);
-  const needsPayment = canPay && !booking.isPaid && booking.claimedShifts > 0;
+  // Agencies settle guard pay through their own payroll, never platform escrow,
+  // so the Stripe pay prompt is venue-only.
+  const needsPayment = !isAgency && canPay && !booking.isPaid && booking.claimedShifts > 0;
 
   return (
     <motion.div
