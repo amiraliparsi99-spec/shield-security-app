@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import { colors, typography, spacing, radius } from "../theme";
 import { supabase } from "../lib/supabase";
-import { getProfileIdAndRole } from "../lib/auth";
+import { getProfileIdAndRole, getPersonnelId } from "../lib/auth";
 import { safeHaptic } from "../lib/haptics";
 import { SlideInView } from "../components/ui/AnimatedComponents";
 import { GuestGate } from "../components/auth/GuestGate";
@@ -25,12 +25,16 @@ interface Review {
   reviewer_id: string;
   reviewee_id: string;
   overall_rating: number;
-  professionalism_rating: number;
-  punctuality_rating: number;
-  communication_rating: number;
-  comment: string;
+  professionalism_rating: number | null;
+  punctuality_rating: number | null;
+  communication_rating: number | null;
+  /** Review text. Current schema uses `content`; very old rows used `comment`. */
+  content?: string | null;
+  comment?: string | null;
+  title?: string | null;
   created_at: string;
   reviewer_name?: string;
+  event_name?: string;
 }
 
 interface RatingStats {
@@ -82,19 +86,32 @@ function ReviewsScreenContent() {
       const result = await getProfileIdAndRole(supabase, user.id);
       const profileId = result?.profileId || null;
       setCurrentUserId(profileId);
-      
-      // Load reviews for the user
-      const targetId = userId || profileId;
-      if (!targetId) return;
-      
+
+      // Reviews from venues are stored against the personnel entity id, so
+      // resolve it (and keep the profile id as a legacy fallback).
+      const targetIds = new Set<string>();
+      if (userId) {
+        targetIds.add(userId);
+      } else if (profileId) {
+        targetIds.add(profileId);
+        const personnelId = await getPersonnelId(supabase, profileId);
+        if (personnelId) targetIds.add(personnelId);
+      }
+      if (targetIds.size === 0) return;
+
       const { data: reviewsData } = await supabase
         .from("reviews")
-        .select("*")
-        .eq("reviewee_id", targetId)
+        .select("*, booking:bookings(event_name, venues(name))")
+        .in("reviewee_id", Array.from(targetIds))
         .order("created_at", { ascending: false });
 
       if (reviewsData) {
-        setReviews(reviewsData);
+        const mapped = reviewsData.map((r: any) => ({
+          ...r,
+          reviewer_name: r.booking?.venues?.name || undefined,
+          event_name: r.booking?.event_name || undefined,
+        }));
+        setReviews(mapped);
         
         // Calculate stats
         if (reviewsData.length > 0) {
@@ -112,7 +129,7 @@ function ReviewsScreenContent() {
       }
 
       // Check if current user can write a review (has completed booking with this person)
-      if (profileId && targetId && profileId !== targetId) {
+      if (profileId && !targetIds.has(profileId)) {
         setCanWriteReview(true); // Simplified - in production check for completed booking
       }
     } catch (error) {
@@ -287,30 +304,41 @@ function ReviewsScreenContent() {
                       </View>
                       <View>
                         <Text style={styles.reviewerName}>
-                          {review.reviewer_name || "Anonymous"}
+                          {review.reviewer_name || "Verified venue"}
                         </Text>
-                        <Text style={styles.reviewDate}>{formatDate(review.created_at)}</Text>
+                        <Text style={styles.reviewDate}>
+                          {review.event_name ? `${review.event_name} · ` : ""}
+                          {formatDate(review.created_at)}
+                        </Text>
                       </View>
                     </View>
                     {renderStars(review.overall_rating)}
                   </View>
 
-                  {review.comment && (
-                    <Text style={styles.reviewComment}>"{review.comment}"</Text>
+                  {(review.content || review.comment) && (
+                    <Text style={styles.reviewComment}>
+                      "{review.content || review.comment}"
+                    </Text>
                   )}
 
                   <View style={styles.reviewRatings}>
                     <View style={styles.ratingItem}>
                       <Text style={styles.ratingLabel}>Professional</Text>
-                      <Text style={styles.ratingValue}>{review.professionalism_rating}/5</Text>
+                      <Text style={styles.ratingValue}>
+                        {review.professionalism_rating ?? "–"}/5
+                      </Text>
                     </View>
                     <View style={styles.ratingItem}>
                       <Text style={styles.ratingLabel}>Punctual</Text>
-                      <Text style={styles.ratingValue}>{review.punctuality_rating}/5</Text>
+                      <Text style={styles.ratingValue}>
+                        {review.punctuality_rating ?? "–"}/5
+                      </Text>
                     </View>
                     <View style={styles.ratingItem}>
                       <Text style={styles.ratingLabel}>Communication</Text>
-                      <Text style={styles.ratingValue}>{review.communication_rating}/5</Text>
+                      <Text style={styles.ratingValue}>
+                        {review.communication_rating ?? "–"}/5
+                      </Text>
                     </View>
                   </View>
                 </View>
