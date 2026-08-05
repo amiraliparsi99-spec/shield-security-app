@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { markNoShow } from "@/lib/db/shifts";
+import { recordShiftPaymentAndCompleteBooking } from "@/lib/shifts/finalizeShiftWork";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -62,7 +63,7 @@ export async function POST(request: NextRequest) {
 
     const { data: venue, error: venueErr } = await supabase
       .from("venues")
-      .select("id, user_id, owner_id")
+      .select("id, user_id")
       .eq("id", booking.venue_id)
       .single();
 
@@ -70,9 +71,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Venue not found" }, { status: 404 });
     }
 
-    const venueOwnerId = (venue as { user_id?: string | null; owner_id?: string | null }).owner_id
-      ?? (venue as { user_id?: string | null }).user_id
-      ?? null;
+    const venueOwnerId = (venue as { user_id?: string | null }).user_id ?? null;
 
     if (!venueOwnerId || venueOwnerId !== userId) {
       return NextResponse.json(
@@ -92,6 +91,8 @@ export async function POST(request: NextRequest) {
     if (!result.success) {
       return NextResponse.json({ error: result.error || "Failed to mark no-show" }, { status: 400 });
     }
+
+    await recordShiftPaymentAndCompleteBooking(supabase as any, shift_id);
 
     return NextResponse.json({
       success: true,

@@ -18,6 +18,8 @@
  * The engine decides only what ring is currently appropriate.
  */
 
+import { distanceToPolygonMeters, isValidPolygon } from "../geo/polygon";
+
 export type TravelRing = "none" | "R3" | "R4" | "R5" | "R6";
 
 export type TravelRiskInput = {
@@ -36,6 +38,13 @@ export type TravelRiskInput = {
   } | null;
   /** Site coordinates (booking site preferred, falls back to venue). */
   site: { lat: number; lng: number } | null;
+  /**
+   * Optional drawn geofence (GeoJSON Polygon) for the site. When present,
+   * "on-site" means inside this boundary: distance is measured to the polygon
+   * edge (0 when the guard is inside it) instead of to the single site pin, so
+   * a guard who entered from the far side of a large site reads as on-site.
+   */
+  polygon?: unknown;
   /** Per-shift-type ladder adjustments. See `defaultThresholds` for shape. */
   thresholds?: TravelRiskThresholds;
 };
@@ -322,7 +331,7 @@ function ageSeconds(
 }
 
 function computeDistance(input: TravelRiskInput): number | null {
-  if (!input.latestGps || !input.site) return null;
+  if (!input.latestGps) return null;
   // Discard wildly inaccurate fixes for distance purposes — a fix with 2 km
   // accuracy tells us nothing about whether the guard is at the site.
   const t = input.thresholds ?? defaultThresholds;
@@ -332,6 +341,14 @@ function computeDistance(input: TravelRiskInput): number | null {
   ) {
     return null;
   }
+  // Prefer the drawn boundary: distance to the polygon edge (0 when inside)
+  // is the true "how far from being on site" measure for irregular sites.
+  if (isValidPolygon(input.polygon)) {
+    return Math.round(
+      distanceToPolygonMeters(input.latestGps.lat, input.latestGps.lng, input.polygon),
+    );
+  }
+  if (!input.site) return null;
   return Math.round(
     haversineM(
       input.latestGps.lat,

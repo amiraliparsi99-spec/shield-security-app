@@ -205,7 +205,7 @@ export async function POST(request: NextRequest) {
 
     // --- Notify the venue owner ---
     const venue = shift.bookings?.venues;
-    const venueOwnerId = venue?.owner_id ?? venue?.user_id;
+    const venueOwnerId = venue?.user_id;
     const venueName = venue?.name ?? offer.venue_name ?? "the venue";
     const guardName = personnel.display_name ?? "A guard";
 

@@ -2,13 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { distanceMeters } from "@/lib/geo/distance";
+import { isWithinGeofence, type GeofenceCheckResult } from "@/lib/geo/polygon";
 import { sendPushNotification } from "@/lib/notifications/push-service";
 import { applyLateCheckInPenalty } from "@/lib/shifts/shieldScoreEvents";
+import { recordShiftPaymentAndCompleteBooking } from "@/lib/shifts/finalizeShiftWork";
 
 function maxCheckInDistanceM(): number {
   const n = Number(process.env.CHECK_IN_MAX_DISTANCE_METERS);
   return Number.isFinite(n) && n > 0 ? n : 500;
+}
+
+// GPS-accuracy buffer applied to a drawn geofence boundary so a guard standing
+// just outside the line isn't blocked by normal location jitter.
+function geofenceToleranceM(): number {
+  const n = Number(process.env.GEOFENCE_GPS_TOLERANCE_METERS);
+  return Number.isFinite(n) && n >= 0 ? n : 25;
 }
 
 // Guards may only check in within this many minutes before scheduled start.
@@ -71,12 +79,14 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { shift_id, action, latitude, longitude, auto } = body as {
+  const { shift_id, action, latitude, longitude, auto, mocked } = body as {
     shift_id: string;
     action: "check_in" | "check_out";
     latitude: number;
     longitude: number;
     auto?: boolean;
+    /** Device reported the fix as a mock/fake location (Android). */
+    mocked?: boolean;
   };
 
   if (!shift_id || !action || latitude == null || longitude == null) {
@@ -113,7 +123,7 @@ export async function POST(request: NextRequest) {
 
   const { data: bookingRow } = await supabaseAdmin
     .from("bookings")
-    .select("venue_id, site_latitude, site_longitude, site_label")
+    .select("venue_id, venue_location_id, site_latitude, site_longitude, site_label")
     .eq("id", shift.booking_id)
     .single();
 
@@ -154,25 +164,71 @@ export async function POST(request: NextRequest) {
 
   const maxM = maxCheckInDistanceM();
 
-  const validateGeofence = (
+  // Resolve the effective geofence boundary for this booking, preferring the
+  // per-booking snapshot/override, then the linked saved site, then null (which
+  // falls back to the pin + radius). Fetched tolerantly so a schema without the
+  // 0057 geofence columns simply degrades to radius checking.
+  let geofencePolygon: unknown = null;
+  {
+    const { data: poly, error: polyErr } = await supabaseAdmin
+      .from("bookings")
+      .select("site_geofence_polygon")
+      .eq("id", shift.booking_id)
+      .maybeSingle();
+    if (!polyErr) {
+      geofencePolygon =
+        (poly as { site_geofence_polygon?: unknown } | null)
+          ?.site_geofence_polygon ?? null;
+    }
+    if (geofencePolygon == null && bookingRow?.venue_location_id) {
+      const { data: loc, error: locErr } = await supabaseAdmin
+        .from("venue_locations")
+        .select("geofence_polygon")
+        .eq("id", bookingRow.venue_location_id)
+        .maybeSingle();
+      if (!locErr) {
+        geofencePolygon =
+          (loc as { geofence_polygon?: unknown } | null)?.geofence_polygon ??
+          null;
+      }
+    }
+  }
+
+  const evaluateGeofence = (): GeofenceCheckResult =>
+    isWithinGeofence({
+      lat: latitude,
+      lng: longitude,
+      polygon: geofencePolygon,
+      center:
+        venueLat != null &&
+        venueLon != null &&
+        Number.isFinite(venueLat) &&
+        Number.isFinite(venueLon)
+          ? { lat: venueLat, lng: venueLon }
+          : null,
+      radiusMeters: maxM,
+      toleranceMeters: geofenceToleranceM(),
+    });
+
+  const geofenceFailureResponse = (
+    geo: GeofenceCheckResult,
     actionLabel: "check_in" | "check_out",
-  ): NextResponse | null => {
-    if (venueLat == null || venueLon == null || !Number.isFinite(venueLat) || !Number.isFinite(venueLon)) {
-      return null;
-    }
-    const d = distanceMeters(latitude, longitude, venueLat, venueLon);
-    if (d > maxM) {
-      return NextResponse.json(
-        {
-          error: `You appear to be about ${Math.round(d)}m from ${venueName || "the venue"}. Move within ${maxM}m to ${actionLabel.replace("_", "-")}, or ask the venue to update their map pin.`,
-          distance_meters: Math.round(d),
-          max_distance_meters: maxM,
-          geofence_failed: true,
-        },
-        { status: 422 },
-      );
-    }
-    return null;
+  ): NextResponse => {
+    const verb = actionLabel.replace("_", "-");
+    const message =
+      geo.mode === "polygon"
+        ? `You appear to be about ${geo.distanceMeters}m outside the on-site area for ${venueName || "this venue"}. Move inside the marked zone to ${verb}, or ask the venue to update their geofence.`
+        : `You appear to be about ${geo.distanceMeters}m from ${venueName || "the venue"}. Move within ${geo.allowedMeters}m to ${verb}, or ask the venue to update their map pin.`;
+    return NextResponse.json(
+      {
+        error: message,
+        distance_meters: geo.distanceMeters,
+        max_distance_meters: geo.allowedMeters,
+        geofence_mode: geo.mode,
+        geofence_failed: true,
+      },
+      { status: 422 },
+    );
   };
 
   // --- CHECK IN ---
@@ -206,8 +262,22 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const geoErr = validateGeofence("check_in");
-    if (geoErr) return geoErr;
+    // Reject faked GPS — a mocked fix can't prove the guard is on-site.
+    if (mocked === true) {
+      return NextResponse.json(
+        {
+          error:
+            "Your location looks like a mock/fake GPS fix. Turn off any mock-location apps and try again.",
+          location_mocked: true,
+        },
+        { status: 422 },
+      );
+    }
+
+    const geo = evaluateGeofence();
+    if (geo.mode !== "none" && !geo.inside) {
+      return geofenceFailureResponse(geo, "check_in");
+    }
 
     const now = new Date().toISOString();
 
@@ -219,6 +289,8 @@ export async function POST(request: NextRequest) {
       actual_start: now,
       check_in_latitude: latitude,
       check_in_longitude: longitude,
+      check_in_geofence_mode: geo.mode,
+      check_in_distance_m: geo.distanceMeters,
       updated_at: now,
       // Cancel any active cover sourcing — the original guard recovered.
       // Setting dispatcher_status back to "none" makes the accept-shift atomic
@@ -274,18 +346,14 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const d =
-      venueLat != null && venueLon != null
-        ? Math.round(distanceMeters(latitude, longitude, venueLat, venueLon))
-        : null;
-
     return NextResponse.json({
       success: true,
       status: "checked_in",
       actual_start: now,
-      distance_meters: d,
-      max_distance_meters: venueLat != null && venueLon != null ? maxM : null,
-      geofence_skipped: venueLat == null || venueLon == null,
+      distance_meters: geo.distanceMeters,
+      max_distance_meters: geo.allowedMeters,
+      geofence_mode: geo.mode,
+      geofence_skipped: geo.mode === "none",
     });
   }
 
@@ -308,12 +376,10 @@ export async function POST(request: NextRequest) {
     // NOTE: We do NOT block checkout by geofence. A shift must always be
     // closeable so it can stop accruing pay. Distance is still recorded for
     // audit, and the venue gets an attendance-confirmation prompt downstream.
-    const dOut =
-      venueLat != null && venueLon != null
-        ? Math.round(distanceMeters(latitude, longitude, venueLat, venueLon))
-        : null;
+    const geoOut = evaluateGeofence();
+    const dOut = geoOut.distanceMeters;
     const checkoutOutsideGeofence =
-      dOut != null && dOut > maxM ? true : false;
+      geoOut.mode !== "none" && !geoOut.inside;
 
     const nowMs = Date.now();
     const actualStart = new Date(shift.actual_start);
@@ -344,19 +410,34 @@ export async function POST(request: NextRequest) {
       (actualEnd.getTime() - actualStart.getTime()) / (1000 * 60 * 60);
     const totalPay = hoursWorked * Number(shift.hourly_rate ?? 0);
 
-    const { error: upErr } = await supabaseAdmin
+    const checkoutBase: Record<string, unknown> = {
+      status: "checked_out",
+      actual_end: actualEnd.toISOString(),
+      check_out_latitude: latitude,
+      check_out_longitude: longitude,
+      hours_worked: Math.round(Math.max(0, hoursWorked) * 100) / 100,
+      total_pay: Math.round(Math.max(0, totalPay) * 100) / 100,
+      updated_at: new Date(nowMs).toISOString(),
+    };
+    const checkoutFull: Record<string, unknown> = {
+      ...checkoutBase,
+      check_out_geofence_mode: geoOut.mode,
+      check_out_distance_m: geoOut.distanceMeters,
+    };
+
+    let { error: upErr } = await supabaseAdmin
       .from("shifts")
-      .update({
-        status: "checked_out",
-        actual_end: actualEnd.toISOString(),
-        check_out_latitude: latitude,
-        check_out_longitude: longitude,
-        hours_worked: Math.round(Math.max(0, hoursWorked) * 100) / 100,
-        total_pay: Math.round(Math.max(0, totalPay) * 100) / 100,
-        updated_at: new Date(nowMs).toISOString(),
-      })
+      .update(checkoutFull as never)
       .eq("id", shift_id)
       .eq("status", "checked_in");
+    if (upErr && (upErr as { code?: string }).code === "42703") {
+      // Geofence audit columns not migrated yet (0058) — retry without them.
+      ({ error: upErr } = await supabaseAdmin
+        .from("shifts")
+        .update(checkoutBase as never)
+        .eq("id", shift_id)
+        .eq("status", "checked_in"));
+    }
 
     if (upErr) {
       return NextResponse.json({ error: upErr.message }, { status: 500 });
@@ -373,6 +454,8 @@ export async function POST(request: NextRequest) {
       personnelName: personnel.display_name || "Guard",
     });
 
+    await recordShiftPaymentAndCompleteBooking(supabaseAdmin, shift_id);
+
     return NextResponse.json({
       success: true,
       status: "checked_out",
@@ -380,8 +463,9 @@ export async function POST(request: NextRequest) {
       hours_worked: Math.round(Math.max(0, hoursWorked) * 100) / 100,
       total_pay: Math.round(Math.max(0, totalPay) * 100) / 100,
       distance_meters: dOut,
-      max_distance_meters: venueLat != null && venueLon != null ? maxM : null,
-      geofence_skipped: venueLat == null || venueLon == null,
+      max_distance_meters: geoOut.allowedMeters,
+      geofence_mode: geoOut.mode,
+      geofence_skipped: geoOut.mode === "none",
       checkout_outside_geofence: checkoutOutsideGeofence,
       auto: auto === true,
     });
@@ -407,14 +491,12 @@ async function notifyVenueAttendanceConfirmation(params: {
 
   const { data: venue } = await supabaseAdmin
     .from("venues")
-    .select("id, name, user_id, owner_id")
+    .select("id, name, user_id")
     .eq("id", booking.venue_id)
     .single();
 
   const venueUserId =
-    (venue as { owner_id?: string | null; user_id?: string | null } | null)?.owner_id ??
-    (venue as { user_id?: string | null } | null)?.user_id ??
-    null;
+    (venue as { user_id?: string | null } | null)?.user_id ?? null;
 
   if (!venueUserId) return;
 

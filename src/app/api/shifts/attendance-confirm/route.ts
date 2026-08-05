@@ -104,7 +104,9 @@ export async function POST(request: NextRequest) {
         .single(),
       supabase
         .from("bookings")
-        .select("id, venue_id, event_name, venues(id, user_id)")
+        .select(
+          "id, venue_id, agency_id, event_name, site_label, venues(id, user_id, name), agencies(id, user_id, name)",
+        )
         .eq("id", shift.booking_id)
         .single(),
       supabase
@@ -125,15 +127,24 @@ export async function POST(request: NextRequest) {
     }
 
     const booking = bookingRes.data;
-    if (!booking?.venue_id) {
+    if (!booking) {
       return NextResponse.json({ error: "Booking not found" }, { status: 404 });
     }
 
-    const venue: any = Array.isArray((booking as any).venues)
+    const venue: { id?: string; user_id?: string; name?: string } | null = Array.isArray(
+      (booking as any).venues,
+    )
       ? (booking as any).venues[0]
       : (booking as any).venues;
-    if (!venue?.user_id) {
-      return NextResponse.json({ error: "Venue not found" }, { status: 404 });
+    const agency: { id?: string; user_id?: string; name?: string } | null = Array.isArray(
+      (booking as any).agencies,
+    )
+      ? (booking as any).agencies[0]
+      : (booking as any).agencies;
+
+    const ownerUserId = venue?.user_id ?? agency?.user_id ?? null;
+    if (!ownerUserId) {
+      return NextResponse.json({ error: "Booking owner not found" }, { status: 404 });
     }
 
     // --- Persist the confirm to the shift row (the accountability anchor) ---
@@ -187,7 +198,7 @@ export async function POST(request: NextRequest) {
     const inserted = await insertMissionControlSystemMessage({
       supabase: supabase as any,
       groupChatId: groupChat.id,
-      senderId: venue.user_id,
+      senderId: ownerUserId,
       content:
         `✅ **Guard confirmed attendance**\n\n` +
         `${guardName} confirmed within 2 hours that they can make the shift ` +

@@ -54,7 +54,7 @@ export async function handleShiftCancellation(
         id,
         event_name,
         venue_id,
-        venues(id, name, owner_id)
+        venues(id, name, user_id)
       )
     `)
     .eq('id', shiftId)
@@ -207,7 +207,7 @@ async function sendCancellationNotifications(
   hoursNotice: number
 ): Promise<void> {
   const venueName = shift.booking?.venues?.name || 'Unknown Venue';
-  const venueOwnerId = shift.booking?.venues?.owner_id;
+  const venueOwnerId = shift.booking?.venues?.user_id;
   const eventName = shift.booking?.event_name || 'Shift';
   const personnelUserId = shift.personnel?.user_id;
   const personnelName = shift.personnel?.display_name || 'Unknown';
@@ -281,7 +281,7 @@ async function findReplacementPersonnel(
 
     if (newShift) {
       // Notify venue about successful replacement
-      const venueOwnerId = originalShift.booking?.venues?.owner_id;
+      const venueOwnerId = originalShift.booking?.venues?.user_id;
       if (venueOwnerId) {
         const personnelName = (newShift as any).personnel?.display_name || 'A new guard';
         await supabase.from('notifications').insert({
@@ -306,7 +306,7 @@ async function findReplacementPersonnel(
   }
 
   // No automatic replacement found - notify venue to manually fill
-  const venueOwnerId = originalShift.booking?.venues?.owner_id;
+  const venueOwnerId = originalShift.booking?.venues?.user_id;
   if (venueOwnerId) {
     await supabase.from('notifications').insert({
       user_id: venueOwnerId,

@@ -23,6 +23,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { supabase } from "../../lib/supabase";
+import { bookingDisplayName } from "../../lib/bookingDisplay";
+import { briefPreview } from "../../lib/shiftBrief";
+import { locationSummaryOneLine } from "../../lib/bookingLocation";
+import { computeShiftPay, paymentStatusLabel, shiftCountsAsWorked, getShiftCompletionDisplay } from "../../lib/shiftEarnings";
+import { fetchGuardShifts } from "../../lib/guardShifts";
 import {
   getProfileIdAndRole,
   getPersonnelId,
@@ -199,6 +204,13 @@ type Shift = {
   venue_name?: string;
   event_name?: string;
   event_date?: string;
+  /** Agency roster job — paid through agency payroll, not platform escrow. */
+  self_managed?: boolean | null;
+  brief_notes?: string | null;
+  site_address_text?: string | null;
+  site_label?: string | null;
+  site_latitude?: number | null;
+  site_longitude?: number | null;
 };
 
 function formatMoney(rate: number): string {
@@ -354,9 +366,8 @@ function AccountTabContent() {
       if (vData?.status === "verified") setVerifiedSticky(true);
       
       // Load SHIFTS for this guard (not bookings)
-      const { data: shiftsData, error: shiftsError } = await supabase
-        .from("shifts")
-        .select(`
+      const shiftsData = await fetchGuardShifts<any>(supabase, pid, {
+        select: `
           id,
           booking_id,
           personnel_id,
@@ -367,35 +378,48 @@ function AccountTabContent() {
           actual_start,
           actual_end,
           status,
+          total_pay,
+          hours_worked,
           venue_confirmed,
+          cancellation_reason,
           booking:bookings (
             id,
             event_name,
             event_date,
             venue_id,
+            self_managed,
+            site_label,
+            site_address_text,
+            site_latitude,
+            site_longitude,
+            brief_notes,
             venues (
               id,
               name
             )
           )
-        `)
-        .eq("personnel_id", pid)
-        .in("status", ["accepted", "checked_in", "checked_out", "pending"])
-        .order("scheduled_start", { ascending: true })
-        .limit(50);
+        `,
+        orderAsc: true,
+        limit: 80,
+      });
 
-      if (shiftsError) {
-        console.error("Error loading shifts:", shiftsError);
-      }
-      
       const formattedShifts = (shiftsData || []).map((s: any) => {
         const booking = Array.isArray(s.booking) ? s.booking[0] : s.booking;
         const venues = booking ? (Array.isArray(booking.venues) ? booking.venues[0] : booking.venues) : null;
         return {
           ...s,
-          venue_name: venues?.name || "Unknown Venue",
+          venue_name: bookingDisplayName({
+            ...booking,
+            venue: venues,
+          }),
           event_name: booking?.event_name || "Shift",
           event_date: booking?.event_date,
+          self_managed: booking?.self_managed ?? null,
+          brief_notes: booking?.brief_notes ?? null,
+          site_address_text: booking?.site_address_text ?? null,
+          site_label: booking?.site_label ?? null,
+          site_latitude: booking?.site_latitude ?? null,
+          site_longitude: booking?.site_longitude ?? null,
         };
       });
       setShifts(formattedShifts);
@@ -644,7 +668,14 @@ function AccountTabContent() {
   const isPersonnelRole = effectiveRole === "personnel";
   
   // Filter shifts by status
-  const completedShifts = shifts.filter((s) => s.status === "checked_out");
+  const completedShifts = shifts.filter((s) => shiftCountsAsWorked(s));
+  const recentCompletedShifts = [...completedShifts]
+    .sort(
+      (a, b) =>
+        new Date(b.actual_end || b.scheduled_end).getTime() -
+        new Date(a.actual_end || a.scheduled_end).getTime(),
+    )
+    .slice(0, 3);
   const activeShift = shifts.find((s) => s.status === "checked_in");
   const upcomingShifts = shifts.filter((s) => {
     if (s.status !== "accepted" && s.status !== "pending") return false;
@@ -664,11 +695,8 @@ function AccountTabContent() {
   
   // Calculate earnings from completed and active shifts
   const totalEarnings = [...completedShifts, ...(activeShift ? [activeShift] : [])].reduce((sum, s) => {
-    if (s.total_pay) return sum + s.total_pay;
-    const hours = s.actual_start && s.actual_end 
-      ? (new Date(s.actual_end).getTime() - new Date(s.actual_start).getTime()) / 3600000
-      : (new Date(s.scheduled_end).getTime() - new Date(s.scheduled_start).getTime()) / 3600000;
-    return sum + (hours * (s.hourly_rate || 0));
+    const { pay } = computeShiftPay(s);
+    return sum + pay;
   }, 0);
   
   // Legacy bookings stats (for backward compatibility)
@@ -1074,6 +1102,8 @@ function AccountTabContent() {
               role={todayShift.role || "Security"}
               hourlyRate={todayShift.hourly_rate || 0}
               isActive={!!activeShift}
+              briefPreview={briefPreview(todayShift.brief_notes, 100)}
+              locationLine={locationSummaryOneLine(todayShift, 90)}
               onPress={() => router.push(`/shift/${todayShift.id}`)}
               onCheckIn={!activeShift ? () => router.push(`/shift/${todayShift.id}`) : undefined}
             />
@@ -1103,6 +1133,46 @@ function AccountTabContent() {
                 columns={2}
               />
             ))}
+          </View>
+        )}
+
+        {recentCompletedShifts.length > 0 && (
+          <View style={styles.upcomingSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>✅ Recent completed</Text>
+              <TouchableOpacity onPress={() => router.push("/stats")}>
+                <Text style={styles.sectionLink}>Stats</Text>
+              </TouchableOpacity>
+            </View>
+            {recentCompletedShifts.map((s) => {
+              const { pay, hours } = computeShiftPay(s);
+              const completion = getShiftCompletionDisplay(s);
+              return (
+                <TouchableOpacity
+                  key={s.id}
+                  style={styles.recentCompletedCard}
+                  onPress={() => router.push(`/shift/${s.id}`)}
+                  activeOpacity={0.88}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.recentCompletedTitle} numberOfLines={1}>
+                      {s.event_name || "Shift"}
+                    </Text>
+                    <Text style={styles.recentCompletedMeta}>
+                      {hours.toFixed(1)}h worked · £{pay.toFixed(2)}
+                    </Text>
+                    <Text style={styles.recentCompletedPay}>
+                      {completion.label}
+                      {completion.detail ? ` · ${completion.detail}` : ""}
+                    </Text>
+                    <Text style={styles.recentCompletedPay}>
+                      {paymentStatusLabel(s) || "Awaiting confirmation"}
+                    </Text>
+                  </View>
+                  <Text style={styles.viewDetailsArrow}>→</Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         )}
 
@@ -1149,7 +1219,7 @@ function AccountTabContent() {
                 onPress={() => router.push("/availability")}
                 isFirst
               />
-              <AccountSettingsRow icon="🛡️" label="Shield score" onPress={() => router.push("/stats")} />
+              <AccountSettingsRow icon="🛡️" label="Shield Score" onPress={() => router.push("/shield-score")} />
               <AccountSettingsRow icon="⭐" label="Reviews" onPress={() => router.push("/reviews")} />
             </View>
 
@@ -1575,6 +1645,37 @@ const styles = StyleSheet.create({
   upcomingSection: {
     paddingHorizontal: spacing.lg,
     marginBottom: spacing.lg,
+  },
+  recentCompletedCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  recentCompletedTitle: {
+    ...typography.body,
+    fontWeight: "600",
+    color: colors.text,
+  },
+  recentCompletedMeta: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  recentCompletedPay: {
+    ...typography.caption,
+    color: colors.accent,
+    marginTop: 4,
+    fontSize: 11,
+  },
+  viewDetailsArrow: {
+    color: colors.textMuted,
+    fontSize: 18,
   },
   
   // Shift Card

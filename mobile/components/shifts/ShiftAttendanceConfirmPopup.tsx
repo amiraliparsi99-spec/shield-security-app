@@ -235,17 +235,26 @@ export function ShiftAttendanceConfirmPopup() {
       let venueName = "the venue";
       const { data: booking } = await supabase
         .from("bookings")
-        .select("event_name, venue_id")
+        .select("event_name, venue_id, site_label, agency_id")
         .eq("id", candidate.booking_id)
         .maybeSingle();
       if (booking?.event_name) eventName = booking.event_name;
-      if (booking?.venue_id) {
+      if (booking?.site_label) {
+        venueName = booking.site_label;
+      } else if (booking?.venue_id) {
         const { data: venue } = await supabase
           .from("venues")
           .select("name")
           .eq("id", booking.venue_id)
           .maybeSingle();
         if (venue?.name) venueName = venue.name;
+      } else if (booking?.agency_id) {
+        const { data: agency } = await supabase
+          .from("agencies")
+          .select("name")
+          .eq("id", booking.agency_id)
+          .maybeSingle();
+        if (agency?.name) venueName = agency.name;
       }
 
       const nextShift: PromptShift = {

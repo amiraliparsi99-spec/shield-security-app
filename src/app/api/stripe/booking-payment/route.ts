@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { amount_pence, event_name, venue_id } = body;
+    const { amount_pence, event_name, venue_id, agency_id } = body;
 
     if (!amount_pence || amount_pence < 100) {
       return NextResponse.json(
@@ -73,6 +73,7 @@ export async function POST(request: NextRequest) {
       metadata: {
         type: "booking_upfront",
         venue_id: venue_id || "",
+        agency_id: agency_id || "",
         payer_id: user.id,
         event_name: event_name || "",
         platform_fee: fees.platformFee.toString(),

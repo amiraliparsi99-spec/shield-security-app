@@ -120,11 +120,41 @@ export async function GET(request: NextRequest) {
       // as the fallback. This matches what the check-in API does.
       const { data: booking } = await supabase
         .from("bookings")
-        .select("id, venue_id, event_name, site_latitude, site_longitude")
+        .select("id, venue_id, event_name, venue_location_id, site_latitude, site_longitude")
         .eq("id", shift.booking_id)
         .single();
 
       if (!booking?.venue_id) continue;
+
+      // Drawn geofence (optional): booking snapshot/override → linked saved
+      // site → none. Fetched tolerantly so a pre-0057 schema still runs.
+      let geofencePolygon: unknown = null;
+      {
+        const polyResp = await supabase
+          .from("bookings")
+          .select("site_geofence_polygon")
+          .eq("id", shift.booking_id)
+          .maybeSingle();
+        if (!polyResp.error) {
+          geofencePolygon =
+            (polyResp.data as { site_geofence_polygon?: unknown } | null)
+              ?.site_geofence_polygon ?? null;
+        }
+        const locId = (booking as { venue_location_id?: string | null })
+          .venue_location_id;
+        if (geofencePolygon == null && locId) {
+          const locResp = await supabase
+            .from("venue_locations")
+            .select("geofence_polygon")
+            .eq("id", locId)
+            .maybeSingle();
+          if (!locResp.error) {
+            geofencePolygon =
+              (locResp.data as { geofence_polygon?: unknown } | null)
+                ?.geofence_polygon ?? null;
+          }
+        }
+      }
 
       let siteLat: number | null =
         typeof booking.site_latitude === "number" ? booking.site_latitude : null;
@@ -208,6 +238,7 @@ export async function GET(request: NextRequest) {
         scheduledStartIso: shift.scheduled_start,
         status: shift.status,
         site: siteLat != null && siteLng != null ? { lat: siteLat, lng: siteLng } : null,
+        polygon: geofencePolygon,
         latestGps: gpsRow
           ? {
               lat: gpsRow.lat,

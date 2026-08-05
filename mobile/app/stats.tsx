@@ -16,7 +16,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { colors, typography, spacing, radius } from "../theme";
 import { supabase } from "../lib/supabase";
+import { bookingDisplayName } from "../lib/bookingDisplay";
 import { getProfileIdAndRole, getPersonnelId } from "../lib/auth";
+import { computeShiftPay, shiftCountsAsWorked } from "../lib/shiftEarnings";
+import { fetchGuardShifts } from "../lib/guardShifts";
 import { BackButton } from "../components/ui/BackButton";
 import { GuestGate } from "../components/auth/GuestGate";
 
@@ -78,9 +81,8 @@ function StatsScreenContent() {
       }
 
       // Fetch all shifts for this guard
-      const { data: shifts, error } = await supabase
-        .from("shifts")
-        .select(`
+      const shifts = await fetchGuardShifts<any>(supabase, personnelId, {
+        select: `
           id,
           status,
           hourly_rate,
@@ -88,21 +90,19 @@ function StatsScreenContent() {
           scheduled_end,
           actual_start,
           actual_end,
+          total_pay,
+          hours_worked,
           venue_confirmed,
+          cancellation_reason,
           booking:bookings(
             event_name,
+            site_label,
+            site_address_text,
             venues(name)
           )
-        `)
-        .eq("personnel_id", personnelId)
-        .order("scheduled_start", { ascending: false });
-
-      if (error) {
-        console.error("Error loading shifts:", error);
-        setLoading(false);
-        setRefreshing(false);
-        return;
-      }
+        `,
+        orderAsc: false,
+      });
 
       // Calculate stats
       const now = new Date();
@@ -113,7 +113,7 @@ function StatsScreenContent() {
       thisWeekStart.setDate(now.getDate() - now.getDay());
       thisWeekStart.setHours(0, 0, 0, 0);
 
-      const completed = shifts?.filter(s => s.status === "checked_out") || [];
+      const completed = shifts?.filter((s) => shiftCountsAsWorked(s)) || [];
       const upcoming = shifts?.filter(s => 
         (s.status === "accepted" || s.status === "pending") && 
         new Date(s.scheduled_start) > now
@@ -130,24 +130,22 @@ function StatsScreenContent() {
       let pendingPayments = 0;
 
       completed.forEach(shift => {
-        const start = shift.actual_start ? new Date(shift.actual_start) : new Date(shift.scheduled_start);
-        const end = shift.actual_end ? new Date(shift.actual_end) : new Date(shift.scheduled_end);
-        const hours = (end.getTime() - start.getTime()) / 3600000;
-        const earnings = hours * (shift.hourly_rate || 0);
+        const { hours, pay } = computeShiftPay(shift as any);
         
         totalHours += hours;
-        totalEarnings += earnings;
+        totalEarnings += pay;
 
+        const start = shift.actual_start ? new Date(shift.actual_start) : new Date(shift.scheduled_start);
         if (start >= thisMonthStart) {
-          thisMonthEarnings += earnings;
+          thisMonthEarnings += pay;
         } else if (start >= lastMonthStart && start <= lastMonthEnd) {
-          lastMonthEarnings += earnings;
+          lastMonthEarnings += pay;
         }
 
         if (shift.venue_confirmed) {
-          confirmedPayments += earnings;
+          confirmedPayments += pay;
         } else {
-          pendingPayments += earnings;
+          pendingPayments += pay;
         }
       });
 
@@ -332,7 +330,9 @@ function StatsScreenContent() {
               <View key={shift.id} style={styles.recentShift}>
                 <View style={styles.recentShiftInfo}>
                   <Text style={styles.recentShiftVenue}>
-                    {shift.booking?.venues?.name || "Unknown Venue"}
+                    {bookingDisplayName(
+                      Array.isArray(shift.booking) ? shift.booking[0] : shift.booking,
+                    )}
                   </Text>
                   <Text style={styles.recentShiftDate}>
                     {start.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} • {hours.toFixed(1)}h

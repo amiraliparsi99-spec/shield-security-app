@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { sendPushNotification } from "@/lib/notifications/push-service";
 import { requireCronAuth } from "@/lib/auth/cronAuth";
+import { recordShiftPaymentAndCompleteBooking } from "@/lib/shifts/finalizeShiftWork";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -104,6 +105,8 @@ export async function GET(request: NextRequest) {
         autoCheckout: true,
       });
 
+      await recordShiftPaymentAndCompleteBooking(supabase, shift.id);
+
       autoCheckedOut++;
     }
 
@@ -160,14 +163,12 @@ async function notifyVenueAttendanceConfirmation(
 
   const { data: venue } = await supabase
     .from("venues")
-    .select("id, name, user_id, owner_id")
+    .select("id, name, user_id")
     .eq("id", booking.venue_id)
     .single();
 
   const venueUserId =
-    (venue as { owner_id?: string | null; user_id?: string | null } | null)?.owner_id ??
-    (venue as { user_id?: string | null } | null)?.user_id ??
-    null;
+    (venue as { user_id?: string | null } | null)?.user_id ?? null;
 
   if (!venueUserId) return;
 

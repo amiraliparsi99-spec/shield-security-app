@@ -239,16 +239,16 @@ async function updateAgencyBalance(
 ): Promise<void> {
   const { data: agency } = await supabase
     .from('agencies')
-    .select('owner_id')
+    .select('user_id')
     .eq('id', agencyId)
     .single();
 
-  if (!agency?.owner_id) return;
+  if (!agency?.user_id) return;
 
   const { data: existingWallet } = await supabase
     .from('wallets')
     .select('*')
-    .eq('user_id', agency.owner_id)
+    .eq('user_id', agency.user_id)
     .single();
 
   if (existingWallet) {
@@ -259,10 +259,10 @@ async function updateAgencyBalance(
         total_earned: (existingWallet.total_earned || 0) + amount,
         updated_at: new Date().toISOString(),
       })
-      .eq('user_id', agency.owner_id);
+      .eq('user_id', agency.user_id);
   } else {
     await supabase.from('wallets').insert({
-      user_id: agency.owner_id,
+      user_id: agency.user_id,
       available_balance: amount,
       pending_balance: 0,
       total_earned: amount,

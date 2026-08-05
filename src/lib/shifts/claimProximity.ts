@@ -68,7 +68,9 @@ export async function validateClaimProximity({
     .eq("id", bookingId)
     .single();
 
-  if (!booking?.venue_id) {
+  // Agency-owned bookings have no venue_id — they carry their own site pin
+  // (site_latitude/longitude/site_label), so only a missing row is fatal.
+  if (!booking) {
     return { ok: false, error: "Booking details not found for this shift." };
   }
 

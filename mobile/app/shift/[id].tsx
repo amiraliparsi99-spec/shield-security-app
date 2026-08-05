@@ -22,15 +22,25 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
-import { colors, gradients, spacing, radius } from "../../theme";
+import { colors, gradients, spacing, radius, typography } from "../../theme";
 import { useLocationTracking } from "../../hooks/useLocationTracking";
+import { getLocationState } from "../../services/location";
 import { supabase } from "../../lib/supabase";
+import { bookingDisplayName, bookingDisplaySubtitle } from "../../lib/bookingDisplay";
+import { ShiftLocationCard } from "../../components/shift/ShiftLocationCard";
 import { fetchApi } from "../../lib/api";
+import { getPersonnelId, getProfileIdAndRole } from "../../lib/auth";
+import { respondToAssignment } from "../../lib/shiftClaim";
 import { isMissingColumnError } from "../../lib/postgresErrors";
-import { bookingDirectionsLine } from "../../lib/bookingDirections";
 import { BackButton } from "../../components/ui/BackButton";
 import { AnimatedBackground } from "../../components/ui/AnimatedBackground";
 import { LiveIndicator } from "../../components/ui/LiveIndicator";
+import {
+  computeShiftPay,
+  getShiftCompletionDisplay,
+  paymentStatusLabel,
+  shiftHasRecordedWork,
+} from "../../lib/shiftEarnings";
 
 interface ShiftData {
   id: string;
@@ -43,9 +53,12 @@ interface ShiftData {
   scheduled_end: string;
   actual_start: string | null;
   actual_end: string | null;
+  total_pay?: number | null;
+  hours_worked?: number | null;
+  cancellation_reason?: string | null;
   check_in_latitude: number | null;
   check_in_longitude: number | null;
-  venue_confirmed: boolean;
+  venue_confirmed: boolean | null;
   // Cover sourcing state — populated by the pre-shift travel risk cron.
   // null when not in cover search; integer 1-3 once a wave is active.
   cover_search_wave?: number | null;
@@ -58,8 +71,11 @@ interface ShiftData {
     start_time: string;
     end_time: string;
     brief_notes?: string | null;
+    self_managed?: boolean | null;
     site_label?: string | null;
     site_address_text?: string | null;
+    site_latitude?: number | null;
+    site_longitude?: number | null;
     venue_location?: {
       label?: string | null;
       address_line1?: string | null;
@@ -102,8 +118,11 @@ const SHIFT_SELECT_WITH_SITE_ADDRESS = `
             start_time,
             end_time,
             brief_notes,
+            self_managed,
             site_label,
             site_address_text,
+            site_latitude,
+            site_longitude,
             venue_location:venue_locations!venue_location_id(label, address_line1, city, postcode),
             venue:venues(id, name, address_line1, city, postcode, latitude, longitude)
           )
@@ -130,18 +149,23 @@ const SHIFT_SELECT_LEGACY = `
             start_time,
             end_time,
             brief_notes,
+            self_managed,
             site_label,
             venue:venues(id, name, address_line1, city, postcode, latitude, longitude)
           )
         `;
 
 export default function ShiftScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, from } = useLocalSearchParams<{ id: string; from?: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [shift, setShift] = useState<ShiftData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [hasOnSiteZone, setHasOnSiteZone] = useState(false);
+  const [onBreak, setOnBreak] = useState(false);
+  const [breakLoading, setBreakLoading] = useState(false);
   const [checkinActionLoading, setCheckinActionLoading] = useState(false);
+  const [rosterBusy, setRosterBusy] = useState(false);
 
   const extractAttireRequirement = (briefNotes?: string | null): string | null => {
     if (!briefNotes) return null;
@@ -246,6 +270,19 @@ export default function ShiftScreen() {
       if (data?.booking_id && data?.id) {
         try {
           await loadGeofencesForBooking(data.booking_id, data.id);
+          setHasOnSiteZone(getLocationState().activeGeofencePolygon != null);
+          // Reflect any open break so the button shows the right state.
+          try {
+            const { data: openBreak } = await supabase
+              .from("shift_breaks")
+              .select("id")
+              .eq("shift_id", data.id)
+              .is("ended_at", null)
+              .maybeSingle();
+            setOnBreak(!!openBreak);
+          } catch {
+            // table missing / no break — ignore
+          }
         } catch (geoError) {
           console.log("Geofences not available:", geoError);
           // Continue without geofences - not critical
@@ -258,6 +295,102 @@ export default function ShiftScreen() {
       if (!opts?.silent) setIsLoading(false);
     }
   };
+
+  const toggleBreak = useCallback(async () => {
+    if (!shift?.id || !supabase) return;
+    setBreakLoading(true);
+    try {
+      if (onBreak) {
+        // End the open break.
+        const { data: open } = await supabase
+          .from("shift_breaks")
+          .select("id")
+          .eq("shift_id", shift.id)
+          .is("ended_at", null)
+          .maybeSingle();
+        if (open?.id) {
+          await supabase
+            .from("shift_breaks")
+            .update({ ended_at: new Date().toISOString() })
+            .eq("id", open.id);
+        }
+        setOnBreak(false);
+      } else {
+        const { error } = await supabase.from("shift_breaks").insert({
+          shift_id: shift.id,
+          personnel_id: shift.personnel_id,
+          started_at: new Date().toISOString(),
+        } as any);
+        if (error && (error as any).code !== "23505") {
+          Alert.alert("Couldn't start break", error.message);
+        } else {
+          setOnBreak(true);
+        }
+      }
+    } finally {
+      setBreakLoading(false);
+    }
+  }, [shift?.id, shift?.personnel_id, onBreak]);
+
+  const [sosLoading, setSosLoading] = useState(false);
+
+  const handleSos = useCallback(() => {
+    if (!shift?.id || !supabase) return;
+    Alert.alert(
+      "Raise SOS?",
+      "This immediately alerts the venue (and your agency) with your live location. Use it if you feel unsafe or need urgent help.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Send SOS",
+          style: "destructive",
+          onPress: async () => {
+            setSosLoading(true);
+            try {
+              const {
+                data: { session },
+              } = await supabase.auth.getSession();
+              if (!session?.access_token) {
+                Alert.alert("Please log in again");
+                return;
+              }
+              let lat: number | null = null;
+              let lng: number | null = null;
+              try {
+                const pos = await Location.getCurrentPositionAsync({
+                  accuracy: Location.Accuracy.High,
+                });
+                lat = pos.coords.latitude;
+                lng = pos.coords.longitude;
+              } catch {
+                const last = await Location.getLastKnownPositionAsync().catch(() => null);
+                lat = last?.coords.latitude ?? null;
+                lng = last?.coords.longitude ?? null;
+              }
+              const res = await fetchApi("/api/sos", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${session.access_token}`,
+                },
+                body: JSON.stringify({ shift_id: shift.id, latitude: lat, longitude: lng }),
+              });
+              if (res.ok) {
+                Alert.alert(
+                  "SOS sent",
+                  "The venue has been alerted with your location. Stay safe — help is being notified.",
+                );
+              } else {
+                Alert.alert("Couldn't send SOS", "Please try again, or call for help directly.");
+              }
+            } finally {
+              setSosLoading(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [shift?.id]);
 
   const startTrackingForShift = useCallback(
     async (opts?: { showAlert?: boolean }) => {
@@ -338,17 +471,20 @@ export default function ShiftScreen() {
       // fix — the shift must close at scheduled end no matter what.
       let latitude: number | null = null;
       let longitude: number | null = null;
+      let mocked = false;
       try {
         const pos = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.High,
         });
         latitude = pos.coords.latitude;
         longitude = pos.coords.longitude;
+        mocked = (pos as { mocked?: boolean }).mocked === true;
       } catch (gpsErr) {
         if (!opts?.auto) throw gpsErr;
         const last = await Location.getLastKnownPositionAsync().catch(() => null);
         latitude = last?.coords.latitude ?? 0;
         longitude = last?.coords.longitude ?? 0;
+        mocked = (last as { mocked?: boolean } | null)?.mocked === true;
       }
 
       const res = await fetchApi("/api/shifts/checkin", {
@@ -363,6 +499,7 @@ export default function ShiftScreen() {
           latitude,
           longitude,
           auto: opts?.auto === true,
+          mocked,
         }),
       });
 
@@ -370,6 +507,9 @@ export default function ShiftScreen() {
         error?: string;
         checkout_outside_geofence?: boolean;
         distance_meters?: number;
+        geofence_failed?: boolean;
+        check_in_window_not_open?: boolean;
+        location_mocked?: boolean;
       } = {};
       try {
         result = await res.json();
@@ -379,9 +519,20 @@ export default function ShiftScreen() {
 
       if (!res.ok) {
         if (!opts?.auto) {
+          // Friendly, situation-specific title so the guard immediately
+          // understands what to do. The server already returns a plain-language
+          // body message (e.g. "You're about 300m from the venue. Move within…").
+          let title = action === "check_in" ? "Can't check in yet" : "Can't check out";
+          if (result.geofence_failed) {
+            title = "You're not close enough yet";
+          } else if (result.check_in_window_not_open) {
+            title = "A little early";
+          } else if (result.location_mocked) {
+            title = "Location looks fake";
+          }
           Alert.alert(
-            action === "check_in" ? "Can't check in" : "Can't check out",
-            result.error || "Something went wrong. Try again.",
+            title,
+            result.error || "Something went wrong. Please try again.",
           );
         } else {
           console.warn("[Shift] Auto checkout failed:", result.error);
@@ -488,6 +639,8 @@ export default function ShiftScreen() {
                 throw new Error(base + dbg);
               }
 
+              await stopTracking();
+
               if (data.mode === "reopened_for_cover") {
                 Alert.alert(
                   "Shift released",
@@ -512,6 +665,74 @@ export default function ShiftScreen() {
       "",
       "default"
     );
+  };
+
+  const handleCantMakeIt = () => {
+    if (!shift || !supabase) return;
+    Alert.alert(
+      "Can't make it?",
+      `${shift.booking?.event_name || "This shift"} will go back to your agency so they can reassign.`,
+      [
+        { text: "Keep shift", style: "cancel" },
+        {
+          text: "Can't make it",
+          style: "destructive",
+          onPress: async () => {
+            setRosterBusy(true);
+            try {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              const {
+                data: { user },
+              } = await supabase.auth.getUser();
+              if (!user) throw new Error("Please log in again");
+              const profile = await getProfileIdAndRole(supabase, user.id);
+              const personnelId = profile
+                ? await getPersonnelId(supabase, profile.profileId)
+                : null;
+              await respondToAssignment({
+                shiftId: shift.id,
+                response: "declined",
+                personnelId,
+              });
+              Alert.alert("Agency notified", "This shift has been removed from your roster.", [
+                { text: "OK", onPress: () => router.back() },
+              ]);
+            } catch (error: any) {
+              Alert.alert("Couldn't update", error?.message || "Please try again.");
+            } finally {
+              setRosterBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleAcceptRoster = async () => {
+    if (!shift || !supabase) return;
+    setRosterBusy(true);
+    try {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new Error("Please log in again");
+      const profile = await getProfileIdAndRole(supabase, user.id);
+      const personnelId = profile
+        ? await getPersonnelId(supabase, profile.profileId)
+        : null;
+      await respondToAssignment({
+        shiftId: shift.id,
+        response: "accepted",
+        personnelId,
+      });
+      await loadShift({ silent: true });
+      Alert.alert("You're confirmed", "You're on this shift. See you there.");
+    } catch (error: any) {
+      Alert.alert("Couldn't accept", error?.message || "Please try again.");
+    } finally {
+      setRosterBusy(false);
+    }
   };
 
   // Animations
@@ -558,7 +779,7 @@ export default function ShiftScreen() {
     }
   }, [shift?.status]);
 
-  // Auto-start tracking 1 hour before scheduled start through to scheduled end.
+  // Auto-start tracking 60 minutes before scheduled start through to scheduled end.
   // Mirrors the global PreShiftTracker so opening this screen kicks off tracking
   // immediately if the user is in-window. Also re-starts tracking if the shift
   // is already checked_in but tracking happens to be off (force-quit, etc.).
@@ -634,6 +855,20 @@ export default function ShiftScreen() {
   const shiftDurationHours = (endTime.getTime() - startTime.getTime()) / 3600000;
   const estimatedEarnings = shiftDurationHours * (shift.hourly_rate || 0);
   const attireRequirement = extractAttireRequirement(shift.booking?.brief_notes);
+  const isRosterShift = from === "roster" || shift.booking?.self_managed === true;
+  const shiftBrief =
+    shift.booking?.brief_notes?.replace(/Attire requirement:.*$/im, "").trim() || null;
+
+  const workSummary = shiftHasRecordedWork(shift)
+    ? getShiftCompletionDisplay(shift)
+    : null;
+  const workedPay = shiftHasRecordedWork(shift) ? computeShiftPay(shift) : null;
+  const payStatus = shiftHasRecordedWork(shift)
+    ? paymentStatusLabel({
+        ...shift,
+        self_managed: shift.booking?.self_managed ?? null,
+      })
+    : "";
 
   return (
     <View style={styles.container}>
@@ -667,6 +902,43 @@ export default function ShiftScreen() {
             )}
           </View>
         </Animated.View>
+
+        {isCheckedOut && workSummary && workedPay ? (
+          <Animated.View
+            style={[
+              styles.completionBanner,
+              {
+                opacity: fadeAnim,
+                transform: [{ translateY: slideAnim }],
+              },
+            ]}
+          >
+            <Text style={styles.completionTitle}>{workSummary.label}</Text>
+            {workSummary.detail ? (
+              <Text style={styles.completionDetail}>{workSummary.detail}</Text>
+            ) : null}
+            <Text style={styles.completionPay}>
+              £{workedPay.pay.toFixed(2)} for {workedPay.hours.toFixed(1)} hours worked
+            </Text>
+            {shift.actual_start && shift.actual_end ? (
+              <Text style={styles.completionTimes}>
+                Actual:{" "}
+                {new Date(shift.actual_start).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}{" "}
+                –{" "}
+                {new Date(shift.actual_end).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </Text>
+            ) : null}
+            {payStatus ? (
+              <Text style={styles.completionPayStatus}>{payStatus}</Text>
+            ) : null}
+          </Animated.View>
+        ) : null}
 
         {/* Venue Card - Enhanced */}
         <Animated.View
@@ -702,13 +974,10 @@ export default function ShiftScreen() {
                 </View>
               )}
             </View>
-            <Text style={styles.venueName}>{shift.booking?.venue?.name || "Unknown Venue"}</Text>
-            {shift.booking?.site_label ? (
-              <Text style={styles.siteLabel}>{shift.booking.site_label}</Text>
+            <Text style={styles.venueName}>{bookingDisplayName(shift.booking)}</Text>
+            {bookingDisplaySubtitle(shift.booking) ? (
+              <Text style={styles.siteLabel}>{bookingDisplaySubtitle(shift.booking)}</Text>
             ) : null}
-            <Text style={styles.venueAddress}>
-              {shift.booking ? bookingDirectionsLine(shift.booking) : "Address not available"}
-            </Text>
             <Text style={styles.eventName}>{shift.booking?.event_name || "Shift"}</Text>
 
             <View style={styles.timeRow}>
@@ -752,6 +1021,31 @@ export default function ShiftScreen() {
             ) : null}
           </LinearGradient>
         </Animated.View>
+
+        {shift.booking ? (
+          <Animated.View
+            style={[
+              styles.cardContainer,
+              { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+            ]}
+          >
+            <ShiftLocationCard booking={shift.booking} />
+          </Animated.View>
+        ) : null}
+
+        {shiftBrief ? (
+          <Animated.View
+            style={[
+              styles.cardContainer,
+              { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+            ]}
+          >
+            <View style={styles.briefCard}>
+              <Text style={styles.briefTitle}>Shift brief</Text>
+              <Text style={styles.briefBody}>{shiftBrief}</Text>
+            </View>
+          </Animated.View>
+        ) : null}
 
         {/* Cover-sourcing banner — appears when the venue has started looking
          * for a replacement (R5+ ring or active cover search). Lets the guard
@@ -801,8 +1095,8 @@ export default function ShiftScreen() {
                 <>
                   <Text style={styles.primaryActionTitle}>At the venue?</Text>
                   <Text style={styles.primaryActionCaption}>
-                    Tap once to check in. We send a single GPS point to prove you're on site
-                    (server-validated, same as the web dashboard). Live tracking below is optional.
+                    Tap once when you arrive. We check your location just to confirm you&apos;re on
+                    site &mdash; that&apos;s it.
                   </Text>
                   {statusAllowsCheckIn ? (
                     afterShiftWindow ? (
@@ -855,8 +1149,8 @@ export default function ShiftScreen() {
                 <>
                   <Text style={styles.primaryActionTitle}>Leaving the venue?</Text>
                   <Text style={styles.primaryActionCaption}>
-                    One GPS point is recorded for check-out. You must be within range of the venue
-                    pin (same rule as check-in).
+                    Tap to end your shift. We check your location one last time to confirm you
+                    finished on site.
                   </Text>
                   <TouchableOpacity
                     style={styles.primaryActionButtonWrap}
@@ -885,6 +1179,39 @@ export default function ShiftScreen() {
                 </>
               )}
             </LinearGradient>
+          </Animated.View>
+        )}
+
+        {/* SOS — kept prominent and impossible to miss while on shift. */}
+        {isCheckedIn && !isCheckedOut && (
+          <Animated.View
+            style={[
+              styles.cardContainer,
+              {
+                opacity: fadeAnim,
+                transform: [{ translateY: slideAnim }],
+              },
+            ]}
+          >
+            <TouchableOpacity
+              style={styles.sosCard}
+              onPress={() => {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                handleSos();
+              }}
+              disabled={sosLoading}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.sosCardIcon}>🆘</Text>
+              <View style={styles.sosCardTextWrap}>
+                <Text style={styles.sosCardTitle}>
+                  {sosLoading ? "Sending SOS…" : "Raise SOS"}
+                </Text>
+                <Text style={styles.sosCardSubtitle}>
+                  In danger or need urgent help? Tap to alert the venue and your team with your location.
+                </Text>
+              </View>
+            </TouchableOpacity>
           </Animated.View>
         )}
 
@@ -979,6 +1306,41 @@ export default function ShiftScreen() {
               </View>
             </View>
 
+            {hasOnSiteZone && (
+              <View style={styles.zoneBanner}>
+                <Text style={styles.zoneBannerText}>
+                  🗺️ This site has a custom on-site zone. You&apos;ll check in
+                  anywhere inside it — no need to reach the exact entrance pin.
+                </Text>
+              </View>
+            )}
+
+            {isCheckedIn && !isCheckedOut && (
+              <TouchableOpacity
+                style={[styles.breakButton, onBreak && styles.breakButtonActive]}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  toggleBreak();
+                }}
+                disabled={breakLoading}
+              >
+                <Text style={[styles.breakButtonText, onBreak && styles.breakButtonTextActive]}>
+                  {breakLoading
+                    ? "…"
+                    : onBreak
+                      ? "● On break — tap when you're back"
+                      : "Step out (take a break)"}
+                </Text>
+              </TouchableOpacity>
+            )}
+            {onBreak && (
+              <Text style={styles.breakHint}>
+                The venue can see you&apos;re on a break, and you won&apos;t be
+                flagged for leaving the area. You&apos;re still on shift and
+                still being paid.
+              </Text>
+            )}
+
             {locationError && (
               <View style={styles.errorBanner}>
                 <Text style={styles.errorBannerText}>⚠️ {locationError}</Text>
@@ -1011,13 +1373,13 @@ export default function ShiftScreen() {
         >
           <LinearGradient colors={gradients.accentSoft} style={styles.infoCardGradient}>
             <Text style={styles.infoText}>
-              ℹ️ Check-in uses one GPS fix when you tap the button (same rules as the web dashboard). Always-on
-              live tracking is optional and may come in a later release.
+              ℹ️ Checking in records your location once, just to confirm you&apos;re at the venue.
+              Live tracking during your shift is optional.
             </Text>
           </LinearGradient>
         </Animated.View>
 
-        {/* Cancel Shift Button - Only show for pending/accepted shifts */}
+        {/* Roster decline / marketplace cancel */}
         {(shift.status === "pending" || shift.status === "accepted") && !isCheckedIn && (
           <Animated.View
             style={[
@@ -1028,19 +1390,51 @@ export default function ShiftScreen() {
               },
             ]}
           >
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                handleCancelShift();
-              }}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.cancelButtonText}>❌ Cancel Shift</Text>
-            </TouchableOpacity>
-            <Text style={styles.cancelWarning}>
-              Cancelling less than 24 hours before the shift may affect your reliability rating
-            </Text>
+            {isRosterShift ? (
+              <>
+                {shift.status === "pending" ? (
+                  <TouchableOpacity
+                    style={[styles.rosterAcceptBtn, rosterBusy && styles.btnDisabled]}
+                    onPress={handleAcceptRoster}
+                    disabled={rosterBusy}
+                    activeOpacity={0.85}
+                  >
+                    {rosterBusy ? (
+                      <ActivityIndicator size="small" color="#000" />
+                    ) : (
+                      <Text style={styles.rosterAcceptText}>Accept shift</Text>
+                    )}
+                  </TouchableOpacity>
+                ) : null}
+                <TouchableOpacity
+                  style={styles.cantMakeItBtn}
+                  onPress={handleCantMakeIt}
+                  disabled={rosterBusy}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.cantMakeItText}>Can&apos;t make it</Text>
+                </TouchableOpacity>
+                <Text style={styles.cancelWarning}>
+                  Your agency will be notified and can assign someone else
+                </Text>
+              </>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    handleCancelShift();
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.cancelButtonText}>❌ Cancel Shift</Text>
+                </TouchableOpacity>
+                <Text style={styles.cancelWarning}>
+                  Cancelling less than 24 hours before the shift may affect your reliability rating
+                </Text>
+              </>
+            )}
           </Animated.View>
         )}
       </ScrollView>
@@ -1111,6 +1505,41 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+  completionBanner: {
+    marginBottom: spacing.md,
+    padding: spacing.lg,
+    borderRadius: radius.xl,
+    backgroundColor: "rgba(245, 158, 11, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(245, 158, 11, 0.35)",
+  },
+  completionTitle: {
+    ...typography.title,
+    color: "#FBBF24",
+    fontSize: 18,
+    marginBottom: spacing.xs,
+  },
+  completionDetail: {
+    ...typography.body,
+    color: colors.textMuted,
+    marginBottom: spacing.sm,
+  },
+  completionPay: {
+    ...typography.body,
+    color: colors.text,
+    fontWeight: "700",
+  },
+  completionTimes: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
+  completionPayStatus: {
+    ...typography.caption,
+    color: colors.accent,
+    marginTop: spacing.sm,
+    fontWeight: "600",
   },
   title: {
     fontSize: 28,
@@ -1465,6 +1894,95 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.warning,
   },
+  zoneBanner: {
+    backgroundColor: colors.accentSoft,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.glassBorderAccent,
+  },
+  zoneBannerText: {
+    fontSize: 13,
+    color: colors.accentLight,
+    lineHeight: 18,
+  },
+  breakButton: {
+    marginTop: spacing.sm,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    alignItems: "center",
+  },
+  breakButtonActive: {
+    borderColor: colors.warning,
+    backgroundColor: colors.warningSoft,
+  },
+  breakButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.text,
+  },
+  breakButtonTextActive: {
+    color: colors.warning,
+  },
+  breakHint: {
+    marginTop: 6,
+    fontSize: 12,
+    color: colors.textMuted,
+    lineHeight: 16,
+  },
+  sosButton: {
+    marginTop: spacing.sm,
+    paddingVertical: 14,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.error,
+    backgroundColor: colors.errorSoft,
+    alignItems: "center",
+  },
+  sosButtonText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: colors.errorLight,
+    letterSpacing: 0.3,
+  },
+  sosCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.xl,
+    backgroundColor: colors.error,
+    borderWidth: 2,
+    borderColor: colors.errorLight,
+    shadowColor: colors.error,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  sosCardIcon: {
+    fontSize: 32,
+  },
+  sosCardTextWrap: {
+    flex: 1,
+  },
+  sosCardTitle: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: "#fff",
+    letterSpacing: 0.5,
+  },
+  sosCardSubtitle: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.9)",
+    marginTop: 2,
+    lineHeight: 16,
+  },
   trackingButton: {
     borderRadius: radius.lg,
     overflow: "hidden",
@@ -1536,5 +2054,50 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: spacing.sm,
     paddingHorizontal: spacing.lg,
+  },
+  briefCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.lg,
+  },
+  briefTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    marginBottom: spacing.sm,
+  },
+  briefBody: {
+    fontSize: 15,
+    color: colors.text,
+    lineHeight: 22,
+  },
+  rosterAcceptBtn: {
+    width: "100%",
+    backgroundColor: "#10B981",
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
+    alignItems: "center",
+    marginBottom: spacing.sm,
+  },
+  rosterAcceptText: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#000",
+  },
+  cantMakeItBtn: {
+    paddingVertical: spacing.md,
+    alignItems: "center",
+  },
+  cantMakeItText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#F87171",
+  },
+  btnDisabled: {
+    opacity: 0.6,
   },
 });

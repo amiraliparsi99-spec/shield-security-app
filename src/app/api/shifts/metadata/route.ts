@@ -99,7 +99,9 @@ export async function POST(request: NextRequest) {
 
     const { data: bookings } = await supabase
       .from("bookings")
-      .select("id, event_name, venue_id")
+      .select(
+        "id, event_name, venue_id, site_label, site_address_text, site_latitude, site_longitude",
+      )
       .in("id", idList);
 
     if (!bookings || bookings.length === 0) {
@@ -109,27 +111,56 @@ export async function POST(request: NextRequest) {
     const venueIds = [
       ...new Set(bookings.map((b) => b.venue_id).filter(Boolean)),
     ];
-    const venuesMap: Record<string, { name: string; city: string }> = {};
+    const venuesMap: Record<
+      string,
+      { name: string; city: string; address_line1: string | null; postcode: string | null }
+    > = {};
     if (venueIds.length > 0) {
       const { data: venues } = await supabase
         .from("venues")
-        .select("id, name, city")
+        .select("id, name, city, address_line1, postcode")
         .in("id", venueIds);
       venues?.forEach((v) => {
-        venuesMap[v.id] = { name: v.name, city: v.city || "" };
+        venuesMap[v.id] = {
+          name: v.name,
+          city: v.city || "",
+          address_line1: v.address_line1 ?? null,
+          postcode: v.postcode ?? null,
+        };
       });
     }
 
     const result: Record<
       string,
-      { event_name: string; venue_name: string; venue_city: string }
+      {
+        event_name: string;
+        venue_name: string;
+        venue_city: string;
+        site_label?: string | null;
+        site_address_text?: string | null;
+        site_latitude?: number | null;
+        site_longitude?: number | null;
+        venue_address_line1?: string | null;
+        venue_postcode?: string | null;
+      }
     > = {};
     for (const b of bookings) {
-      const venue = venuesMap[b.venue_id] || { name: "Venue", city: "" };
+      const venue = b.venue_id ? venuesMap[b.venue_id] : undefined;
+      const siteLabel = (b as { site_label?: string | null }).site_label?.trim();
+      const eventName = b.event_name?.trim();
       result[b.id] = {
-        event_name: b.event_name || "Security Shift",
-        venue_name: venue.name,
-        venue_city: venue.city,
+        event_name: eventName || "Security Shift",
+        venue_name: siteLabel || venue?.name || eventName || "Venue",
+        venue_city: venue?.city || "",
+        site_label: siteLabel ?? null,
+        site_address_text:
+          (b as { site_address_text?: string | null }).site_address_text ?? null,
+        site_latitude:
+          (b as { site_latitude?: number | null }).site_latitude ?? null,
+        site_longitude:
+          (b as { site_longitude?: number | null }).site_longitude ?? null,
+        venue_address_line1: venue?.address_line1 ?? null,
+        venue_postcode: venue?.postcode ?? null,
       };
     }
 

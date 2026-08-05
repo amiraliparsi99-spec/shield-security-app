@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
 
     const { data: venue, error: venueErr } = await supabase
       .from("venues")
-      .select("id, user_id, owner_id")
+      .select("id, user_id")
       .eq("id", booking.venue_id)
       .single();
 
@@ -104,9 +104,7 @@ export async function POST(request: NextRequest) {
     }
 
     const venueOwnerId =
-      (venue as { owner_id?: string | null; user_id?: string | null }).owner_id ??
-      (venue as { user_id?: string | null }).user_id ??
-      null;
+      (venue as { user_id?: string | null }).user_id ?? null;
 
     if (!venueOwnerId || venueOwnerId !== userId) {
       return NextResponse.json(

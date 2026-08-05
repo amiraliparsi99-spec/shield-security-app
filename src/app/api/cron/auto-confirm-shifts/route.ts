@@ -74,14 +74,11 @@ export async function GET(request: NextRequest) {
         if (booking?.venue_id) {
           const { data: venue } = await supabase
             .from("venues")
-            .select("user_id, owner_id, name")
+            .select("user_id, name")
             .eq("id", booking.venue_id)
             .single();
 
-          const venueUserId =
-            (venue as any)?.owner_id ??
-            (venue as any)?.user_id ??
-            null;
+          const venueUserId = (venue as any)?.user_id ?? null;
 
           if (venueUserId) {
             const title = "Attendance review required";

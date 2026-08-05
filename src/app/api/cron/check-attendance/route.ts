@@ -12,6 +12,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { checkGuardStatus, type CheckGuardStatusResult } from "@/lib/dispatcher";
 import { requireCronAuth } from "@/lib/auth/cronAuth";
+import { detectZoneBreaches } from "@/lib/shifts/zoneBreach";
+import { detectLostContact } from "@/lib/shifts/welfareWatch";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -31,6 +33,30 @@ export async function GET(request: NextRequest) {
 
     // --- Calculate the time window ---
     const now = new Date();
+
+    // --- Mid-shift zone-breach detection (independent of the at-risk flow) ---
+    // Alerts the venue when an on-duty guard leaves the drawn geofence. Wrapped
+    // so a failure here never breaks the core watchdog.
+    let zoneBreach = { checked: 0, alerted: 0, errors: [] as string[] };
+    try {
+      zoneBreach = await detectZoneBreaches({ supabase, now });
+      if (zoneBreach.alerted > 0) {
+        console.log(`[WATCHDOG] Zone-breach alerts sent: ${zoneBreach.alerted}`);
+      }
+    } catch (breachErr) {
+      console.error("[WATCHDOG] Zone-breach detection failed:", breachErr);
+    }
+
+    // --- Lone-worker welfare: alert if we lose contact mid-shift ---
+    let lostContact = { checked: 0, alerted: 0, errors: [] as string[] };
+    try {
+      lostContact = await detectLostContact({ supabase, now });
+      if (lostContact.alerted > 0) {
+        console.log(`[WATCHDOG] Lost-contact alerts sent: ${lostContact.alerted}`);
+      }
+    } catch (lcErr) {
+      console.error("[WATCHDOG] Lost-contact detection failed:", lcErr);
+    }
 
     // 15 minutes from now (shifts about to start)
     const windowEnd = new Date(now.getTime() + WINDOW_BEFORE_MINUTES * 60_000);
@@ -72,6 +98,8 @@ export async function GET(request: NextRequest) {
         success: true,
         message: "No at-risk shifts found.",
         shifts_checked: 0,
+        zone_breach: zoneBreach,
+        lost_contact: lostContact,
         processing_time_ms: Date.now() - startTime,
       });
     }
@@ -111,6 +139,8 @@ export async function GET(request: NextRequest) {
       success: true,
       summary,
       results,
+      zone_breach: zoneBreach,
+      lost_contact: lostContact,
       processing_time_ms: Date.now() - startTime,
     });
   } catch (error) {

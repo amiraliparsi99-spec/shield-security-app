@@ -319,122 +319,14 @@ export async function checkOutShift(
   if (result.success && result.shift) {
     // Notify venue that shift was completed
     await notifyShiftStatusChange(supabase, result.shift, 'checked_out');
-    
-    // Create payment record for the completed shift
-    await createPaymentForShift(supabase, result.shift);
-    
-    // Check if all shifts for this booking are now completed
-    await checkAndCompleteBooking(supabase, result.shift.booking_id);
+
+    const { recordShiftPaymentAndCompleteBooking } = await import(
+      '../shifts/finalizeShiftWork'
+    );
+    await recordShiftPaymentAndCompleteBooking(supabase, result.shift.id);
   }
 
   return result;
-}
-
-/**
- * Check if all shifts for a booking are completed and update booking status
- */
-async function checkAndCompleteBooking(
-  supabase: TypedSupabaseClient,
-  bookingId: string
-): Promise<void> {
-  try {
-    // Get all shifts for this booking
-    const { data: shifts } = await supabase
-      .from('shifts')
-      .select('id, status')
-      .eq('booking_id', bookingId);
-
-    if (!shifts || shifts.length === 0) return;
-
-    // Check if all shifts are either checked_out or cancelled
-    const allCompleted = shifts.every(s => 
-      s.status === 'checked_out' || s.status === 'cancelled' || s.status === 'no_show'
-    );
-
-    // Check if at least one shift was actually completed (not all cancelled)
-    const hasCompletedShift = shifts.some(s => s.status === 'checked_out');
-
-    if (allCompleted && hasCompletedShift) {
-      // Update booking status to completed
-      await supabase
-        .from('bookings')
-        .update({ 
-          status: 'completed',
-          completed_at: new Date().toISOString()
-        })
-        .eq('id', bookingId);
-
-      console.log(`Booking ${bookingId} marked as completed - all shifts done`);
-    }
-  } catch (error) {
-    console.error('Error checking/completing booking:', error);
-  }
-}
-
-/**
- * Create a payment record when a shift is completed
- */
-async function createPaymentForShift(
-  supabase: TypedSupabaseClient,
-  shift: Shift
-): Promise<void> {
-  // Import here to avoid circular dependency
-  const { createShiftPayment } = await import('./payments');
-
-  // Get booking with venue info
-  const { data: booking } = await supabase
-    .from('bookings')
-    .select('venue_id, stripe_payment_intent_id, venues(id, user_id)')
-    .eq('id', shift.booking_id)
-    .single();
-
-  if (!booking) {
-    console.error('Could not find booking for shift payment');
-    return;
-  }
-
-  const venue = (booking as unknown as { venues?: { id: string; user_id: string } }).venues;
-  if (!venue) {
-    console.error('Could not find venue for shift payment');
-    return;
-  }
-
-  // Get agency info if personnel is from an agency
-  let agencyId: string | null = null;
-  let agencyCommissionRate: number | undefined;
-
-  if (shift.personnel_id) {
-    const { data: personnel } = await supabase
-      .from('personnel')
-      .select('agency_id, agency_commission_rate')
-      .eq('id', shift.personnel_id)
-      .single();
-
-    if (personnel?.agency_id) {
-      agencyId = personnel.agency_id;
-      // Get agency commission rate (default 15%)
-      const { data: agency } = await supabase
-        .from('agencies')
-        .select('commission_rate')
-        .eq('id', personnel.agency_id)
-        .single();
-      
-      agencyCommissionRate = agency?.commission_rate || 0.15;
-    }
-  }
-
-  const bookingRow = booking as {
-    stripe_payment_intent_id?: string | null;
-  };
-
-  await createShiftPayment(supabase, {
-    shift,
-    venueId: venue.id,
-    venueOwnerId: venue.user_id,
-    agencyId,
-    agencyCommissionRate,
-    stripePaymentIntentId: bookingRow.stripe_payment_intent_id ?? null,
-  });
 }
 
 /**
@@ -548,14 +440,14 @@ async function notifyShiftStatusChange(
   // Get booking and venue info
   const { data: booking } = await supabase
     .from('bookings')
-    .select('id, event_name, venue_id, venues(id, name, owner_id, user_id)')
+    .select('id, event_name, venue_id, venues(id, name, user_id)')
     .eq('id', shift.booking_id)
     .single();
 
   if (!booking) return;
 
   const venueName = (booking as any).venues?.name || 'Unknown Venue';
-  const venueOwnerId = (booking as any).venues?.owner_id ?? (booking as any).venues?.user_id;
+  const venueOwnerId = (booking as any).venues?.user_id;
 
   // Get personnel info if assigned
   let personnelUserId: string | null = null;
