@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendPushNotification } from "@/lib/notifications/push-service";
 import { withRateLimit } from "@/lib/ratelimit/limiter";
+import { devDebug } from "@/lib/api/debugPayload";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -137,7 +138,7 @@ export async function POST(request: NextRequest) {
     if (assignErr) {
       console.error("[assign-shift] update failed:", assignErr.message);
       return NextResponse.json(
-        { error: "Could not assign this shift.", debug: { db_error: assignErr.message } },
+        { error: "Could not assign this shift.", debug: devDebug({ db_error: assignErr.message }) },
         { status: 500 },
       );
     }
@@ -193,7 +194,7 @@ export async function POST(request: NextRequest) {
         {
           error:
             "Could not record this assignment for the guard's app. Try again — if it keeps failing, contact support.",
-          debug: { db_error: assignmentErr?.message },
+          debug: devDebug({ db_error: assignmentErr?.message }),
         },
         { status: 500 },
       );

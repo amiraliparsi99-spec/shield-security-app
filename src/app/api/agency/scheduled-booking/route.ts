@@ -9,6 +9,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { devDebug } from "@/lib/api/debugPayload";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -140,7 +141,7 @@ export async function POST(request: NextRequest) {
     if (bookingErr || !booking) {
       console.error("[scheduled-booking] booking insert failed:", bookingErr?.message);
       return NextResponse.json(
-        { error: "Could not create the scheduled booking.", debug: { db_error: bookingErr?.message } },
+        { error: "Could not create the scheduled booking.", debug: devDebug({ db_error: bookingErr?.message }) },
         { status: 500 },
       );
     }
@@ -167,7 +168,7 @@ export async function POST(request: NextRequest) {
       // Roll back the booking so we don't leave an empty shell.
       await supabase.from("bookings").delete().eq("id", booking.id);
       return NextResponse.json(
-        { error: "Could not create the shifts for this booking.", debug: { db_error: shiftErr.message } },
+        { error: "Could not create the shifts for this booking.", debug: devDebug({ db_error: shiftErr.message }) },
         { status: 500 },
       );
     }

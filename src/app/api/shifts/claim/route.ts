@@ -4,6 +4,7 @@ import { validateClaimProximity } from "@/lib/shifts/claimProximity";
 import { resolvePersonnelByAuthOrProvidedId } from "@/lib/auth/resolvePersonnel";
 import { isClaimableOnMarketplace } from "@/lib/shifts/marketplace";
 import { withRateLimit } from "@/lib/ratelimit/limiter";
+import { devDebug } from "@/lib/api/debugPayload";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -72,11 +73,20 @@ export async function POST(request: NextRequest) {
           ? `This account is registered as '${role}'. Only personnel accounts can claim shifts.`
           : "Personnel record could not be created automatically. Please contact support.";
 
+      // Log the resolver state so production failures are diagnosable in
+      // Sentry; the response only carries it in dev.
+      console.error("[SHIFT-CLAIM] personnel_not_found:", {
+        profile_found: !!profileRow,
+        profile_role: role,
+        resolver_state: (globalThis as any).__lastResolvePersonnelState ?? null,
+        insert_error: (globalThis as any).__lastResolvePersonnelError ?? null,
+      });
+
       return NextResponse.json(
         {
           error: hint,
           code: "personnel_not_found",
-          debug: {
+          debug: devDebug({
             auth_user_id: user.id,
             profile_found: !!profileRow,
             profile_id: (profileRow as any)?.id ?? null,
@@ -87,7 +97,7 @@ export async function POST(request: NextRequest) {
             insert_error: (globalThis as any).__lastResolvePersonnelError ?? null,
             insert_error_fallback:
               (globalThis as any).__lastResolvePersonnelError2 ?? null,
-          },
+          }),
         },
         { status: 404 },
       );
@@ -181,10 +191,12 @@ export async function POST(request: NextRequest) {
           distance_meters: proximity.distance_meters ?? null,
           max_distance_meters: proximity.max_distance_meters ?? null,
           location_restricted: true,
-          debug: {
+          // Dev-only: venue_coords would hand the site's exact location to a
+          // guard who has not been cleared to attend it.
+          debug: devDebug({
             guard_coords: proximity.guard_coords ?? null,
             venue_coords: proximity.venue_coords ?? null,
-          },
+          }),
         },
         { status: 422 },
       );
@@ -219,7 +231,7 @@ export async function POST(request: NextRequest) {
         {
           error: "Couldn't claim this shift due to a server error. Please try again or contact support.",
           code: "claim_update_failed",
-          debug: { db_error: claimErr.message, db_code: (claimErr as any).code ?? null },
+          debug: devDebug({ db_error: claimErr.message, db_code: (claimErr as any).code ?? null }),
         },
         { status: 500 },
       );
