@@ -111,6 +111,14 @@
           "merchantIdentifier": "merchant.app.shield.mobile",
           "enableGooglePay": true
         }
+      ],
+      [
+        "@sentry/react-native",
+        {
+          "organization": "shield-hq-ltd",
+          "project": "react-native",
+          "url": "https://de.sentry.io/"
+        }
       ]
     ],
     "extra": {

@@ -1,3 +1,5 @@
+import "../tasks/backgroundLocation";
+import * as Sentry from "@sentry/react-native";
 import { useEffect, useRef, useState } from "react";
 import { View } from "react-native";
 import { Stack, router, useSegments } from "expo-router";
@@ -19,6 +21,10 @@ import { setupNotificationDeepLinks } from "../lib/push-notifications";
 import { AnimatedOnboarding, useAnimatedOnboardingComplete } from "../components/onboarding/AnimatedOnboarding";
 import { useAuthStore } from "../stores";
 import { hasCompletedProfile } from "../lib/oauth-profile";
+import { initMonitoring, setMonitoringUser } from "../lib/monitoring";
+
+// Must run before the first render so early crashes are still captured.
+initMonitoring();
 
 const STRIPE_PUBLISHABLE_KEY =
   process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY || "";
@@ -38,10 +44,15 @@ function AppContent() {
     const { data: { subscription } } = sb.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_OUT") {
         clearAuth();
+        setMonitoringUser(null);
         return;
       }
       if (!session?.user) return;
       loadAuth();
+      setMonitoringUser({
+        id: session.user.id,
+        role: session.user.user_metadata?.role ?? null,
+      });
 
       // OAuth users who quit before completing the role-picker step land back
       // here on next launch — they have a session but no profile row, so we
@@ -188,7 +199,7 @@ function AppContent() {
   );
 }
 
-export default function RootLayout() {
+function RootLayout() {
   return (
     <SafeAreaProvider>
       <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -204,3 +215,6 @@ export default function RootLayout() {
     </SafeAreaProvider>
   );
 }
+
+// Sentry.wrap adds native crash capture and touch/navigation breadcrumbs.
+export default Sentry.wrap(RootLayout);

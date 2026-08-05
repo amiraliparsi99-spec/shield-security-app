@@ -1,12 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
+import { sharedSentryOptions, SENTRY_ENABLED } from "@/lib/monitoring/sentryOptions";
 
-const dsn = process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN;
-
-if (dsn) {
+if (SENTRY_ENABLED) {
   Sentry.init({
-    dsn,
-    tracesSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1,
-    debug: false,
-    environment: process.env.NODE_ENV,
+    ...sharedSentryOptions,
+    // Request bodies on this server carry GPS pings and personal data.
+    sendDefaultPii: false,
   });
 }

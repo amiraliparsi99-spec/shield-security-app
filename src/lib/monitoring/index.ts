@@ -1,2 +1,2 @@
-export * from './error-tracker';
 export * from './performance';
+export * from './sentryOptions';

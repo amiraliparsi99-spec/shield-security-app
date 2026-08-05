@@ -7,7 +7,6 @@ import { SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
 import type { Call, CallSignal, CallSignalType, UserRole } from '../database.types';
 
 // Use any for Supabase client until types are regenerated with new tables
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type TypedSupabaseClient = SupabaseClient<any>;
 
 export interface SignalingHandlers {

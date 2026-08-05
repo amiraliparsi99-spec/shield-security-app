@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { setLogUser } from "@/lib/logger";
 import type { Role } from "@/lib/auth";
 import type { User } from "@supabase/supabase-js";
 
@@ -93,6 +94,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return () => subscription.unsubscribe();
   }, [supabase.auth, fetchRole]);
+
+  useEffect(() => {
+    setLogUser(user ? { id: user.id, role } : null);
+  }, [user, role]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
