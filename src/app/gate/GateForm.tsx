@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { ShieldLogo } from "@/components/brand/ShieldLogo";
 
 function GateFormInner() {
   const router = useRouter();
@@ -41,14 +42,9 @@ function GateFormInner() {
   return (
     <div className="glass rounded-2xl p-8 sm:p-10 max-w-md w-full">
       <div className="flex items-center gap-3 mb-6">
-        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-shield-500 to-shield-600 shadow-lg shadow-shield-500/25">
-          <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
-          </svg>
-        </div>
+        <ShieldLogo size="md" />
         <div>
-          <h1 className="font-display text-xl font-semibold text-white">Shield HQ</h1>
-          <p className="text-sm text-zinc-400">Coming soon</p>
+          <p className="text-sm text-zinc-400">Private preview · Coming soon</p>
         </div>
       </div>
 

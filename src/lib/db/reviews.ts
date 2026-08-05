@@ -54,7 +54,7 @@ export async function submitReview(
   // Verify shift exists and is completed
   const { data: shift, error: shiftError } = await supabase
     .from('shifts')
-    .select('id, status, personnel_id, booking:bookings(venue_id, venues(owner_id))')
+    .select('id, status, personnel_id, booking:bookings(venue_id, venues(user_id))')
     .eq('id', review.shiftId)
     .single();
 
@@ -68,7 +68,7 @@ export async function submitReview(
 
   // Determine reviewer type based on who is submitting
   const venue = (shift as any).booking?.venues;
-  const isVenueOwner = venue?.owner_id === user.id;
+  const isVenueOwner = venue?.user_id === user.id;
   const isPersonnel = shift.personnel_id && await isUserPersonnel(supabase, user.id, shift.personnel_id);
   
   let reviewerType: 'venue' | 'personnel';
@@ -145,10 +145,10 @@ export async function submitReview(
   } else if (review.revieweeType === 'venue') {
     const { data } = await supabase
       .from('venues')
-      .select('owner_id')
+      .select('user_id')
       .eq('id', review.revieweeId)
       .maybeSingle();
-    revieweeUserId = data?.owner_id || null;
+    revieweeUserId = data?.user_id || null;
   }
 
   if (revieweeUserId) {
@@ -372,7 +372,7 @@ export async function getPendingReviews(
     const { data: venue } = await supabase
       .from('venues')
       .select('id')
-      .eq('owner_id', userId)
+      .eq('user_id', userId)
       .maybeSingle();
 
     if (venue) {

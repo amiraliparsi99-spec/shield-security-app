@@ -5,6 +5,12 @@
 
 export type UserRole = "venue" | "personnel" | "agency" | "admin";
 
+/** GeoJSON Polygon (outer ring of [lng, lat] pairs) for drawn geofences. */
+export interface GeoJsonPolygon {
+  type: "Polygon";
+  coordinates: [number, number][][];
+}
+
 // ——— Users (extends Supabase auth.users; we use public.profiles)
 export interface Profile {
   id: string;
@@ -69,6 +75,9 @@ export interface Personnel {
   skills?: string[]; // schema column: personnel.skills (e.g. ["Door Security", ...])
   shield_score?: number; // schema column: personnel.shield_score (0-100)
   total_shifts?: number; // schema column: personnel.total_shifts
+  // Intro video (Mux). Only 'approved' videos are shown to venues/agencies.
+  intro_video_status?: "none" | "processing" | "pending" | "approved" | "rejected";
+  intro_video_playback_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -160,6 +169,11 @@ export interface Booking {
   status: BookingStatus;
   created_at: string;
   updated_at: string;
+  /** Snapshot: on-site check-in pin for this booking. */
+  site_latitude?: number | null;
+  site_longitude?: number | null;
+  /** Snapshot/override: GeoJSON Polygon for this booking's on-site area. */
+  site_geofence_polygon?: GeoJsonPolygon | null;
 }
 
 export type BookingStatus = "pending" | "confirmed" | "completed" | "cancelled";

@@ -11,8 +11,8 @@ export default async function AgencyDetailPage({
   if (!agency) notFound();
 
   const supabase = await createClient();
-  const { data: agencyRow } = await supabase.from("agencies").select("owner_id").eq("id", id).maybeSingle();
-  const ownerId = agencyRow?.owner_id;
+  const { data: agencyRow } = await supabase.from("agencies").select("user_id").eq("id", id).maybeSingle();
+  const ownerId = agencyRow?.user_id;
 
   return (
     <div className="relative min-h-screen">

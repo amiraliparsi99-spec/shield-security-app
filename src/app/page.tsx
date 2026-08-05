@@ -13,6 +13,7 @@ import {
   motion,
 } from "@/components/ui/motion";
 import { trackEvent, trackPageView } from "@/lib/analytics";
+import { ShieldLogo } from "@/components/brand/ShieldLogo";
 
 // Phone Mockup Component
 function PhoneMockup({ 
@@ -1742,9 +1743,7 @@ export default function Home() {
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-8">
             <div className="col-span-2 sm:col-span-1">
-              <motion.span className="font-display text-2xl font-semibold text-gradient-teal">
-                Shield HQ
-              </motion.span>
+              <ShieldLogo size="lg" />
               <p className="mt-3 text-sm text-zinc-500 leading-relaxed">
                 The modern security workforce platform. Connecting venues with verified security professionals across the UK.
               </p>

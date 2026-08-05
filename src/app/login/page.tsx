@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { getProfileRole, getRoleDashboardPath } from "@/lib/auth";
 import { motion } from "framer-motion";
+import { AuthBrandLink } from "@/components/brand/ShieldLogo";
 
 export default function Login() {
   return (
@@ -122,14 +123,7 @@ function LoginContent() {
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.5 }}
         >
-          <Link href="/" className="inline-flex items-center gap-2 mb-16">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[#00d4aa] to-[#0d9488] shadow-lg shadow-[#00d4aa]/25">
-              <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
-              </svg>
-            </div>
-            <span className="font-display text-xl font-semibold text-white">Shield HQ</span>
-          </Link>
+          <AuthBrandLink size="md" className="mb-16" />
           <h1 className="font-display text-4xl xl:text-5xl font-bold text-white tracking-tight leading-tight">
             Welcome back
           </h1>
@@ -147,14 +141,7 @@ function LoginContent() {
       <div className="flex-1 flex flex-col justify-center px-6 py-12 sm:px-10 lg:px-12 bg-[#080a0f]">
         <div className="w-full max-w-md mx-auto">
           {/* Logo (mobile) */}
-          <Link href="/" className="lg:hidden inline-flex items-center gap-2 mb-10">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-[#00d4aa] to-[#0d9488]">
-              <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
-              </svg>
-            </div>
-            <span className="font-display text-lg font-semibold text-white">Shield HQ</span>
-          </Link>
+          <AuthBrandLink size="sm" className="lg:hidden mb-10" />
 
           <motion.div
             initial={{ opacity: 0, y: 12 }}

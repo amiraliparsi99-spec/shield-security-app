@@ -1,5 +1,6 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Agency, AgencyInsert, AgencyUpdate, Personnel } from '../database.types';
+import { enrichPersonnelWithAvatars } from './avatarUrls';
 
 type TypedSupabaseClient = SupabaseClient<any>;
 
@@ -99,7 +100,9 @@ export async function getAgencyStaff(
 
   // Extract personnel from joined data. The join column is typed loosely by
   // postgrest, so narrow through unknown to the known Personnel shape.
-  return (data?.map(d => d.personnel).filter(Boolean) as unknown as Personnel[]) || [];
+  const rows =
+    (data?.map((d) => d.personnel).filter(Boolean) as unknown as Personnel[]) || [];
+  return enrichPersonnelWithAvatars(supabase, rows);
 }
 
 export async function addStaffToAgency(

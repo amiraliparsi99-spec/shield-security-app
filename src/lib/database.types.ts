@@ -18,6 +18,12 @@ export type NotificationLogStatus = 'pending' | 'sent' | 'delivered' | 'failed';
 // TABLE TYPES
 // =====================================================
 
+/** GeoJSON Polygon (outer ring of [lng, lat] pairs) for drawn geofences. */
+export interface GeoJsonPolygon {
+  type: "Polygon";
+  coordinates: [number, number][][];
+}
+
 export interface Profile {
   id: string;
   role: UserRole;
@@ -42,6 +48,11 @@ export interface VenueLocation {
   postcode: string | null;
   latitude: number;
   longitude: number;
+  /** Drawn on-site boundary; null = use lat/lng + radius for check-in. */
+  geofence_polygon?: GeoJsonPolygon | null;
+  geofence_centroid_lat?: number | null;
+  geofence_centroid_lng?: number | null;
+  geofence_updated_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -105,11 +116,20 @@ export interface Personnel {
   
   // Standby / Dispatcher
   is_standby: boolean;
-  
+
+  // Intro video (Mux)
+  intro_video_status?: "none" | "processing" | "pending" | "approved" | "rejected";
+  intro_video_asset_id?: string | null;
+  intro_video_playback_id?: string | null;
+  intro_video_uploaded_at?: string | null;
+  intro_video_reviewed_at?: string | null;
+
   created_at: string;
   updated_at: string;
   is_active: boolean;
   is_available: boolean;
+  /** Enriched from profiles.avatar_url — not a personnel table column. */
+  avatar_url?: string | null;
 }
 
 export interface Agency {
@@ -182,7 +202,10 @@ export interface StaffRequirement {
 
 export interface Booking {
   id: string;
-  venue_id: string;
+  /** Owning venue — null when the booking was created by an agency. */
+  venue_id: string | null;
+  /** Owning agency — null when the booking was created by a venue. */
+  agency_id?: string | null;
   /** Optional link to a saved site row; check-in uses snapshot fields below. */
   venue_location_id?: string | null;
   /** Snapshot for this job — which physical site guards must check in at. */
@@ -191,6 +214,8 @@ export interface Booking {
   site_address_text?: string | null;
   site_latitude?: number | null;
   site_longitude?: number | null;
+  /** Snapshot/override: GeoJSON Polygon for this booking's on-site area. */
+  site_geofence_polygon?: GeoJsonPolygon | null;
   event_name: string;
   event_date: string;
   start_time: string;

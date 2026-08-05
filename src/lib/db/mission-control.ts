@@ -255,7 +255,8 @@ export async function sendCheckInMessage(
   supabase: TypedSupabaseClient,
   chatId: string,
   status: 'arriving' | 'on_site' | 'position' | 'break' | 'leaving',
-  notes?: string
+  notes?: string,
+  coords?: { latitude: number; longitude: number }
 ): Promise<{ success: boolean; error: string | null }> {
   const statusMessages = {
     arriving: "🚗 On my way, ETA 5 mins",
@@ -266,13 +267,22 @@ export async function sendCheckInMessage(
   };
 
   const content = notes || statusMessages[status];
+  const metadata: Record<string, unknown> = {
+    status,
+    timestamp: new Date().toISOString(),
+  };
+  if (coords) {
+    metadata.latitude = coords.latitude;
+    metadata.longitude = coords.longitude;
+    metadata.label = status === "position" ? "Live position" : statusMessages[status];
+  }
   
   return sendGroupMessage(
     supabase,
     chatId,
     content,
     'checkin',
-    { status, timestamp: new Date().toISOString() }
+    metadata
   );
 }
 

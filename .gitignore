@@ -43,3 +43,11 @@ next-env.d.ts
 
 # Supabase CLI cache
 supabase/.temp/
+
+# Generated client invoices — real business documents, not app code.
+# Note: anything in public/ is served by the deployed site.
+public/invoices/
+
+# Separate repository (shieldhq.co.uk marketing site) that lives in this
+# folder for convenience. It has its own git history and remote.
+agency-site/

@@ -179,6 +179,12 @@ export function setupNotificationDeepLinks(
       return;
     }
 
+    // Agency-scheduled shift assignment — open the Scheduled tab to respond
+    if (data.type === "shift_assignment") {
+      navigate("/(tabs)/explore?view=scheduled");
+      return;
+    }
+
     // Agency invitation — open invitations page
     if (
       data.type === "agency_invitation" &&

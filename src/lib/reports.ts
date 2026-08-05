@@ -377,6 +377,151 @@ export function exportBulkInvoices(events: ReportEvent[], periodLabel: string, v
   doc.save(`Shield_HQ_Invoices_${periodLabel.replace(/\s/g, "_")}.pdf`);
 }
 
+// ─── Shift Attendance Evidence PDF ──────────────────────
+export type ShiftEvidenceReport = {
+  shiftId: string;
+  eventName: string;
+  eventDate: string;
+  guardName: string;
+  role: string;
+  scheduledStart: string; // ISO
+  scheduledEnd: string; // ISO
+  actualStart: string | null; // ISO
+  actualEnd: string | null; // ISO
+  hoursWorked: number | null;
+  totalPay: number | null;
+  checkInMode: string | null; // 'polygon' | 'radius' | 'none'
+  checkInDistanceM: number | null;
+  checkOutMode: string | null;
+  checkOutDistanceM: number | null;
+  gpsPoints: number;
+  onSitePoints: number;
+  coveragePct: number;
+  onSiteMinutes: number;
+  venueConfirmed: boolean;
+  checkpointsTotal?: number;
+  checkpointsVisited?: number;
+  breakMinutes?: number;
+};
+
+function fmtDateTime(iso: string | null): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString("en-GB", {
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function modeLabel(mode: string | null, distanceM: number | null): string {
+  if (!mode || mode === "none") return "No geofence configured";
+  const dist = distanceM != null ? ` (${distanceM}m)` : "";
+  if (mode === "polygon")
+    return distanceM === 0
+      ? "Inside drawn on-site zone"
+      : `Near drawn zone${dist}`;
+  if (mode === "radius") return `Within pin radius${dist}`;
+  return mode;
+}
+
+export function exportShiftEvidencePDF(report: ShiftEvidenceReport, venue: VenueInfo) {
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const w = doc.internal.pageSize.getWidth();
+  let y = addHeader(
+    doc,
+    venue,
+    "ATTENDANCE EVIDENCE",
+    `Ref: ${report.shiftId.slice(0, 8).toUpperCase()}`,
+  );
+
+  // Summary meta
+  doc.setFontSize(9);
+  doc.setTextColor(80, 80, 80);
+  const meta: [string, string][] = [
+    ["Guard:", report.guardName],
+    ["Role:", report.role],
+    ["Event:", report.eventName],
+    ["Date:", fmtDate(report.eventDate)],
+  ];
+  meta.forEach(([label, value], i) => {
+    doc.setFont("helvetica", "bold");
+    doc.text(label, 16, y + i * 6);
+    doc.setFont("helvetica", "normal");
+    doc.text(value, 50, y + i * 6);
+  });
+  y += meta.length * 6 + 6;
+
+  // Times table
+  autoTable(doc, {
+    startY: y,
+    head: [["", "Scheduled", "Actual"]],
+    body: [
+      ["Start", fmtDateTime(report.scheduledStart), fmtDateTime(report.actualStart)],
+      ["End", fmtDateTime(report.scheduledEnd), fmtDateTime(report.actualEnd)],
+      [
+        "Hours / Pay",
+        "—",
+        `${report.hoursWorked != null ? report.hoursWorked.toFixed(2) + "h" : "—"}` +
+          `${report.totalPay != null ? " · " + fmtCurrency(report.totalPay) : ""}`,
+      ],
+    ],
+    theme: "striped",
+    headStyles: { fillColor: BRAND.primary, fontSize: 9 },
+    styles: { fontSize: 9, cellPadding: 3 },
+    margin: { left: 16, right: 16 },
+  });
+  y = (doc as any).lastAutoTable.finalY + 6;
+
+  // Geofence + GPS evidence table
+  autoTable(doc, {
+    startY: y,
+    head: [["Geofence & GPS Evidence", ""]],
+    body: [
+      ["Check-in location", modeLabel(report.checkInMode, report.checkInDistanceM)],
+      ["Check-out location", modeLabel(report.checkOutMode, report.checkOutDistanceM)],
+      ["GPS points recorded", String(report.gpsPoints)],
+      ["On-site GPS points", String(report.onSitePoints)],
+      ["On-site coverage", `${report.coveragePct}%`],
+      ["Estimated on-site time", `${report.onSiteMinutes} min`],
+      ...(report.breakMinutes && report.breakMinutes > 0
+        ? [["Logged breaks", `${report.breakMinutes} min (paid)`] as [string, string]]
+        : []),
+      ...(report.checkpointsTotal && report.checkpointsTotal > 0
+        ? [
+            [
+              "Patrol checkpoints",
+              `${report.checkpointsVisited ?? 0} of ${report.checkpointsTotal} visited`,
+            ] as [string, string],
+          ]
+        : []),
+      ["Venue confirmed", report.venueConfirmed ? "Yes" : "Not yet"],
+    ],
+    theme: "striped",
+    headStyles: { fillColor: BRAND.primary, fontSize: 9 },
+    styles: { fontSize: 9, cellPadding: 3 },
+    columnStyles: { 0: { fontStyle: "bold", cellWidth: 70 } },
+    margin: { left: 16, right: 16 },
+  });
+  y = (doc as any).lastAutoTable.finalY + 8;
+
+  doc.setFontSize(8);
+  doc.setTextColor(130, 130, 130);
+  doc.text(
+    "This report is generated from GPS check-in/out records and the venue's configured on-site geofence.",
+    16,
+    y,
+    { maxWidth: w - 32 },
+  );
+
+  addFooter(doc, 1, 1);
+  doc.save(`Shield_HQ_Attendance_${report.shiftId.slice(0, 8).toUpperCase()}.pdf`);
+}
+
 // ─── Helpers ────────────────────────────────────────────
 function calculateHours(start?: string, end?: string): number {
   if (!start || !end) return 6;

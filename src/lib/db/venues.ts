@@ -14,42 +14,23 @@ export async function getVenueByUserId(
     .eq('user_id', userId)
     .maybeSingle();
 
-  // 2) Some schemas use owner_id = auth user id
-  if (!data && !error) {
-    const byOwner = await supabase
-      .from('venues')
-      .select('*')
-      .eq('owner_id', userId)
-      .maybeSingle();
-    data = byOwner.data;
-    error = byOwner.error;
-  }
-
-  // 3) Hybrid schemas: venues.user_id stores profile id, not auth user id
+  // 2) Hybrid rows: venues.user_id stores profile id, not auth user id
   if (!data && !error) {
     const { data: profileByUser } = await supabase
       .from('profiles')
       .select('id')
       .eq('user_id', userId)
       .maybeSingle();
-    const profileId = profileByUser?.id ?? userId;
+    const profileId = profileByUser?.id;
 
-    const byProfileUserId = await supabase
-      .from('venues')
-      .select('*')
-      .eq('user_id', profileId)
-      .maybeSingle();
-    data = byProfileUserId.data;
-    error = byProfileUserId.error;
-
-    if (!data && !error) {
-      const byProfileOwner = await supabase
+    if (profileId && profileId !== userId) {
+      const byProfileUserId = await supabase
         .from('venues')
         .select('*')
-        .eq('owner_id', profileId)
+        .eq('user_id', profileId)
         .maybeSingle();
-      data = byProfileOwner.data;
-      error = byProfileOwner.error;
+      data = byProfileUserId.data;
+      error = byProfileUserId.error;
     }
   }
 

@@ -4,11 +4,13 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { ThemeToggle } from "@/components/settings/ThemeToggle";
+import { ReplayTourButton } from "@/components/onboarding/ReplayTourButton";
 import { DemoExportButtons } from "@/components/exports/ExportButtons";
 import {
   AddressAutocomplete,
   type AddressSuggestion,
 } from "@/components/forms/AddressAutocomplete";
+import { SiteGeofenceManager } from "@/components/venue/SiteGeofenceManager";
 import { COUNTRIES, DEFAULT_COUNTRY_CODE } from "@/lib/countries";
 import { isMissingColumnError } from "@/lib/postgresErrors";
 
@@ -25,7 +27,9 @@ const venueTypes = [
 
 export default function SettingsPage() {
   const supabase = createClient();
-  const [activeTab, setActiveTab] = useState<"general" | "exports">("general");
+  const [activeTab, setActiveTab] = useState<"general" | "sites" | "exports">(
+    "general",
+  );
   const [venueId, setVenueId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -265,12 +269,18 @@ export default function SettingsPage() {
       </div>
 
       <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
-        {([{ id: "general", label: "General" }, { id: "exports", label: "Export Reports" }] as const).map((tab) => (
+        {([{ id: "general", label: "General" }, { id: "sites", label: "Sites & Geofences" }, { id: "exports", label: "Export Reports" }] as const).map((tab) => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition ${activeTab === tab.id ? "bg-[#00d4aa] text-[#0c0d10]" : "bg-white/5 text-zinc-400 hover:text-white hover:bg-white/10"}`}>
             {tab.label}
           </button>
         ))}
       </div>
+
+      {activeTab === "sites" && (
+        <div className="space-y-6">
+          <SiteGeofenceManager venueId={venueId} />
+        </div>
+      )}
 
       {activeTab === "exports" && (
         <div className="space-y-6">
@@ -285,6 +295,14 @@ export default function SettingsPage() {
       {activeTab === "general" && (
         <div className="space-y-6">
           <ThemeToggle />
+
+          <div className="glass rounded-xl p-6">
+            <h2 className="text-lg font-semibold text-white mb-2">Help &amp; Guided Tour</h2>
+            <p className="text-sm text-zinc-400 mb-4">
+              New here or need a refresher? Replay the quick walkthrough that shows you around your dashboard.
+            </p>
+            <ReplayTourButton tourId="venue-v1" />
+          </div>
 
           <div className="glass rounded-xl p-6">
             <h2 className="text-lg font-semibold text-white mb-4">Venue Details</h2>

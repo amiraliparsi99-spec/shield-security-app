@@ -33,19 +33,11 @@ export default function AgencySettingsPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("user_id", user.id)
-        .single();
-
-      if (!profile) return;
-
       const { data: agencyData } = await supabase
         .from("agencies")
         .select("*")
-        .eq("owner_id", profile.id)
-        .single();
+        .eq("user_id", user.id)
+        .maybeSingle();
 
       if (agencyData) {
         setAgency(agencyData);

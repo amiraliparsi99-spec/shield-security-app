@@ -66,6 +66,37 @@ export default async function AdminDashboard() {
               </p>
             </Link>
 
+            {/* Intro videos */}
+            <Link
+              href="/admin/intro-videos"
+              className="glass rounded-xl p-6 transition-all hover:shadow-glow-sm group"
+            >
+              <div className="flex items-center gap-4 mb-4">
+                <div className="w-12 h-12 bg-shield-500/20 rounded-lg flex items-center justify-center group-hover:bg-shield-500/30 transition">
+                  <svg
+                    className="w-6 h-6 text-shield-400"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                    />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-white group-hover:text-shield-400 transition">Intro Videos</h3>
+                  <p className="text-sm text-zinc-500">Review guard intro videos</p>
+                </div>
+              </div>
+              <p className="text-sm text-zinc-400">
+                Watch and approve the intro videos guards record for venues
+              </p>
+            </Link>
+
             {/* Users (Future) */}
             <div className="glass rounded-xl p-6 opacity-60">
               <div className="flex items-center gap-4 mb-4">

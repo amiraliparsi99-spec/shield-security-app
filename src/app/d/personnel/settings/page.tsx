@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { ThemeToggle } from "@/components/settings/ThemeToggle";
 import { InsuranceVerification } from "@/components/verification/InsuranceVerification";
 import { DemoExportButtons } from "@/components/exports/ExportButtons";
+import { ReplayTourButton } from "@/components/onboarding/ReplayTourButton";
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<'general' | 'insurance' | 'exports'>('general');
@@ -77,6 +78,15 @@ export default function SettingsPage() {
       <div className="space-y-6">
         {/* Theme Toggle */}
         <ThemeToggle />
+
+        {/* Help & Tour */}
+        <div className="glass rounded-xl p-6">
+          <h3 className="text-lg font-semibold text-white mb-2">Help &amp; Guided Tour</h3>
+          <p className="text-sm text-zinc-400 mb-4">
+            New here or need a refresher? Replay the quick walkthrough that shows you around your dashboard.
+          </p>
+          <ReplayTourButton tourId="personnel-v1" />
+        </div>
 
         {/* Notifications */}
         <div className="glass rounded-xl p-6">

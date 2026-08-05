@@ -14,11 +14,12 @@ const CallRuntime = dynamic(
 
 export function CallShell({ children }: CallShellProps) {
   const pathname = usePathname();
+  // Mount the call runtime across the whole dashboard (venue, agency, and
+  // personnel) plus chat. Call UI (CallButton / useCall) lives on mission
+  // control, messages, booking detail and shift pages for every role, so the
+  // provider must wrap all of them — not just venue paths.
   const callEnabled =
-    pathname?.startsWith("/d/venue/mission-control") ||
-    pathname?.startsWith("/d/venue/mission-control") ||
-    pathname?.startsWith("/d/venue/bookings/") ||
-    pathname?.startsWith("/chat");
+    pathname?.startsWith("/d/") || pathname?.startsWith("/chat");
 
   if (!callEnabled) {
     return <>{children}</>;

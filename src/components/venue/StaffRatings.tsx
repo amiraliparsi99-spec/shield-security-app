@@ -112,14 +112,7 @@ async function resolveVenueId(supabase: any, userId: string): Promise<string | n
     .select("id")
     .eq("user_id", userId)
     .maybeSingle();
-  if (byUser?.id) return byUser.id;
-
-  const { data: byOwner } = await supabase
-    .from("venues")
-    .select("id")
-    .eq("owner_id", userId)
-    .maybeSingle();
-  return byOwner?.id ?? null;
+  return byUser?.id ?? null;
 }
 
 async function resolveReviewerId(supabase: any, userId: string): Promise<string> {

@@ -72,8 +72,8 @@ export default async function VenueDetailPage({
   if (!venue) notFound();
 
   const supabase = await createClient();
-  const { data: venueRow } = await supabase.from("venues").select("owner_id").eq("id", id).maybeSingle();
-  const ownerId = venueRow?.owner_id;
+  const { data: venueRow } = await supabase.from("venues").select("user_id").eq("id", id).maybeSingle();
+  const ownerId = venueRow?.user_id;
 
   const totalGuards = venue.openRequests.reduce((s, r) => s + r.guardsCount, 0);
 
