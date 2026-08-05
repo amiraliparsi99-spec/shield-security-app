@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
+import { isClaimableOnMarketplace, isActiveUrgentCover, remainingMinutes } from "@/lib/shifts/marketplace";
 
 type Job = {
   id: string;
@@ -31,7 +32,6 @@ export function JobFinder() {
   useEffect(() => {
     const load = async () => {
       const supabase = createClient();
-      const today = new Date().toISOString().slice(0, 10);
       const { data: shiftsData } = await supabase
         .from("shifts")
         .select(`
@@ -40,17 +40,33 @@ export function JobFinder() {
           hourly_rate,
           scheduled_start,
           scheduled_end,
+          status,
+          personnel_id,
           is_urgent,
+          dispatcher_status,
+          cover_search_wave,
           created_at,
           booking:bookings(id, event_name, event_date, venue_id, notes, status)
         `)
         .is("personnel_id", null)
         .eq("status", "pending")
-        .gte("scheduled_start", today)
+        .gte("scheduled_end", new Date().toISOString())
         .limit(50);
       const allowed = (shiftsData || []).filter((s: any) => {
-        const status = s.booking?.status;
-        return status === "confirmed" || status === "pending";
+        const bookingStatus = s.booking?.status;
+        if (bookingStatus === "cancelled") return false;
+        return isClaimableOnMarketplace(
+          {
+            status: s.status,
+            personnel_id: s.personnel_id,
+            scheduled_start: s.scheduled_start,
+            scheduled_end: s.scheduled_end,
+            is_urgent: s.is_urgent,
+            dispatcher_status: s.dispatcher_status,
+            cover_search_wave: s.cover_search_wave,
+          },
+          { bookingStatus },
+        );
       });
       const venueIds = [...new Set(allowed.map((s: any) => s.booking?.venue_id).filter(Boolean))];
       let venueMap: Record<string, { name: string }> = {};

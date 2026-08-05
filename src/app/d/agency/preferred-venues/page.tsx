@@ -30,19 +30,11 @@ export default function PreferredVenuesPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("user_id", user.id)
-        .single();
-
-      if (!profile) return;
-
       const { data: agency } = await supabase
         .from("agencies")
         .select("id")
-        .eq("owner_id", profile.id)
-        .single();
+        .eq("user_id", user.id)
+        .maybeSingle();
 
       if (!agency) return;
 

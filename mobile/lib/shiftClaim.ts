@@ -175,6 +175,58 @@ export async function claimShiftWithLocation(
   return json;
 }
 
+/**
+ * Respond to an agency-scheduled shift assignment (roster work).
+ *
+ * Unlike open-market claims/offers, accepting a scheduled assignment does NOT
+ * require a GPS fix — the guard is confirming a pre-arranged roster shift.
+ */
+export async function respondToAssignment(params: {
+  shiftId?: string;
+  assignmentId?: string;
+  response: "accepted" | "declined";
+  declineReason?: string;
+  personnelId?: string | null;
+}): Promise<any> {
+  const token = await getAuthTokenOrThrow();
+
+  let res: Response;
+  try {
+    res = await fetchApiWithTimeout(
+      "/api/shifts/respond-assignment",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          shift_id: params.shiftId ?? null,
+          assignment_id: params.assignmentId ?? null,
+          response: params.response,
+          decline_reason: params.declineReason ?? null,
+          personnel_id: params.personnelId ?? null,
+        }),
+      },
+      REQUEST_TIMEOUT_MS,
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("aborted") || msg.toLowerCase().includes("abort")) {
+      throw new Error(
+        "The server took too long to respond. Check your connection and try again.",
+      );
+    }
+    throw new Error("Could not reach Shield HQ. Check your connection and try again.");
+  }
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(json?.error || "Unable to update this shift");
+  }
+  return json;
+}
+
 export async function acceptOfferWithLocation(
   shiftOfferId: string,
   personnelId?: string | null,

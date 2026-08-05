@@ -2,20 +2,11 @@ import { createClient } from "@/lib/supabase/server";
 import { ComplianceVault } from "@/components/agency";
 
 async function getComplianceData(supabase: any, userId: string) {
-  // Get profile and agency
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("id")
-    .eq("user_id", userId)
-    .single();
-
-  if (!profile) return null;
-
   const { data: agency } = await supabase
     .from("agencies")
     .select("id, name")
-    .eq("owner_id", profile.id)
-    .single();
+    .eq("user_id", userId)
+    .maybeSingle();
 
   if (!agency) return null;
 

@@ -19,6 +19,8 @@ export interface ShiftCheckin {
     end_time: string;
     venue?: { name: string; address?: string };
     venue_id?: string;
+    site_label?: string | null;
+    site_address_text?: string | null;
     agency?: { name: string };
   };
 }
@@ -72,7 +74,7 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
 
     const { data: bookings } = await supabase
       .from("bookings")
-      .select("id, event_name, event_date, start_time, end_time, venue_id, venue:venues(name, address_line1), agency:agencies(name)")
+      .select("id, event_name, event_date, start_time, end_time, venue_id, site_label, site_address_text, venue:venues(name, address_line1), agency:agencies(name)")
       .in("id", bookingIds)
       .eq("event_date", today);
 
@@ -105,6 +107,8 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
                 start_time: booking.start_time,
                 end_time: booking.end_time,
                 venue_id: booking.venue_id,
+                site_label: booking.site_label,
+                site_address_text: booking.site_address_text,
                 venue: booking.venue
                   ? { name: booking.venue.name, address: booking.venue.address_line1 }
                   : undefined,

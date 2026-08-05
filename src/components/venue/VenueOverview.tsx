@@ -15,6 +15,59 @@ export interface BookingSummary {
   final_total: number | null;
 }
 
+/** Accent palette so the shared overview can be themed per owner (venue = purple, agency = shield). */
+interface AccentClasses {
+  spinner: string;
+  buttonSolid: string;
+  textLink: string;
+  textLinkSmall: string;
+  metricGradient: string;
+  metricIconBg: string;
+  pulseGradient: string;
+  dayBadge: string;
+  emptyIconBg: string;
+  emptyIconText: string;
+  emptyCta: string;
+  quickActionHover: string;
+}
+
+const ACCENTS: Record<"purple" | "shield", AccentClasses> = {
+  purple: {
+    spinner: "border-purple-500",
+    buttonSolid: "bg-purple-500 hover:bg-purple-400",
+    textLink: "text-purple-400 hover:text-purple-300",
+    textLinkSmall: "text-purple-400 hover:text-purple-300",
+    metricGradient: "from-purple-500/20 to-purple-600/5",
+    metricIconBg: "bg-purple-500/15 text-purple-400",
+    pulseGradient: "from-purple-500/[0.04] via-transparent to-emerald-500/[0.04]",
+    dayBadge: "bg-purple-500/15 text-purple-400",
+    emptyIconBg: "bg-purple-500/10",
+    emptyIconText: "text-purple-400",
+    emptyCta: "bg-purple-500/20 text-purple-300 hover:bg-purple-500/30",
+    quickActionHover: "hover:border-purple-500/20 hover:bg-white/[0.06]",
+  },
+  shield: {
+    spinner: "border-shield-500",
+    buttonSolid: "bg-shield-500 hover:bg-shield-400",
+    textLink: "text-shield-400 hover:text-shield-300",
+    textLinkSmall: "text-shield-400 hover:text-shield-300",
+    metricGradient: "from-shield-500/20 to-shield-600/5",
+    metricIconBg: "bg-shield-500/15 text-shield-400",
+    pulseGradient: "from-shield-500/[0.04] via-transparent to-emerald-500/[0.04]",
+    dayBadge: "bg-shield-500/15 text-shield-400",
+    emptyIconBg: "bg-shield-500/10",
+    emptyIconText: "text-shield-400",
+    emptyCta: "bg-shield-500/20 text-shield-300 hover:bg-shield-500/30",
+    quickActionHover: "hover:border-shield-500/20 hover:bg-white/[0.06]",
+  },
+};
+
+interface OverviewConfig {
+  basePath: string;
+  accent: "purple" | "shield";
+  spendHref: string;
+}
+
 interface VenueOverviewProps {
   venueName: string;
   metrics: {
@@ -27,7 +80,15 @@ interface VenueOverviewProps {
   spendLabel?: string;
   upcomingBookings: BookingSummary[];
   todayBookings: BookingSummary[];
+  /** Owner config; defaults to the venue dashboard (purple, /d/venue). */
+  config?: OverviewConfig;
 }
+
+const DEFAULT_CONFIG: OverviewConfig = {
+  basePath: "/d/venue",
+  accent: "purple",
+  spendHref: "/d/venue/spend",
+};
 
 const fadeUp: Variants = {
   hidden: { opacity: 0, y: 16 },
@@ -51,7 +112,12 @@ interface MetricCard {
   href: string;
 }
 
-function buildMetricsCards(weekLabel: string, spendLabel: string): MetricCard[] {
+function buildMetricsCards(
+  weekLabel: string,
+  spendLabel: string,
+  config: OverviewConfig,
+  accent: AccentClasses,
+): MetricCard[] {
   return [
     {
       key: "active",
@@ -65,7 +131,7 @@ function buildMetricsCards(weekLabel: string, spendLabel: string): MetricCard[] 
       ),
       gradient: "from-emerald-500/20 to-emerald-600/5",
       iconBg: "bg-emerald-500/15 text-emerald-400",
-      href: "/d/venue/bookings",
+      href: `${config.basePath}/bookings`,
     },
     {
       key: "week",
@@ -79,7 +145,7 @@ function buildMetricsCards(weekLabel: string, spendLabel: string): MetricCard[] 
       ),
       gradient: "from-blue-500/20 to-blue-600/5",
       iconBg: "bg-blue-500/15 text-blue-400",
-      href: "/d/venue/bookings",
+      href: `${config.basePath}/bookings`,
     },
     {
       key: "spend",
@@ -92,19 +158,21 @@ function buildMetricsCards(weekLabel: string, spendLabel: string): MetricCard[] 
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
       ),
-      gradient: "from-purple-500/20 to-purple-600/5",
-      iconBg: "bg-purple-500/15 text-purple-400",
-      href: "/d/venue/spend",
+      gradient: accent.metricGradient,
+      iconBg: accent.metricIconBg,
+      href: config.spendHref,
     },
   ];
 }
 
-const quickActions = [
-  { href: "/d/venue/bookings/new", emoji: "🛡️", label: "Book Security" },
-  { href: "/d/venue/live", emoji: "📍", label: "Live Check-In" },
-  { href: "/d/venue/mission-control", emoji: "🎯", label: "Mission Control" },
-  { href: "/d/venue/incidents", emoji: "⚠️", label: "Incidents" },
-];
+function buildQuickActions(basePath: string) {
+  return [
+    { href: `${basePath}/bookings/new`, emoji: "🛡️", label: "Book Security" },
+    { href: `${basePath}/live`, emoji: "📍", label: "Live Check-In" },
+    { href: `${basePath}/mission-control`, emoji: "🎯", label: "Mission Control" },
+    { href: `${basePath}/incidents`, emoji: "⚠️", label: "Incidents" },
+  ];
+}
 
 function getGreeting(): string {
   const h = new Date().getHours();
@@ -152,8 +220,11 @@ export function VenueOverview({
   spendLabel = "This month",
   upcomingBookings,
   todayBookings,
+  config = DEFAULT_CONFIG,
 }: VenueOverviewProps) {
-  const metricsCards = buildMetricsCards(weekLabel, spendLabel);
+  const accent = ACCENTS[config.accent];
+  const metricsCards = buildMetricsCards(weekLabel, spendLabel, config, accent);
+  const quickActions = buildQuickActions(config.basePath);
   const greeting = getGreeting();
   const dateStr = new Date().toLocaleDateString("en-GB", {
     weekday: "long",
@@ -178,8 +249,8 @@ export function VenueOverview({
           </div>
           <div className="flex gap-3">
             <Link
-              href="/d/venue/bookings/new"
-              className="inline-flex items-center gap-2 rounded-xl bg-purple-500 px-4 py-2.5 text-sm font-medium text-white shadow-glow-sm transition hover:bg-purple-400"
+              href={`${config.basePath}/bookings/new`}
+              className={`inline-flex items-center gap-2 rounded-xl ${accent.buttonSolid} px-4 py-2.5 text-sm font-medium text-white shadow-glow-sm transition`}
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -215,7 +286,7 @@ export function VenueOverview({
 
         {/* ── Security Pulse ── */}
         <motion.div variants={fadeUp} className="glass relative overflow-hidden rounded-2xl p-6">
-          <div className="absolute inset-0 bg-gradient-to-r from-purple-500/[0.04] via-transparent to-emerald-500/[0.04]" />
+          <div className={`absolute inset-0 bg-gradient-to-r ${accent.pulseGradient}`} />
           <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-4">
               <div
@@ -263,7 +334,7 @@ export function VenueOverview({
             </div>
             <div className="flex gap-3">
               <Link
-                href="/d/venue/live"
+                href={`${config.basePath}/live`}
                 className="inline-flex items-center gap-2 rounded-xl bg-white/[0.06] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/[0.1]"
               >
                 <span className="relative flex h-2 w-2">
@@ -273,7 +344,7 @@ export function VenueOverview({
                 Live Check-In
               </Link>
               <Link
-                href="/d/venue/mission-control"
+                href={`${config.basePath}/mission-control`}
                 className="inline-flex items-center gap-2 rounded-xl bg-white/[0.06] px-4 py-2.5 text-sm font-medium text-zinc-300 transition hover:bg-white/[0.1]"
               >
                 Mission Control
@@ -289,15 +360,15 @@ export function VenueOverview({
             <div className="glass rounded-2xl">
               <div className="flex items-center justify-between border-b border-white/[0.06] px-6 py-4">
                 <h2 className="font-display text-lg font-medium text-white">Your Bookings</h2>
-                <Link href="/d/venue/bookings" className="text-sm text-purple-400 transition hover:text-purple-300">
+                <Link href={`${config.basePath}/bookings`} className={`text-sm transition ${accent.textLink}`}>
                   View all &rarr;
                 </Link>
               </div>
 
               {upcomingBookings.length === 0 ? (
                 <div className="p-8 text-center">
-                  <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-purple-500/10">
-                    <svg className="h-8 w-8 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-2xl ${accent.emptyIconBg}`}>
+                    <svg className={`h-8 w-8 ${accent.emptyIconText}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path
                         strokeLinecap="round"
                         strokeLinejoin="round"
@@ -308,8 +379,8 @@ export function VenueOverview({
                   </div>
                   <p className="mt-4 text-sm text-zinc-400">No active bookings</p>
                   <Link
-                    href="/d/venue/bookings/new"
-                    className="mt-4 inline-flex items-center gap-2 rounded-xl bg-purple-500/20 px-4 py-2 text-sm font-medium text-purple-300 transition hover:bg-purple-500/30"
+                    href={`${config.basePath}/bookings/new`}
+                    className={`mt-4 inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition ${accent.emptyCta}`}
                   >
                     Book security
                   </Link>
@@ -319,10 +390,10 @@ export function VenueOverview({
                   {upcomingBookings.slice(0, 5).map((b) => (
                     <Link
                       key={b.id}
-                      href={`/d/venue/bookings/${b.id}`}
+                      href={`${config.basePath}/bookings/${b.id}`}
                       className="flex items-center gap-4 px-6 py-4 transition hover:bg-white/[0.02]"
                     >
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-purple-500/15 font-display text-sm font-semibold text-purple-400">
+                      <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl font-display text-sm font-semibold ${accent.dayBadge}`}>
                         {dayOfMonth(b.event_date)}
                       </div>
                       <div className="min-w-0 flex-1">
@@ -366,7 +437,7 @@ export function VenueOverview({
                   <Link
                     key={a.href}
                     href={a.href}
-                    className="flex flex-col items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition hover:border-purple-500/20 hover:bg-white/[0.06]"
+                    className={`flex flex-col items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 transition ${accent.quickActionHover}`}
                   >
                     <span className="text-2xl">{a.emoji}</span>
                     <span className="text-xs font-medium text-zinc-300">{a.label}</span>
@@ -380,7 +451,7 @@ export function VenueOverview({
               <div className="glass rounded-2xl p-6">
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="font-display text-lg font-medium text-white">Today&apos;s Schedule</h2>
-                  <Link href="/d/venue/live" className="text-xs text-purple-400 transition hover:text-purple-300">
+                  <Link href={`${config.basePath}/live`} className={`text-xs transition ${accent.textLinkSmall}`}>
                     Live view &rarr;
                   </Link>
                 </div>
@@ -388,7 +459,7 @@ export function VenueOverview({
                   {todayBookings.map((b) => (
                     <Link
                       key={b.id}
-                      href={`/d/venue/bookings/${b.id}`}
+                      href={`${config.basePath}/bookings/${b.id}`}
                       className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 transition hover:bg-white/[0.05]"
                     >
                       <div className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
@@ -413,8 +484,8 @@ export function VenueOverview({
                 <div className="rounded-xl border border-dashed border-white/10 p-6 text-center">
                   <p className="text-sm text-zinc-500">No security shifts today</p>
                   <Link
-                    href="/d/venue/bookings/new"
-                    className="mt-3 inline-flex text-xs font-medium text-purple-400 transition hover:text-purple-300"
+                    href={`${config.basePath}/bookings/new`}
+                    className={`mt-3 inline-flex text-xs font-medium transition ${accent.textLinkSmall}`}
                   >
                     Schedule a booking &rarr;
                   </Link>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { HelpHint } from "@/components/ui/HelpHint";
 
 interface AvailableStaff {
   id: string;
@@ -103,7 +104,14 @@ export function InstantFill({
           <span className="text-xl">⚡</span>
         </div>
         <div>
-          <h2 className="font-display text-lg font-medium text-white">Instant Fill</h2>
+          <h2 className="font-display text-lg font-medium text-white inline-flex items-center gap-2">
+            Instant Fill
+            <HelpHint label="What is Instant Fill?">
+              Instant Fill is your emergency cover button. If a guard calls in sick or you&rsquo;re short-staffed,
+              it instantly searches the wider Shield HQ network of verified professionals so you can fill the
+              gap in minutes instead of ringing round yourself.
+            </HelpHint>
+          </h2>
           <p className="text-sm text-zinc-400">Find backup staff from the Shield HQ network in minutes</p>
         </div>
       </div>

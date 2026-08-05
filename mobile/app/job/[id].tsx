@@ -11,8 +11,10 @@ import { getProfileIdAndRole, getPersonnelId, isPersonnelVerified, isPersonnelBa
 import { getClaimAvailabilityWarning } from "../../lib/shiftAvailabilityClaimCheck";
 import { safeHaptic } from "../../lib/haptics";
 import { isMissingColumnError } from "../../lib/postgresErrors";
-import { bookingDirectionsLine } from "../../lib/bookingDirections";
+import { bookingDisplayName } from "../../lib/bookingDisplay";
+import { ShiftLocationCard } from "../../components/shift/ShiftLocationCard";
 import { claimShiftWithLocation } from "../../lib/shiftClaim";
+import { isActiveUrgentCover, isClaimableOnMarketplace, remainingMinutes } from "../../lib/shiftMarketplace";
 
 type JobDetail = {
   id: string;
@@ -22,12 +24,18 @@ type JobDetail = {
   scheduled_start: string;
   scheduled_end: string;
   status: string;
+  is_urgent?: boolean | null;
+  dispatcher_status?: string | null;
+  cover_search_wave?: number | null;
   booking: {
     id: string;
     event_name: string;
+    status?: string | null;
     brief_notes: string | null;
     site_label?: string | null;
     site_address_text?: string | null;
+    site_latitude?: number | null;
+    site_longitude?: number | null;
     venue_location?: {
       label?: string | null;
       address_line1?: string | null;
@@ -64,10 +72,11 @@ export default function JobDetailScreen() {
       setLoading(true);
       const jobSelectFull = `
             id, role, personnel_id, hourly_rate, scheduled_start, scheduled_end, status,
+            is_urgent, dispatcher_status, cover_search_wave,
             booking:bookings(
-              id, event_name, brief_notes, site_label, site_address_text,
+              id, event_name, status, brief_notes, site_label, site_address_text, site_latitude, site_longitude,
               venue_location:venue_locations!venue_location_id(label, address_line1, city, postcode),
-              venue:venues(id, name, city, address_line1, postcode)
+              venue:venues(id, name, city, address_line1, postcode, latitude, longitude)
             )
           `;
       const jobSelectLegacy = `
@@ -159,7 +168,7 @@ export default function JobDetailScreen() {
       await claimShiftWithLocation(job.id, personnelId);
       safeHaptic("success");
       Alert.alert("Shift claimed", "You are now confirmed for this shift.");
-      setJob((prev) => (prev ? { ...prev, personnel_id: personnelId, status: "pending" } : prev));
+      setJob((prev) => (prev ? { ...prev, personnel_id: personnelId, status: "accepted" } : prev));
     } catch (e: any) {
       Alert.alert("Unable to claim", e?.message || "This shift may already be claimed.");
     } finally {
@@ -187,7 +196,33 @@ export default function JobDetailScreen() {
   const end = new Date(job.scheduled_end);
   const hours = Math.max(0, (end.getTime() - start.getTime()) / 3600000);
   const estimatedPay = Math.round(hours * (job.hourly_rate || 0));
-  const isAvailable = !job.personnel_id;
+  const isAvailable = isClaimableOnMarketplace(
+    {
+      status: job.status,
+      personnel_id: job.personnel_id,
+      scheduled_start: job.scheduled_start,
+      scheduled_end: job.scheduled_end,
+      is_urgent: job.is_urgent,
+      dispatcher_status: job.dispatcher_status,
+      cover_search_wave: job.cover_search_wave,
+    },
+    { bookingStatus: job.booking?.status },
+  );
+  const urgentCover = isActiveUrgentCover({
+    status: job.status,
+    personnel_id: job.personnel_id,
+    scheduled_start: job.scheduled_start,
+    scheduled_end: job.scheduled_end,
+    is_urgent: job.is_urgent,
+    dispatcher_status: job.dispatcher_status,
+    cover_search_wave: job.cover_search_wave,
+  });
+  const unavailableLabel =
+    job.status === "cancelled"
+      ? "This shift was cancelled"
+      : job.personnel_id
+        ? "Already claimed"
+        : "No longer available";
 
   return (
     <View style={styles.container}>
@@ -202,6 +237,11 @@ export default function JobDetailScreen() {
 
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <LinearGradient colors={["rgba(45,212,191,0.2)", "rgba(45,212,191,0.04)"]} style={styles.hero}>
+            {urgentCover ? (
+              <Text style={styles.urgentBadge}>
+                URGENT COVER · {remainingMinutes(job.scheduled_end)} min left
+              </Text>
+            ) : null}
             <Text style={styles.title}>{job.booking?.event_name || "Event"}</Text>
             <Text style={styles.subtitle}>{job.role}</Text>
             <Text style={styles.payLine}>~£{estimatedPay} • {hours.toFixed(1)}h at £{job.hourly_rate}/hr</Text>
@@ -224,13 +264,7 @@ export default function JobDetailScreen() {
             </View>
           </View>
 
-          <View style={styles.section}>
-            <Text style={styles.label}>📍 Location</Text>
-            <Text style={styles.value}>{job.booking?.venue?.name || "Venue"}</Text>
-            <Text style={styles.subtle}>
-              {job.booking ? bookingDirectionsLine(job.booking) : "Address not provided"}
-            </Text>
-          </View>
+          <ShiftLocationCard booking={job.booking} variant="full" />
 
           <View style={styles.section}>
             <Text style={styles.label}>🎟️ Who & Event Type</Text>
@@ -258,7 +292,13 @@ export default function JobDetailScreen() {
               {claiming ? (
                 <ActivityIndicator size="small" color="#04110f" />
               ) : (
-                <Text style={styles.claimCtaText}>{isAvailable ? "Claim my shift" : "Already claimed"}</Text>
+                <Text style={styles.claimCtaText}>
+                  {isAvailable
+                    ? urgentCover
+                      ? "Accept urgent cover"
+                      : "Claim my shift"
+                    : unavailableLabel}
+                </Text>
               )}
             </LinearGradient>
           </TouchableOpacity>
@@ -288,6 +328,13 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   title: { ...typography.title, color: colors.text, marginBottom: 2 },
+  urgentBadge: {
+    color: "#fbbf24",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.4,
+    marginBottom: 6,
+  },
   subtitle: { ...typography.body, color: colors.textSecondary },
   payLine: { ...typography.caption, color: "#7ee7d8", marginTop: spacing.xs, fontWeight: "700" },
   row: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.sm },

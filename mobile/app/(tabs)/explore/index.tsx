@@ -1,4 +1,4 @@
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -25,13 +25,21 @@ import { getClaimAvailabilityWarning } from "../../../lib/shiftAvailabilityClaim
 import { getLatestShieldBlogPost } from "../../../data/shield-blog";
 import { COURSES } from "../../training";
 import { claimShiftWithLocation } from "../../../lib/shiftClaim";
+import {
+  isActiveUrgentCover,
+  isClaimableOnMarketplace,
+  remainingMinutes,
+} from "../../../lib/shiftMarketplace";
 import { ShiftsMapView } from "../../../components/shifts/ShiftsMapView";
 import { GuestShiftFeed } from "../../../components/guest/GuestShiftFeed";
+import { ScheduledShifts } from "../../../components/ScheduledShifts";
 import {
   SAMPLE_SHIFTS_CENTER,
   sampleShiftsAroundCenter,
 } from "../../../data/sample-shifts";
 import { useGuestLocation } from "../../../lib/guestLocation";
+import { bookingDisplayName } from "../../../lib/bookingDisplay";
+import { locationSummaryOneLine } from "../../../lib/bookingLocation";
 
 interface AvailableShift {
   id: string;
@@ -44,9 +52,12 @@ interface AvailableShift {
   venue_name: string;
   venue_city: string;
   event_name: string;
+  address_line?: string | null;
   /** Site (booking) coords first, falling back to venue coords. Either may be null. */
   latitude: number | null;
   longitude: number | null;
+  is_urgent_cover?: boolean;
+  minutes_remaining?: number;
 }
 
 // Grouped job (multiple shifts for same booking/role)
@@ -59,10 +70,13 @@ interface GroupedJob {
   venue_name: string;
   venue_city: string;
   event_name: string;
+  address_line?: string | null;
   positions_available: number;
   shift_ids: string[];
   latitude: number | null;
   longitude: number | null;
+  is_urgent_cover?: boolean;
+  minutes_remaining?: number;
 }
 
 interface VenueBookingItem {
@@ -100,9 +114,17 @@ export default function ExploreTab() {
   const insets = useSafeAreaInsets();
   const [search, setSearch] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  const [viewMode, setViewMode] = useState<"list" | "map">("list");
+  const [viewMode, setViewMode] = useState<"list" | "map" | "scheduled">("list");
+  const [scheduledCount, setScheduledCount] = useState(0);
   // null = checking; true = signed in; false = guest (show sample shifts)
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+
+  // Deep link: a tapped "shift scheduled" notification routes here with
+  // ?view=scheduled so the guard lands straight on their pending assignments.
+  const { view: viewParam } = useLocalSearchParams<{ view?: string }>();
+  useEffect(() => {
+    if (viewParam === "scheduled") setViewMode("scheduled");
+  }, [viewParam]);
 
   useEffect(() => {
     if (!supabase) {
@@ -270,13 +292,15 @@ export default function ExploreTab() {
         }
       }
 
-      // Fetch available shifts (unclaimed, future only)
+      // Unassigned pending shifts only — in-progress slots appear when flagged urgent cover.
       const { data: available } = await supabase
         .from("shifts")
-        .select("id, booking_id, role, hourly_rate, scheduled_start, scheduled_end, created_at")
+        .select(
+          "id, booking_id, role, hourly_rate, scheduled_start, scheduled_end, created_at, status, personnel_id, is_urgent, dispatcher_status, cover_search_wave",
+        )
         .is("personnel_id", null)
-        .gte("scheduled_end", new Date().toISOString())
-        .in("status", ["pending", "accepted", "checked_in"]);
+        .eq("status", "pending")
+        .gte("scheduled_end", new Date().toISOString());
 
       if (!available || available.length === 0) {
         setAvailableShifts([]);
@@ -291,7 +315,7 @@ export default function ExploreTab() {
         // Try direct Supabase query first (works if RLS allows it)
         const { data: bookings } = await supabase
           .from("bookings")
-          .select("id, event_name, venue_id, site_latitude, site_longitude")
+          .select("id, event_name, venue_id, site_label, site_address_text, site_latitude, site_longitude, status")
           .in("id", bookingIds);
 
         if (bookings && bookings.length > 0) {
@@ -301,7 +325,7 @@ export default function ExploreTab() {
           if (venueIds.length > 0) {
             const { data: venues } = await supabase
               .from("venues")
-              .select("id, name, city, latitude, longitude")
+              .select("id, name, city, latitude, longitude, address_line1, postcode")
               .in("id", venueIds);
             if (venues) {
               venues.forEach((v) => { venuesMap[v.id] = v; });
@@ -309,12 +333,29 @@ export default function ExploreTab() {
           }
 
           bookings.forEach((b: any) => {
-            const venue = venuesMap[b.venue_id] || { name: "Venue", city: "", latitude: null, longitude: null };
-            bookingsMap[b.id] = {
+            const venue = venuesMap[b.venue_id] || {
+              name: b.site_label || "Venue",
+              city: "",
+              latitude: null,
+              longitude: null,
+              address_line1: null,
+              postcode: null,
+            };
+            const bookingSource = {
               event_name: b.event_name,
-              venue: { name: venue.name, city: venue.city },
+              site_label: b.site_label,
+              site_address_text: b.site_address_text,
+              site_latitude: b.site_latitude,
+              site_longitude: b.site_longitude,
+              venue,
+            };
+            bookingsMap[b.id] = {
+              ...bookingSource,
               latitude: b.site_latitude ?? venue.latitude ?? null,
               longitude: b.site_longitude ?? venue.longitude ?? null,
+              venue_name: bookingDisplayName(bookingSource),
+              address_line: locationSummaryOneLine(bookingSource),
+              status: b.status ?? null,
             };
           });
         }
@@ -336,11 +377,25 @@ export default function ExploreTab() {
               const { data: metaData } = await metaRes.json();
               if (metaData) {
                 for (const [id, meta] of Object.entries(metaData) as [string, any][]) {
-                  bookingsMap[id] = {
+                  const bookingSource = {
                     event_name: meta.event_name,
-                    venue: { name: meta.venue_name, city: meta.venue_city },
-                    latitude: meta.site_latitude ?? meta.venue_latitude ?? null,
-                    longitude: meta.site_longitude ?? meta.venue_longitude ?? null,
+                    site_label: meta.site_label,
+                    site_address_text: meta.site_address_text,
+                    site_latitude: meta.site_latitude,
+                    site_longitude: meta.site_longitude,
+                    venue: {
+                      name: meta.venue_name,
+                      city: meta.venue_city,
+                      address_line1: meta.venue_address_line1,
+                      postcode: meta.venue_postcode,
+                    },
+                  };
+                  bookingsMap[id] = {
+                    ...bookingSource,
+                    latitude: meta.site_latitude ?? null,
+                    longitude: meta.site_longitude ?? null,
+                    venue_name: bookingDisplayName(bookingSource),
+                    address_line: locationSummaryOneLine(bookingSource),
                   };
                 }
               }
@@ -351,23 +406,80 @@ export default function ExploreTab() {
         }
       }
 
-      const shifts: AvailableShift[] = available.map((s) => {
-        const booking = bookingsMap[s.booking_id] || {};
-        return {
-          id: s.id,
-          booking_id: s.booking_id,
-          role: s.role,
-          hourly_rate: s.hourly_rate,
-          scheduled_start: s.scheduled_start,
-          scheduled_end: s.scheduled_end,
-          created_at: s.created_at,
-          venue_name: booking.venue?.name || "Venue",
-          venue_city: booking.venue?.city || "",
-          event_name: booking.event_name || "Event",
-          latitude: booking.latitude ?? null,
-          longitude: booking.longitude ?? null,
-        };
-      });
+      // Hide agency self-managed roster shifts from the open board — they're
+      // assigned directly by the agency, not claimable here. Tolerant of the
+      // 0068 column not existing yet.
+      let selfManagedBookings = new Set<string>();
+      try {
+        const sm = await supabase
+          .from("bookings")
+          .select("id, self_managed")
+          .in("id", bookingIds);
+        if (sm.data) {
+          selfManagedBookings = new Set(
+            (sm.data as { id: string; self_managed?: boolean | null }[])
+              .filter((r) => r.self_managed)
+              .map((r) => r.id),
+          );
+        }
+      } catch {
+        // column absent — show everything
+      }
+
+      const nowMs = Date.now();
+      const shifts: AvailableShift[] = available
+        .filter((s) => {
+          const booking = bookingsMap[s.booking_id] || {};
+          return isClaimableOnMarketplace(
+            {
+              status: s.status,
+              personnel_id: s.personnel_id,
+              scheduled_start: s.scheduled_start,
+              scheduled_end: s.scheduled_end,
+              is_urgent: s.is_urgent,
+              dispatcher_status: s.dispatcher_status,
+              cover_search_wave: s.cover_search_wave,
+            },
+            {
+              bookingStatus: booking.status,
+              selfManaged: selfManagedBookings.has(s.booking_id),
+              nowMs,
+            },
+          );
+        })
+        .filter((s) => !selfManagedBookings.has(s.booking_id))
+        .map((s) => {
+          const booking = bookingsMap[s.booking_id] || {};
+          const urgent = isActiveUrgentCover(
+            {
+              status: s.status,
+              personnel_id: s.personnel_id,
+              scheduled_start: s.scheduled_start,
+              scheduled_end: s.scheduled_end,
+              is_urgent: s.is_urgent,
+              dispatcher_status: s.dispatcher_status,
+              cover_search_wave: s.cover_search_wave,
+            },
+            nowMs,
+          );
+          return {
+            id: s.id,
+            booking_id: s.booking_id,
+            role: s.role,
+            hourly_rate: s.hourly_rate,
+            scheduled_start: s.scheduled_start,
+            scheduled_end: s.scheduled_end,
+            created_at: s.created_at,
+            venue_name: booking.venue_name || bookingDisplayName(booking) || "Venue",
+            venue_city: booking.venue?.city || "",
+            event_name: booking.event_name || "Event",
+            address_line: booking.address_line ?? locationSummaryOneLine(booking),
+            latitude: booking.latitude ?? null,
+            longitude: booking.longitude ?? null,
+            is_urgent_cover: urgent,
+            minutes_remaining: remainingMinutes(s.scheduled_end, nowMs),
+          };
+        });
 
       shifts.sort((a, b) => {
         if (b.hourly_rate !== a.hourly_rate) return b.hourly_rate - a.hourly_rate;
@@ -493,26 +605,35 @@ export default function ExploreTab() {
                 if (!supabase) return;
                 const { data: booking } = await supabase
                   .from("bookings")
-                  .select("venue_id")
+                  .select("venue_id, agency_id")
                   .eq("id", job.booking_id)
                   .single();
 
+                let ownerUserId: string | null = null;
                 if (booking?.venue_id && supabase) {
                   const { data: venue } = await supabase
                     .from("venues")
                     .select("user_id")
                     .eq("id", booking.venue_id)
                     .single();
+                  ownerUserId = venue?.user_id ?? null;
+                } else if (booking?.agency_id && supabase) {
+                  const { data: agency } = await supabase
+                    .from("agencies")
+                    .select("user_id")
+                    .eq("id", booking.agency_id)
+                    .single();
+                  ownerUserId = agency?.user_id ?? null;
+                }
 
-                  if (venue?.user_id && supabase) {
-                    await supabase.from("notifications").insert({
-                      user_id: venue.user_id,
-                      type: "shift",
-                      title: "✅ Shift Confirmed!",
-                      body: `${personnel.display_name} accepted the ${job.role} shift for ${job.event_name}`,
-                      data: { booking_id: job.booking_id },
-                    });
-                  }
+                if (ownerUserId && supabase) {
+                  await supabase.from("notifications").insert({
+                    user_id: ownerUserId,
+                    type: "shift",
+                    title: "✅ Shift Confirmed!",
+                    body: `${personnel.display_name} accepted the ${job.role} shift for ${job.event_name}`,
+                    data: { booking_id: job.booking_id },
+                  });
                 }
 
                 setAvailableShifts((prev) => prev.filter((s) => s.id !== shiftId));
@@ -578,14 +699,21 @@ export default function ExploreTab() {
           venue_name: shift.venue_name,
           venue_city: shift.venue_city,
           event_name: shift.event_name,
+          address_line: shift.address_line,
           positions_available: 1,
           shift_ids: [shift.id],
           latitude: shift.latitude,
           longitude: shift.longitude,
+          is_urgent_cover: shift.is_urgent_cover,
+          minutes_remaining: shift.minutes_remaining,
         };
       } else {
         groups[key].positions_available += 1;
         groups[key].shift_ids.push(shift.id);
+        if (shift.is_urgent_cover) {
+          groups[key].is_urgent_cover = true;
+          groups[key].minutes_remaining = shift.minutes_remaining;
+        }
       }
     }
     
@@ -601,6 +729,7 @@ export default function ExploreTab() {
         s.event_name.toLowerCase().includes(lower) ||
         s.venue_name.toLowerCase().includes(lower) ||
         s.venue_city.toLowerCase().includes(lower) ||
+        (s.address_line && s.address_line.toLowerCase().includes(lower)) ||
         s.role.toLowerCase().includes(lower)
     );
   }, [groupedJobs, search]);
@@ -644,11 +773,23 @@ export default function ExploreTab() {
           >
             <View style={styles.shiftHeader}>
               <View style={{ flex: 1 }}>
+                {job.is_urgent_cover ? (
+                  <View style={styles.urgentBadge}>
+                    <Text style={styles.urgentBadgeText}>
+                      URGENT COVER · {job.minutes_remaining ?? "?"} min left
+                    </Text>
+                  </View>
+                ) : null}
                 <Text style={styles.shiftTitle}>{job.event_name}</Text>
                 <Text style={styles.shiftVenue}>
                   {job.venue_name}
                   {job.venue_city ? ` · ${job.venue_city}` : ""}
                 </Text>
+                {job.address_line ? (
+                  <Text style={styles.shiftAddress} numberOfLines={2}>
+                    📍 {job.address_line}
+                  </Text>
+                ) : null}
               </View>
               <View style={styles.payContainer}>
                 <Text style={styles.payAmount}>£{pay}</Text>
@@ -698,7 +839,9 @@ export default function ExploreTab() {
                   <Text style={styles.claimButtonText}>Claiming…</Text>
                 </View>
               ) : (
-                <Text style={styles.claimButtonText}>Claim this shift</Text>
+                <Text style={styles.claimButtonText}>
+                  {job.is_urgent_cover ? "Accept urgent cover" : "Claim this shift"}
+                </Text>
               )}
             </LinearGradient>
           </TouchableOpacity>
@@ -791,26 +934,41 @@ export default function ExploreTab() {
       <View style={[styles.screenBody, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={() =>
-            isAuthenticated === false ? goSignup() : router.push("/jobs")
-          }
-        >
-          <Text style={styles.headerEyebrow}>Open shifts</Text>
-          <Text style={styles.headerTitle}>Find work</Text>
-          <Text style={styles.headerSubtitle}>
-            {isAuthenticated === false
-              ? `${sampleMapJobs.length} roles open near ${
-                  guestLocation?.label?.trim() || "you"
-                } · sign up to claim`
-              : `${groupedJobs.length} role${groupedJobs.length !== 1 ? "s" : ""} open near you`}
-          </Text>
-        </TouchableOpacity>
+        {viewMode === "scheduled" ? (
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerEyebrow}>Your roster</Text>
+            <Text style={styles.headerTitle}>Scheduled shifts</Text>
+            <Text style={styles.headerSubtitle}>
+              {isAuthenticated === false
+                ? "Sign in to see shifts your agency assigns you"
+                : scheduledCount === 0
+                  ? "When your agency schedules you, shifts appear here"
+                  : `${scheduledCount} upcoming shift${scheduledCount !== 1 ? "s" : ""} · filter by upcoming or past`}
+            </Text>
+          </View>
+        ) : (
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() =>
+              isAuthenticated === false ? goSignup() : router.push("/jobs")
+            }
+          >
+            <Text style={styles.headerEyebrow}>Open shifts</Text>
+            <Text style={styles.headerTitle}>Find work</Text>
+            <Text style={styles.headerSubtitle}>
+              {isAuthenticated === false
+                ? `${sampleMapJobs.length} roles open near ${
+                    guestLocation?.label?.trim() || "you"
+                  } · sign up to claim`
+                : `${groupedJobs.length} role${groupedJobs.length !== 1 ? "s" : ""} open near you`}
+            </Text>
+          </TouchableOpacity>
+        )}
         <View style={{ width: 40 }} />
       </View>
 
-      {/* Search */}
+      {/* Search — open shifts only */}
+      {viewMode !== "scheduled" && (
       <View style={styles.searchWrap}>
         <View style={styles.searchInner}>
           <Text style={styles.searchGlyph} accessibilityElementsHidden>
@@ -825,6 +983,7 @@ export default function ExploreTab() {
           />
         </View>
       </View>
+      )}
 
       {/* List ↔ Map toggle */}
       <View style={styles.viewToggleWrap}>
@@ -853,10 +1012,76 @@ export default function ExploreTab() {
               ◉  Map
             </Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.viewToggleBtn, viewMode === "scheduled" && styles.viewToggleBtnActive]}
+            onPress={() => {
+              safeHaptic("selection");
+              setViewMode("scheduled");
+            }}
+            activeOpacity={0.85}
+          >
+            <View style={styles.viewToggleLabelRow}>
+              <Text
+                style={[
+                  styles.viewToggleText,
+                  viewMode === "scheduled" && styles.viewToggleTextActive,
+                ]}
+              >
+                Scheduled
+              </Text>
+              {scheduledCount > 0 ? (
+                <View
+                  style={[
+                    styles.viewToggleBadge,
+                    viewMode === "scheduled" && styles.viewToggleBadgeActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.viewToggleBadgeEmoji,
+                      viewMode === "scheduled" && styles.viewToggleBadgeTextActive,
+                    ]}
+                  >
+                    🗓
+                  </Text>
+                  <Text
+                    style={[
+                      styles.viewToggleBadgeCount,
+                      viewMode === "scheduled" && styles.viewToggleBadgeTextActive,
+                    ]}
+                  >
+                    {scheduledCount}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          </TouchableOpacity>
         </View>
       </View>
 
-      {viewMode === "map" ? (
+      {viewMode === "scheduled" ? (
+        <ScrollView
+          style={styles.jobsScroll}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          contentInsetAdjustmentBehavior="never"
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
+          }
+        >
+          {isAuthenticated === false ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyIcon}>🗓️</Text>
+              <Text style={styles.emptyTitle}>Sign in to see scheduled shifts</Text>
+              <Text style={styles.emptySubtitle}>
+                Agency-scheduled shifts you can accept or decline appear here.
+              </Text>
+            </View>
+          ) : (
+            <ScheduledShifts onCountChange={setScheduledCount} />
+          )}
+        </ScrollView>
+      ) : viewMode === "map" ? (
         <View style={styles.mapWrap}>
           {isAuthenticated === false ? (
             <ShiftsMapView
@@ -956,6 +1181,11 @@ export default function ExploreTab() {
                         style={styles.featuredCard}
                       >
                         <Text style={styles.featuredVenue}>{job.venue_name}</Text>
+                        {job.address_line ? (
+                          <Text style={styles.featuredAddress} numberOfLines={1}>
+                            📍 {job.address_line}
+                          </Text>
+                        ) : null}
                         <Text style={styles.featuredEvent}>{job.event_name}</Text>
                         <Text style={styles.featuredMeta}>
                           {formatDate(job.scheduled_start)} · {formatTime(job.scheduled_start)}
@@ -1223,6 +1453,40 @@ const styles = StyleSheet.create({
     color: colors.accentLight,
     fontWeight: "700",
   },
+  viewToggleLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+  },
+  viewToggleBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+    paddingHorizontal: 6,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.1)",
+  },
+  viewToggleBadgeActive: {
+    backgroundColor: "rgba(0,0,0,0.22)",
+  },
+  viewToggleBadgeEmoji: {
+    fontSize: 10,
+    lineHeight: 12,
+    marginTop: -1,
+  },
+  viewToggleBadgeCount: {
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 12,
+    color: colors.textMuted,
+    includeFontPadding: false,
+  },
+  viewToggleBadgeTextActive: {
+    color: colors.accentLight,
+  },
   mapWrap: { flex: 1, zIndex: 1 },
   venueMapContainer: {
     ...StyleSheet.absoluteFillObject,
@@ -1433,11 +1697,35 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 18,
   },
+  urgentBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(251, 191, 36, 0.18)",
+    borderColor: "rgba(251, 191, 36, 0.45)",
+    borderWidth: 1,
+    borderRadius: radius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginBottom: 6,
+  },
+  urgentBadgeText: {
+    color: "#fbbf24",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+  },
   shiftVenue: {
     ...typography.body,
     color: colors.textMuted,
     marginTop: 2,
     fontSize: 14,
+  },
+  shiftAddress: {
+    ...typography.caption,
+    color: colors.accent,
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: "600",
+    lineHeight: 16,
   },
   payContainer: {
     alignItems: "flex-end",
@@ -1521,6 +1809,12 @@ const styles = StyleSheet.create({
   featuredVenue: {
     ...typography.caption,
     color: "rgba(255,255,255,0.88)",
+  },
+  featuredAddress: {
+    ...typography.caption,
+    color: "rgba(255,255,255,0.75)",
+    marginTop: 2,
+    fontSize: 11,
   },
   featuredEvent: {
     ...typography.title,

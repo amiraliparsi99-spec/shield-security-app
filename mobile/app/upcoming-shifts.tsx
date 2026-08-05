@@ -19,6 +19,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { supabase } from "../lib/supabase";
+import { bookingDisplayName } from "../lib/bookingDisplay";
+import { locationSummaryOneLine } from "../lib/bookingLocation";
 import { getProfileIdAndRole, getPersonnelId } from "../lib/auth";
 import { colors, gradients, typography, spacing, radius } from "../theme";
 import { AnimatedBackground } from "../components/ui/AnimatedBackground";
@@ -40,6 +42,7 @@ type Shift = {
   venue_name?: string;
   event_name?: string;
   event_date?: string;
+  address_line?: string | null;
 };
 
 export default function UpcomingShiftsScreen() {
@@ -108,9 +111,16 @@ function UpcomingShiftsScreenContent() {
             event_name,
             event_date,
             venue_id,
+            site_label,
+            site_address_text,
+            site_latitude,
+            site_longitude,
             venues (
               id,
-              name
+              name,
+              address_line1,
+              city,
+              postcode
             )
           )
         `)
@@ -128,9 +138,16 @@ function UpcomingShiftsScreenContent() {
         const venues = booking ? (Array.isArray(booking.venues) ? booking.venues[0] : booking.venues) : null;
         return {
           ...s,
-          venue_name: venues?.name || "Unknown Venue",
+          venue_name: bookingDisplayName({
+            ...booking,
+            venue: venues,
+          }),
           event_name: booking?.event_name || "Shift",
           event_date: booking?.event_date,
+          address_line: locationSummaryOneLine({
+            ...booking,
+            venue: venues,
+          }),
         };
       });
 
@@ -355,6 +372,12 @@ function ShiftCard({
             </Text>
           )}
 
+          {shift.address_line ? (
+            <Text style={styles.shiftAddress} numberOfLines={2}>
+              📍 {shift.address_line}
+            </Text>
+          ) : null}
+
           <View style={styles.shiftCardDetails}>
             <View style={styles.shiftDetail}>
               <Text style={styles.shiftDetailIcon}>⏰</Text>
@@ -503,6 +526,13 @@ const styles = StyleSheet.create({
     ...typography.bodySmall,
     color: colors.textSecondary,
     marginBottom: spacing.sm,
+  },
+  shiftAddress: {
+    ...typography.caption,
+    color: colors.accent,
+    marginBottom: spacing.sm,
+    fontWeight: "600",
+    lineHeight: 16,
   },
   shiftStatus: {
     paddingHorizontal: spacing.sm,

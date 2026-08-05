@@ -1,9 +1,17 @@
-import Link from "next/link";
+import { VenueOverview } from "@/components/venue/VenueOverview";
+import type { BookingSummary } from "@/components/venue/VenueOverview";
 import { createClient } from "@/lib/supabase/server";
-import { MetricsCard, QuickActionCard, ActivityItem, BookingListItem } from "@/components/agency";
 
-async function getAgencyData(supabase: any, userId: string) {
-  // Get agency directly using user_id
+const AGENCY_CONFIG = {
+  basePath: "/d/agency",
+  accent: "shield" as const,
+  spendHref: "/d/agency/revenue",
+};
+
+async function resolveAgency(
+  supabase: any,
+  userId: string,
+): Promise<{ id: string; name: string } | null> {
   const { data: agency } = await supabase
     .from("agencies")
     .select("id, name")
@@ -11,328 +19,177 @@ async function getAgencyData(supabase: any, userId: string) {
     .maybeSingle();
 
   if (!agency) return null;
-
-  // Get staff count - use is_active boolean column
-  const { count: staffCount } = await supabase
-    .from("agency_staff")
-    .select("id", { count: "exact", head: true })
-    .eq("agency_id", agency.id)
-    .eq("is_active", true);
-
-  // Get upcoming bookings
-  const now = new Date().toISOString();
-  const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-  
-  const { data: upcomingBookings, count: upcomingCount } = await supabase
-    .from("bookings")
-    .select(`
-      id, start, end, guards_count, rate, currency, status,
-      venue:venues(name, address)
-    `, { count: "exact" })
-    .eq("provider_type", "agency")
-    .eq("provider_id", agency.id)
-    .gte("start", now)
-    .lte("start", nextWeek)
-    .in("status", ["pending", "confirmed"])
-    .order("start")
-    .limit(5);
-
-  // Get completed bookings this month for revenue
-  const startOfMonth = new Date();
-  startOfMonth.setDate(1);
-  startOfMonth.setHours(0, 0, 0, 0);
-
-  const { data: completedBookings } = await supabase
-    .from("bookings")
-    .select("rate, guards_count, start, end")
-    .eq("provider_type", "agency")
-    .eq("provider_id", agency.id)
-    .eq("status", "completed")
-    .gte("end", startOfMonth.toISOString());
-
-  // Calculate monthly revenue
-  let monthlyRevenue = 0;
-  let hoursWorked = 0;
-  
-  if (completedBookings) {
-    for (const booking of completedBookings) {
-      const hours = (new Date(booking.end).getTime() - new Date(booking.start).getTime()) / (1000 * 60 * 60);
-      monthlyRevenue += (booking.rate * hours * booking.guards_count);
-      hoursWorked += hours * booking.guards_count;
-    }
-  }
-
-  // Get staff IDs first, then count pending assignments
-  const { data: staffIds } = await supabase
-    .from("agency_staff")
-    .select("id")
-    .eq("agency_id", agency.id);
-
-  const staffIdList = staffIds?.map((s: { id: string }) => s.id) || [];
-  
-  let pendingAssignments = 0;
-  if (staffIdList.length > 0) {
-    const { count } = await supabase
-      .from("booking_assignments")
-      .select("id", { count: "exact", head: true })
-      .eq("status", "assigned")
-      .in("agency_staff_id", staffIdList);
-    pendingAssignments = count || 0;
-  }
-
-  return {
-    agency,
-    staffCount: staffCount || 0,
-    upcomingBookings: upcomingBookings || [],
-    upcomingCount: upcomingCount || 0,
-    monthlyRevenue,
-    hoursWorked: Math.round(hoursWorked),
-    pendingAssignments: pendingAssignments || 0,
-  };
+  return { id: agency.id, name: agency.name || "Your Agency" };
 }
 
-export default async function AgencyOverview() {
+export default async function AgencyDashboard() {
   const supabase = await createClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
 
-  const data = session ? await getAgencyData(supabase, session.user.id) : null;
+  const agency = session?.user?.id
+    ? await resolveAgency(supabase, session.user.id)
+    : null;
 
-  // Guest mode or no data
-  if (!data) {
-    return (
-      <div className="px-4 py-6 sm:px-6">
-        <header className="mb-8">
-          <h1 className="font-display text-2xl font-semibold text-white">Dashboard Overview</h1>
-          <p className="mt-1 text-sm text-zinc-400">
-            Welcome to your agency CRM. Get started by adding staff to your team.
-          </p>
-        </header>
+  const agencyName = agency?.name ?? "Your Agency";
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricsCard
-            title="Active Staff"
-            value={0}
-            subtitle="Add your first team member"
-            icon={
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            }
-          />
-          <MetricsCard
-            title="Upcoming Shifts"
-            value={0}
-            subtitle="Next 7 days"
-            icon={
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-            }
-          />
-          <MetricsCard
-            title="Monthly Revenue"
-            value="£0"
-            subtitle="This month"
-            icon={
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            }
-          />
-          <MetricsCard
-            title="Hours Worked"
-            value={0}
-            subtitle="This month"
-            icon={
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            }
-          />
-        </div>
-
-        <div className="mt-8">
-          <h2 className="mb-4 font-display text-lg font-medium text-white">Get Started</h2>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <QuickActionCard
-              title="Add Staff"
-              description="Invite security personnel to your team"
-              href="/d/agency/staff/add"
-              icon={
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-                </svg>
-              }
-            />
-            <QuickActionCard
-              title="Browse Requests"
-              description="Find open security requests from venues"
-              href="/dashboard"
-              icon={
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-              }
-            />
-            <QuickActionCard
-              title="Update Profile"
-              description="Complete your agency profile"
-              href="/d/agency/settings"
-              icon={
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-              }
-            />
-          </div>
-        </div>
-      </div>
-    );
+  // ── Fetch all bookings this agency created ──
+  let allBookings: any[] = [];
+  if (agency?.id) {
+    const { data: rows, error } = await supabase
+      .from("bookings")
+      .select(
+        "id, event_name, event_date, start_time, end_time, status, staff_requirements, estimated_total, final_total",
+      )
+      .eq("agency_id", agency.id)
+      .order("event_date", { ascending: false });
+    if (error) {
+      console.error("[AgencyDashboard] Bookings fetch failed:", error.message);
+    }
+    allBookings = rows || [];
   }
 
-  const { staffCount, upcomingBookings, upcomingCount, monthlyRevenue, hoursWorked, pendingAssignments } = data;
+  // ── Recalculate costs from staff_requirements + hours (ground truth) ──
+  const summaries: BookingSummary[] = allBookings.map((b) => {
+    const sr = b.staff_requirements;
+    const startTime: string = b.start_time || "";
+    const endTime: string = b.end_time || "";
+
+    let hours = 0;
+    if (startTime && endTime) {
+      const [sh, sm] = startTime.split(":").map(Number);
+      const [eh, em] = endTime.split(":").map(Number);
+      const startMins = (sh || 0) * 60 + (sm || 0);
+      let endMins = (eh || 0) * 60 + (em || 0);
+      if (endMins <= startMins) endMins += 24 * 60;
+      hours = (endMins - startMins) / 60;
+    }
+
+    let baseCost = 0;
+    let guardsCount = 0;
+    if (Array.isArray(sr) && sr.length > 0 && hours > 0) {
+      for (const row of sr) {
+        const count = Number(row?.count ?? row?.quantity ?? 1);
+        const rawRate = Number(row?.rate_pence ?? row?.rate ?? row?.hourly_rate ?? 0);
+        let rateGBP: number;
+        if (row?.rate_pence != null) {
+          rateGBP = rawRate / 100;
+        } else if (rawRate >= 100) {
+          rateGBP = rawRate / 100;
+        } else {
+          rateGBP = rawRate;
+        }
+        if (rateGBP <= 0) rateGBP = 18;
+        baseCost += count * rateGBP * hours;
+        guardsCount += count;
+      }
+    } else {
+      const raw = Math.abs(Number(b.final_total ?? b.estimated_total ?? 0));
+      baseCost = raw > 0 ? raw / 100 : 0;
+      guardsCount = Array.isArray(sr)
+        ? sr.reduce((s: number, r: any) => s + Number(r.count ?? r.quantity ?? 1), 0)
+        : 1;
+    }
+
+    const totalWithFee = Math.round((baseCost + baseCost * 0.05) * 100) / 100;
+
+    return {
+      id: b.id,
+      event_name: b.event_name || "Untitled Event",
+      event_date: b.event_date,
+      start_time: b.start_time || "00:00",
+      end_time: b.end_time || "00:00",
+      status: b.status || "pending",
+      guards_count: guardsCount || 1,
+      estimated_total: totalWithFee,
+      final_total: b.status === "completed" ? totalWithFee : null,
+    };
+  });
+
+  // ── Metrics ──
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
+  const weekAhead = new Date(today.getTime() + 7 * 86_400_000).toISOString().slice(0, 10);
+  const weekBehind = new Date(today.getTime() - 7 * 86_400_000).toISOString().slice(0, 10);
+  const thisMonthStart = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-01`;
+  const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  const lastMonthStart = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, "0")}-01`;
+
+  const liveStatuses = new Set(["pending", "confirmed", "in_progress"]);
+  const spendStatuses = new Set(["pending", "completed", "confirmed", "in_progress"]);
+
+  const active = summaries.filter((b) => liveStatuses.has(b.status));
+  const activeBookingsCount = active.length;
+
+  const futureWeek = active.filter(
+    (b) => b.event_date >= todayStr && b.event_date <= weekAhead,
+  );
+  const pastWeek = active.filter(
+    (b) => b.event_date >= weekBehind && b.event_date < todayStr,
+  );
+  const weekCount = futureWeek.length > 0 ? futureWeek.length : pastWeek.length;
+  const weekLabel = futureWeek.length > 0 ? "Upcoming this week" : "Last 7 days";
+
+  const todayBookings = summaries.filter(
+    (b) => b.event_date === todayStr && liveStatuses.has(b.status),
+  );
+  const guardsToday = todayBookings.reduce((sum, b) => sum + b.guards_count, 0);
+
+  let totalSpend = 0;
+  let spendLabel = "This month";
+  const thisMonthSpend = summaries.filter(
+    (b) => b.event_date >= thisMonthStart && spendStatuses.has(b.status),
+  );
+  if (thisMonthSpend.length > 0) {
+    for (const b of thisMonthSpend) {
+      totalSpend += b.final_total ?? b.estimated_total ?? 0;
+    }
+  } else {
+    const lastMonthEnd = thisMonthStart;
+    const lastMonthSpend = summaries.filter(
+      (b) =>
+        b.event_date >= lastMonthStart &&
+        b.event_date < lastMonthEnd &&
+        spendStatuses.has(b.status),
+    );
+    for (const b of lastMonthSpend) {
+      totalSpend += b.final_total ?? b.estimated_total ?? 0;
+    }
+    if (lastMonthSpend.length > 0) spendLabel = "Last month";
+  }
+
+  // ── Bookings list — future first, then recent ──
+  const futureActive = active
+    .filter((b) => b.event_date >= todayStr)
+    .sort(
+      (a, b) =>
+        a.event_date.localeCompare(b.event_date) ||
+        a.start_time.localeCompare(b.start_time),
+    );
+  const pastActive = active
+    .filter((b) => b.event_date < todayStr)
+    .sort(
+      (a, b) =>
+        b.event_date.localeCompare(a.event_date) ||
+        b.start_time.localeCompare(a.start_time),
+    );
+  const displayBookings = [...futureActive, ...pastActive].slice(0, 5);
 
   return (
-    <div className="px-4 py-6 sm:px-6">
-      <header className="mb-8">
-        <h1 className="font-display text-2xl font-semibold text-white">Dashboard Overview</h1>
-        <p className="mt-1 text-sm text-zinc-400">
-          Track your agency performance and manage operations.
-        </p>
-      </header>
-
-      {/* Metrics Grid */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Link href="/d/agency/staff">
-          <MetricsCard
-            title="Active Staff"
-            value={staffCount}
-            icon={
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            }
-          />
-        </Link>
-        <Link href="/d/agency/bookings">
-          <MetricsCard
-            title="Upcoming Shifts"
-            value={upcomingCount}
-            subtitle="Next 7 days"
-            icon={
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-            }
-          />
-        </Link>
-        <MetricsCard
-          title="Monthly Revenue"
-          value={`£${(monthlyRevenue / 100).toLocaleString("en-GB", { minimumFractionDigits: 2 })}`}
-          subtitle="This month"
-          icon={
-            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          }
-        />
-        <MetricsCard
-          title="Hours Worked"
-          value={hoursWorked}
-          subtitle="This month"
-          icon={
-            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          }
-        />
-      </div>
-
-      {/* Quick Actions */}
-      <div className="mt-8">
-        <h2 className="mb-4 font-display text-lg font-medium text-white">Quick Actions</h2>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <QuickActionCard
-            title="Add Staff"
-            description="Invite new personnel to your team"
-            href="/d/agency/staff/add"
-            icon={
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-              </svg>
-            }
-          />
-          {pendingAssignments > 0 && (
-            <QuickActionCard
-              title="Pending Assignments"
-              description={`${pendingAssignments} staff awaiting confirmation`}
-              href="/d/agency/bookings"
-              icon={
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              }
-            />
-          )}
-          <QuickActionCard
-            title="Browse Requests"
-            description="Find open security requests"
-            href="/dashboard"
-            icon={
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-            }
-          />
-        </div>
-      </div>
-
-      {/* Upcoming Bookings */}
-      <div className="mt-8">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="font-display text-lg font-medium text-white">Upcoming Bookings</h2>
-          <Link
-            href="/d/agency/bookings"
-            className="text-sm text-shield-400 hover:text-shield-300"
-          >
-            View all
-          </Link>
-        </div>
-        {upcomingBookings.length === 0 ? (
-          <div className="glass rounded-xl p-8 text-center">
-            <svg className="mx-auto h-12 w-12 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
-            <p className="mt-4 text-sm text-zinc-400">No upcoming bookings</p>
-            <Link
-              href="/dashboard"
-              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-shield-500/20 px-4 py-2 text-sm font-medium text-shield-300 transition hover:bg-shield-500/30"
-            >
-              Browse requests
-            </Link>
-          </div>
-        ) : (
-          <div className="glass divide-y divide-white/[0.06] rounded-xl">
-            {upcomingBookings.map((booking: any) => (
-              <BookingListItem key={booking.id} booking={booking} />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Recent Activity */}
-      <div className="mt-8">
-        <h2 className="mb-4 font-display text-lg font-medium text-white">Recent Activity</h2>
-        <div className="glass divide-y divide-white/[0.06] rounded-xl px-4">
-          <ActivityItem
-            type="staff"
-            title="Welcome to your CRM"
-            description="Start by adding staff to your team"
-            time="Now"
-          />
-        </div>
-      </div>
-    </div>
+    <VenueOverview
+      venueName={agencyName}
+      config={AGENCY_CONFIG}
+      metrics={{
+        activeBookings: activeBookingsCount,
+        upcomingThisWeek: weekCount,
+        monthlySpend: totalSpend,
+        guardsToday,
+      }}
+      weekLabel={weekLabel}
+      spendLabel={spendLabel}
+      upcomingBookings={displayBookings}
+      todayBookings={todayBookings}
+    />
   );
 }

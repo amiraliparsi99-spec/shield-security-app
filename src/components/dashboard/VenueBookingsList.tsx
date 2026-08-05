@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { Booking } from "@/types/database";
 import { formatRequestDate, formatTimeRange } from "@/lib/format";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 export type EnrichedBooking = Booking & {
   provider_name: string;
@@ -16,9 +17,15 @@ interface VenueBookingsListProps {
 export function VenueBookingsList({ bookings }: VenueBookingsListProps) {
   if (bookings.length === 0) {
     return (
-      <p className="rounded-xl border border-white/10 bg-white/[0.02] p-6 text-center text-zinc-500">
-        No bookings yet. When you confirm shifts with personnel or agencies, they’ll appear here.
-      </p>
+      <div className="rounded-xl border border-white/10 bg-white/[0.02]">
+        <EmptyState
+          icon="📋"
+          title="No bookings yet"
+          description="When you book security for an event, it will show up here so you can track staff, check-ins and payments in one place."
+          actionLabel="Book security"
+          href="/d/venue/bookings/new"
+        />
+      </div>
     );
   }
 

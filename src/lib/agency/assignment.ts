@@ -39,19 +39,9 @@ async function checkAvailability(
   start: Date,
   end: Date
 ): Promise<boolean> {
-  // Check availability table
-  const { data: availability } = await supabase
-    .from("availability")
-    .select("*")
-    .eq("owner_type", "personnel")
-    .eq("owner_id", personnelId)
-    .lte("start", end.toISOString())
-    .gte("end", start.toISOString());
-
-  // If they have marked availability that includes this slot, they're available
-  if (availability && availability.length > 0) {
-    return true;
-  }
+  // Note: the availability table stores recurring weekly windows keyed by
+  // personnel_id, not per-slot rows, so availability is treated as open
+  // unless an existing assignment conflicts with the requested window.
 
   // Check for conflicting bookings
   const { data: conflicts } = await supabase

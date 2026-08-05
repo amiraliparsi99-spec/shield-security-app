@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { CallButton } from "@/components/calling";
+import { PersonnelAvatar } from "@/components/ui/PersonnelAvatar";
 import type { AgencyStaffWithPersonnel, AgencyStaffStatus, AgencyStaffRole } from "@/types/database";
 
 interface StaffCardProps {
@@ -14,12 +15,7 @@ interface StaffCardProps {
 
 export function StaffCard({ staff, onMessage, onRemove, showCallButton = true }: StaffCardProps) {
   const { personnel } = staff;
-  const initials = personnel.display_name
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
+  const avatarUrl = (personnel as { avatar_url?: string | null }).avatar_url ?? null;
 
   return (
     <motion.div
@@ -28,10 +24,7 @@ export function StaffCard({ staff, onMessage, onRemove, showCallButton = true }:
       className="glass group rounded-xl p-4 transition-all hover:shadow-glow-sm"
     >
       <div className="flex items-start gap-4">
-        {/* Avatar */}
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-shield-500 to-shield-600 text-sm font-semibold text-white">
-          {initials}
-        </div>
+        <PersonnelAvatar name={personnel.display_name} avatarUrl={avatarUrl} size="md" />
 
         {/* Info */}
         <div className="min-w-0 flex-1">
@@ -146,12 +139,7 @@ export function StaffListItem({ staff, selected, onSelect }: {
   onSelect?: () => void;
 }) {
   const { personnel } = staff;
-  const initials = personnel.display_name
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
+  const avatarUrl = (personnel as { avatar_url?: string | null }).avatar_url ?? null;
 
   return (
     <button
@@ -162,9 +150,7 @@ export function StaffListItem({ staff, selected, onSelect }: {
           : "hover:bg-white/[0.03]"
       }`}
     >
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-shield-500 to-shield-600 text-xs font-semibold text-white">
-        {initials}
-      </div>
+      <PersonnelAvatar name={personnel.display_name} avatarUrl={avatarUrl} size="sm" />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-white">{personnel.display_name}</p>
         <p className="truncate text-xs text-zinc-400">

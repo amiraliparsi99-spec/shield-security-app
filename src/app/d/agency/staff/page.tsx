@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { StaffCard, StaffStatusBadge } from "@/components/agency";
+import { enrichPersonnelWithAvatars } from "@/lib/db/avatarUrls";
 import type { AgencyStaffWithPersonnel, AgencyStaffStatus, AgencyStaffRole } from "@/types/database";
 
 type FilterStatus = AgencyStaffStatus | "all";
@@ -61,7 +62,25 @@ export default function StaffRosterPage() {
 
       console.log("Staff result:", { staffData, staffError, count: staffData?.length });
 
-      setStaff(staffData || []);
+      const rows = staffData || [];
+      const personnel = rows
+        .map((row) => row.personnel)
+        .filter(Boolean) as NonNullable<AgencyStaffWithPersonnel["personnel"]>[];
+      const enriched = await enrichPersonnelWithAvatars(supabase, personnel as any);
+      const avatarById = new Map(enriched.map((p) => [p.id, p.avatar_url ?? null]));
+      const withAvatars = rows.map((row) =>
+        row.personnel
+          ? {
+              ...row,
+              personnel: {
+                ...row.personnel,
+                avatar_url: avatarById.get(row.personnel.id) ?? null,
+              },
+            }
+          : row,
+      );
+
+      setStaff(withAvatars);
     } catch (error) {
       console.error("Error loading staff:", error);
     } finally {

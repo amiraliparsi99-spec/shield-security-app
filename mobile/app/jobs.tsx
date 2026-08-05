@@ -23,6 +23,10 @@ import { safeHaptic } from "../lib/haptics";
 import { getApiBaseUrl } from "../lib/api";
 import { getClaimAvailabilityWarning } from "../lib/shiftAvailabilityClaimCheck";
 import { claimShiftWithLocation } from "../lib/shiftClaim";
+import { isClaimableOnMarketplace } from "../lib/shiftMarketplace";
+import { bookingDisplayName } from "../lib/bookingDisplay";
+import { locationSummaryOneLine } from "../lib/bookingLocation";
+import { ScheduledShifts } from "../components/ScheduledShifts";
 import { GuestGate } from "../components/auth/GuestGate";
 
 interface Shift {
@@ -36,6 +40,7 @@ interface Shift {
   venue_name: string;
   venue_city: string;
   event_name: string;
+  address_line?: string | null;
   attire_requirement?: string | null;
   brief_notes?: string | null;
 }
@@ -65,6 +70,7 @@ function JobsScreenContent() {
   const [isVerified, setIsVerified] = useState(false);
   const [hasBankAccount, setHasBankAccount] = useState(false);
   const [tab, setTab] = useState<"available" | "my-shifts">("available");
+  const [scheduledCount, setScheduledCount] = useState(0);
 
   const loadData = useCallback(async () => {
     console.log("🔄 Jobs: Loading data...");
@@ -120,24 +126,39 @@ function JobsScreenContent() {
         }
       }
 
-      // Fetch available shifts (unclaimed)
+      // Unassigned pending shifts — filtered to claimable marketplace slots only.
       const { data: available, error: availableError } = await supabase
         .from("shifts")
-        .select("id, booking_id, role, hourly_rate, scheduled_start, scheduled_end, created_at")
+        .select(
+          "id, booking_id, role, hourly_rate, scheduled_start, scheduled_end, created_at, status, personnel_id, is_urgent, dispatcher_status, cover_search_wave",
+        )
         .is("personnel_id", null)
-        .gte("scheduled_end", new Date().toISOString())
-        .in("status", ["pending", "accepted", "checked_in"]);
+        .eq("status", "pending")
+        .gte("scheduled_end", new Date().toISOString());
       
       console.log("📦 Jobs: Available shifts:", available?.length, "Error:", availableError?.message);
 
-      // Fetch my shifts
-      const { data: mine, error: mineError } = await supabase
+      // Fetch my CONFIRMED shifts (open-board claims). Agency-rostered shifts
+      // are surfaced separately by the ScheduledShifts section above, so we
+      // exclude any shift that has an active assignment to avoid showing it twice.
+      const { data: assignedRows } = await supabase
+        .from("shift_assignments")
+        .select("shift_id")
+        .eq("personnel_id", personnelId)
+        .in("status", ["pending", "accepted"]);
+      const assignedShiftIds = new Set(
+        (assignedRows || []).map((r: any) => r.shift_id).filter(Boolean),
+      );
+
+      const { data: mineRaw, error: mineError } = await supabase
         .from("shifts")
         .select("id, booking_id, role, hourly_rate, scheduled_start, scheduled_end, created_at")
         .eq("personnel_id", personnelId)
         .gte("scheduled_end", new Date().toISOString())
-        .in("status", ["pending", "accepted", "checked_in"]);
-      
+        .in("status", ["accepted", "checked_in"]);
+
+      const mine = (mineRaw || []).filter((s: any) => !assignedShiftIds.has(s.id));
+
       console.log("📦 Jobs: My shifts:", mine?.length, "Error:", mineError?.message);
 
       // Get booking details
@@ -148,7 +169,7 @@ function JobsScreenContent() {
       if (bookingIds.length > 0) {
         const { data: bookings } = await supabase
           .from("bookings")
-          .select("id, event_name, venue_id, brief_notes")
+          .select("id, event_name, venue_id, site_label, site_address_text, site_latitude, site_longitude, brief_notes, status")
           .in("id", bookingIds);
 
         if (bookings && bookings.length > 0) {
@@ -158,7 +179,7 @@ function JobsScreenContent() {
           if (venueIds.length > 0) {
             const { data: venues } = await supabase
               .from("venues")
-              .select("id, name, city")
+              .select("id, name, city, address_line1, postcode")
               .in("id", venueIds);
 
             if (venues) {
@@ -169,11 +190,27 @@ function JobsScreenContent() {
           }
 
           bookings.forEach((b) => {
-            bookingsMap[b.id] = {
+            const venue = venuesMap[b.venue_id] || {
+              name: "Venue",
+              city: "",
+              address_line1: null,
+              postcode: null,
+            };
+            const bookingSource = {
               event_name: b.event_name,
-              venue: venuesMap[b.venue_id] || { name: "Venue", city: "" },
+              site_label: (b as { site_label?: string }).site_label,
+              site_address_text: (b as { site_address_text?: string }).site_address_text,
+              site_latitude: (b as { site_latitude?: number }).site_latitude,
+              site_longitude: (b as { site_longitude?: number }).site_longitude,
+              venue,
+            };
+            bookingsMap[b.id] = {
+              ...bookingSource,
+              venue_name: bookingDisplayName(bookingSource),
+              address_line: locationSummaryOneLine(bookingSource),
               attire_requirement: extractAttireRequirement(b.brief_notes),
               brief_notes: b.brief_notes || null,
+              status: b.status ?? null,
             };
           });
         }
@@ -195,9 +232,23 @@ function JobsScreenContent() {
               const { data: metaData } = await metaRes.json();
               if (metaData) {
                 for (const [id, meta] of Object.entries(metaData) as [string, any][]) {
-                  bookingsMap[id] = {
+                  const bookingSource = {
                     event_name: meta.event_name,
-                    venue: { name: meta.venue_name, city: meta.venue_city },
+                    site_label: meta.site_label,
+                    site_address_text: meta.site_address_text,
+                    site_latitude: meta.site_latitude,
+                    site_longitude: meta.site_longitude,
+                    venue: {
+                      name: meta.venue_name,
+                      city: meta.venue_city,
+                      address_line1: meta.venue_address_line1,
+                      postcode: meta.venue_postcode,
+                    },
+                  };
+                  bookingsMap[id] = {
+                    ...bookingSource,
+                    venue_name: bookingDisplayName(bookingSource),
+                    address_line: locationSummaryOneLine(bookingSource),
                     attire_requirement: extractAttireRequirement(meta.brief_notes),
                     brief_notes: meta.brief_notes || null,
                   };
@@ -220,15 +271,57 @@ function JobsScreenContent() {
           scheduled_start: s.scheduled_start,
           scheduled_end: s.scheduled_end,
           created_at: s.created_at,
-          venue_name: booking.venue?.name || "Venue",
+          venue_name: booking.venue_name || bookingDisplayName(booking) || "Venue",
           venue_city: booking.venue?.city || "",
           event_name: booking.event_name || "Event",
+          address_line: booking.address_line ?? locationSummaryOneLine(booking),
           attire_requirement: booking.attire_requirement || null,
           brief_notes: booking.brief_notes || null,
         };
       };
 
+      // Hide agency self-managed roster shifts from the open board — they're
+      // assigned directly by the agency. Tolerant of the 0068 column absence.
+      let selfManagedBookings = new Set<string>();
+      if (bookingIds.length > 0) {
+        try {
+          const sm = await supabase
+            .from("bookings")
+            .select("id, self_managed")
+            .in("id", bookingIds);
+          if (sm.data) {
+            selfManagedBookings = new Set(
+              (sm.data as { id: string; self_managed?: boolean | null }[])
+                .filter((r) => r.self_managed)
+                .map((r) => r.id),
+            );
+          }
+        } catch {
+          // column absent — show everything
+        }
+      }
+
+      const nowMs = Date.now();
       const sortedAvailable = (available || [])
+        .filter((s) => {
+          const booking = bookingsMap[s.booking_id] || {};
+          return isClaimableOnMarketplace(
+            {
+              status: s.status,
+              personnel_id: s.personnel_id,
+              scheduled_start: s.scheduled_start,
+              scheduled_end: s.scheduled_end,
+              is_urgent: s.is_urgent,
+              dispatcher_status: s.dispatcher_status,
+              cover_search_wave: s.cover_search_wave,
+            },
+            {
+              bookingStatus: booking.status,
+              selfManaged: selfManagedBookings.has(s.booking_id),
+              nowMs,
+            },
+          );
+        })
         .map(formatShift)
         .sort((a, b) => {
           if (b.hourly_rate !== a.hourly_rate) return b.hourly_rate - a.hourly_rate;
@@ -344,26 +437,35 @@ function JobsScreenContent() {
                 if (!supabase) return;
                 const { data: booking } = await supabase
                   .from("bookings")
-                  .select("venue_id")
+                  .select("venue_id, agency_id")
                   .eq("id", shift.booking_id)
                   .single();
 
+                let ownerUserId: string | null = null;
                 if (booking?.venue_id && supabase) {
                   const { data: venue } = await supabase
                     .from("venues")
                     .select("user_id")
                     .eq("id", booking.venue_id)
                     .single();
+                  ownerUserId = venue?.user_id ?? null;
+                } else if (booking?.agency_id && supabase) {
+                  const { data: agency } = await supabase
+                    .from("agencies")
+                    .select("user_id")
+                    .eq("id", booking.agency_id)
+                    .single();
+                  ownerUserId = agency?.user_id ?? null;
+                }
 
-                  if (venue?.user_id && supabase) {
-                    await supabase.from("notifications").insert({
-                      user_id: venue.user_id,
-                      type: "shift",
-                      title: "✅ Shift Confirmed!",
-                      body: `${personnel.display_name} accepted the ${shift.role} shift for ${shift.event_name}`,
-                      data: { booking_id: shift.booking_id },
-                    });
-                  }
+                if (ownerUserId && supabase) {
+                  await supabase.from("notifications").insert({
+                    user_id: ownerUserId,
+                    type: "shift",
+                    title: "✅ Shift Confirmed!",
+                    body: `${personnel.display_name} accepted the ${shift.role} shift for ${shift.event_name}`,
+                    data: { booking_id: shift.booking_id },
+                  });
                 }
 
                 if (!supabase) return;
@@ -539,7 +641,7 @@ function JobsScreenContent() {
           }}
         >
           <Text style={[styles.tabText, tab === "my-shifts" && styles.tabTextActive]}>
-            My Shifts ({myShifts.length})
+            My Shifts ({myShifts.length + scheduledCount})
           </Text>
         </TouchableOpacity>
       </View>
@@ -578,6 +680,11 @@ function JobsScreenContent() {
                           <Text style={styles.shiftVenue}>
                             {shift.venue_name} • {shift.venue_city}
                           </Text>
+                          {shift.address_line ? (
+                            <Text style={styles.shiftAddress} numberOfLines={2}>
+                              📍 {shift.address_line}
+                            </Text>
+                          ) : null}
                         </View>
                         <View style={styles.payContainer}>
                           <Text style={styles.payAmount}>£{pay}</Text>
@@ -626,12 +733,17 @@ function JobsScreenContent() {
         {/* My Shifts */}
         {tab === "my-shifts" && (
           <>
+            {/* Agency-scheduled shifts awaiting accept/decline */}
+            <ScheduledShifts hideWhenEmpty onCountChange={setScheduledCount} />
+
             {myShifts.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyIcon}>🗓️</Text>
-                <Text style={styles.emptyTitle}>No upcoming shifts</Text>
-                <Text style={styles.emptySubtitle}>Claim a shift from the Available tab</Text>
-              </View>
+              scheduledCount === 0 ? (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyIcon}>🗓️</Text>
+                  <Text style={styles.emptyTitle}>No upcoming shifts</Text>
+                  <Text style={styles.emptySubtitle}>Claim a shift from the Available tab</Text>
+                </View>
+              ) : null
             ) : (
               myShifts.map((shift) => {
                 const hours = getHours(shift.scheduled_start, shift.scheduled_end);
@@ -654,6 +766,11 @@ function JobsScreenContent() {
                         <Text style={styles.shiftVenue}>
                           {shift.venue_name} • {shift.venue_city}
                         </Text>
+                        {shift.address_line ? (
+                          <Text style={styles.shiftAddress} numberOfLines={2}>
+                            📍 {shift.address_line}
+                          </Text>
+                        ) : null}
                       </View>
                       <View style={styles.payContainer}>
                         <Text style={styles.payAmount}>£{pay}</Text>
@@ -846,6 +963,13 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textMuted,
     marginTop: 2,
+  },
+  shiftAddress: {
+    ...typography.caption,
+    color: colors.accent,
+    marginTop: 4,
+    fontWeight: "600",
+    lineHeight: 16,
   },
   payContainer: {
     alignItems: "flex-end",
