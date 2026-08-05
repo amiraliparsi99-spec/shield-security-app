@@ -16,9 +16,11 @@ import {
   startLocationTracking,
   stopLocationTracking,
   setActiveGeofences,
+  setActiveCheckpoints,
   getLocationState,
   getCurrentLocation,
 } from "../services/location";
+import type { GeoJsonPolygon } from "../lib/geo/polygon";
 import { supabase } from "../lib/supabase";
 
 interface UseLocationTrackingReturn {
@@ -178,13 +180,43 @@ export function useLocationTracking(): UseLocationTrackingReturn {
     try {
       const { data: booking, error: bookingError } = await supabase
         .from("bookings")
-        .select("venue_id, site_latitude, site_longitude")
+        .select("venue_id, venue_location_id, site_latitude, site_longitude")
         .eq("id", bookingId)
         .single();
 
       if (bookingError || !booking) {
         console.error("[Geofence] Failed to get booking:", bookingError);
         return;
+      }
+
+      // Drawn on-site boundary (optional): booking snapshot/override → linked
+      // saved site → none. Fetched tolerantly so a pre-0057 schema still works.
+      let geofencePolygon: unknown = null;
+      {
+        const polyResp = await supabase
+          .from("bookings")
+          .select("site_geofence_polygon")
+          .eq("id", bookingId)
+          .maybeSingle();
+        if (!polyResp.error) {
+          geofencePolygon =
+            (polyResp.data as { site_geofence_polygon?: unknown } | null)
+              ?.site_geofence_polygon ?? null;
+        }
+        const locId = (booking as { venue_location_id?: string | null })
+          .venue_location_id;
+        if (geofencePolygon == null && locId) {
+          const locResp = await supabase
+            .from("venue_locations")
+            .select("geofence_polygon")
+            .eq("id", locId)
+            .maybeSingle();
+          if (!locResp.error) {
+            geofencePolygon =
+              (locResp.data as { geofence_polygon?: unknown } | null)
+                ?.geofence_polygon ?? null;
+          }
+        }
       }
 
       const isValidCoord = (v: unknown): v is number =>
@@ -224,9 +256,35 @@ export function useLocationTracking(): UseLocationTrackingReturn {
           lat: numLat,
           lng: numLng,
           radius: 100,
+          polygon: (geofencePolygon as GeoJsonPolygon | null) ?? null,
         },
       ]);
-      console.log(`[Geofence] Loaded derived geofence for booking ${bookingId} lat=${numLat} lng=${numLng}`);
+      console.log(
+        `[Geofence] Loaded geofence for booking ${bookingId} lat=${numLat} lng=${numLng} polygon=${geofencePolygon ? "yes" : "no"}`,
+      );
+
+      // Patrol checkpoints (optional; tolerant if the table isn't present).
+      try {
+        const cpResp = await supabase
+          .from("booking_checkpoints")
+          .select("id, lat, lng, radius_m")
+          .eq("booking_id", bookingId)
+          .order("sort_order", { ascending: true });
+        if (!cpResp.error && cpResp.data) {
+          await setActiveCheckpoints(
+            (cpResp.data as { id: string; lat: number; lng: number; radius_m: number }[]).map(
+              (c) => ({
+                id: c.id,
+                lat: Number(c.lat),
+                lng: Number(c.lng),
+                radius_m: Number(c.radius_m) || 30,
+              }),
+            ),
+          );
+        }
+      } catch {
+        // No checkpoints / table missing — ignore.
+      }
     } catch (err) {
       console.error("[Geofence] Error loading geofences:", err);
     }

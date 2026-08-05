@@ -23,6 +23,7 @@ import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
 import { colors, typography, spacing, radius } from "../theme";
 import { supabase } from "../lib/supabase";
+import { bookingDisplayName } from "../lib/bookingDisplay";
 import { useAuthStore, useShiftStore } from "../stores";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
@@ -574,7 +575,7 @@ export default function ShiftTrackerScreen() {
                 </View>
 
                 <Text style={styles.activeVenue}>
-                  {activeShift.booking?.venue?.name || activeShift.booking?.agency?.name || "Unknown Venue"}
+                  {bookingDisplayName(activeShift.booking)}
                 </Text>
                 <Text style={styles.activeAddress}>
                   {activeShift.booking?.venue?.address || activeShift.check_in_address || "Address not available"}
@@ -649,7 +650,7 @@ export default function ShiftTrackerScreen() {
                   <View key={shift.booking_id} style={styles.shiftCard}>
                     <View style={styles.shiftInfo}>
                       <Text style={styles.shiftVenue}>
-                        {shift.booking?.venue?.name || shift.booking?.agency?.name || "Unknown"}
+                        {bookingDisplayName(shift.booking) || "Unknown"}
                       </Text>
                       <Text style={styles.shiftTime}>
                         {formatTime(shift.booking?.start_time || "")} - {formatTime(shift.booking?.end_time || "")}

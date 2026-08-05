@@ -2,7 +2,7 @@
  * PreShiftTracker
  *
  * Mounts globally in _layout.tsx. For any accepted shift starting within the
- * next 1 hour, it silently starts background GPS tracking so the venue can
+ * next 60 minutes, it silently starts background GPS tracking so the venue can
  * see the guard "en route" on the live map before the shift begins.
  *
  * - Only runs for personnel accounts (personnelId must be set).
@@ -11,10 +11,11 @@
  * - Automatically stops tracking when the shift is no longer relevant
  *   (e.g. cancelled, already checked in, etc.).
  *
- * NOTE: This is the 1-hour pre-shift "venue can see me en route" window.
+ * NOTE: This is the 60-minute pre-shift "venue can see me en route" window.
+ * Shifts starting more than 60 minutes away are never tracked (no day-before GPS).
  * Auto check-in opens at 15 min before start (separate gate). Auto
  * check-out fires at scheduled end. The location service also enforces
- * the 1-hour upload gate as a backstop, in case the guard manually starts
+ * the 60-minute upload gate as a backstop, in case the guard manually starts
  * tracking earlier from the shift screen.
  */
 
@@ -24,7 +25,7 @@ import { useAuthStore } from "../../stores";
 import { useLocationTracking } from "../../hooks/useLocationTracking";
 import { supabase } from "../../lib/supabase";
 
-const PRE_SHIFT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const PRE_SHIFT_WINDOW_MS = 60 * 60 * 1000; // 60 minutes — never earlier
 const POLL_INTERVAL_MS = 30_000; // 30 seconds — recover quickly if tracking ever stops
 
 export function PreShiftTracker() {
@@ -61,9 +62,27 @@ export function PreShiftTracker() {
         .order("scheduled_start", { ascending: true })
         .limit(1);
 
-      if (error || !shifts || shifts.length === 0) return;
+      if (error || !shifts || shifts.length === 0) {
+        if (isTracking) {
+          await stopTracking();
+          activeShiftRef.current = null;
+          console.log("[PreShiftTracker] No active shift — stopped tracking");
+        }
+        return;
+      }
 
       const nextShift = shifts[0];
+
+      // Hard gate: never track more than 60 minutes before scheduled start.
+      const startMs = new Date(nextShift.scheduled_start).getTime();
+      const earliestTrackMs = startMs - PRE_SHIFT_WINDOW_MS;
+      if (!Number.isFinite(startMs) || Date.now() < earliestTrackMs) {
+        if (isTracking) {
+          await stopTracking();
+          activeShiftRef.current = null;
+        }
+        return;
+      }
 
       if (isTracking && activeShiftRef.current === nextShift.id) return;
       if (isTracking && activeShiftRef.current && activeShiftRef.current !== nextShift.id) {

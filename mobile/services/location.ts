@@ -7,13 +7,21 @@
 
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
+import Constants from "expo-constants";
 import { supabase } from "../lib/supabase";
 import { fetchApi } from "../lib/api";
+import { BACKGROUND_LOCATION_TASK } from "../constants/locationTask";
+import {
+  distanceToPolygonMeters,
+  isValidPolygon,
+  type GeoJsonPolygon,
+} from "../lib/geo/polygon";
 
-const LOCATION_TASK_NAME = "background-location-tracking";
 const LOCATION_UPDATE_INTERVAL = 15000;
 const LOCATION_DISTANCE_INTERVAL = 10;
 const DEFAULT_GEOFENCE_RADIUS_METERS = 100;
+// GPS-accuracy buffer applied to a drawn polygon boundary (mirrors the server).
+const GEOFENCE_GPS_TOLERANCE_METERS = 25;
 const AUTO_CHECKOUT_RADIUS_METERS = 300;
 const AUTO_CHECKOUT_OUTSIDE_MS = 5 * 60 * 1000;
 // Guards may only check in within this many minutes before scheduled start.
@@ -40,6 +48,8 @@ export type Geofence = {
   lng: number;
   radius?: number;
   venue_id?: string | null;
+  /** Drawn on-site boundary. When present, inside it = on-site (not the radius). */
+  polygon?: GeoJsonPolygon | null;
 };
 
 interface LocationState {
@@ -57,6 +67,8 @@ interface LocationState {
   lastLocation: Location.LocationObject | null;
   hasPermission: boolean;
   hasBackgroundPermission: boolean;
+  /** The active booking's drawn on-site boundary, if one is configured. */
+  activeGeofencePolygon: GeoJsonPolygon | null;
 }
 
 const locationState: LocationState = {
@@ -74,11 +86,21 @@ const locationState: LocationState = {
   lastLocation: null,
   hasPermission: false,
   hasBackgroundPermission: false,
+  activeGeofencePolygon: null,
+};
+
+export type PatrolCheckpoint = {
+  id: string;
+  lat: number;
+  lng: number;
+  radius_m: number;
 };
 
 let locationSubscription: Location.LocationSubscription | null = null;
 let activeGeofences: Geofence[] = [];
 let geofenceInsideState: Record<string, boolean> = {};
+let activeCheckpoints: PatrolCheckpoint[] = [];
+let visitedCheckpointIds: Set<string> = new Set();
 
 export async function requestLocationPermissions(): Promise<{
   foreground: boolean;
@@ -138,6 +160,15 @@ export async function startLocationTracking(
   locationState.autoCheckOutDone = false;
   locationState.outsideCheckoutSinceMs = null;
 
+  if (options?.scheduledStartIso) {
+    const startMs = new Date(options.scheduledStartIso).getTime();
+    const earliestMs = startMs - TRACKING_EARLIEST_MINUTES_BEFORE_START * 60_000;
+    if (Number.isFinite(startMs) && Date.now() < earliestMs) {
+      console.log("[Location] Refusing to start — more than 60 minutes before shift");
+      return false;
+    }
+  }
+
   if (locationState.isTracking) {
     return true;
   }
@@ -165,20 +196,31 @@ export async function startLocationTracking(
 
     if (permissions.background) {
       try {
-        await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-          accuracy: Location.Accuracy.Balanced,
-          timeInterval: LOCATION_UPDATE_INTERVAL,
-          distanceInterval: LOCATION_DISTANCE_INTERVAL,
-          foregroundService: {
-            notificationTitle: "Shield - Tracking Active",
-            notificationBody: "Your location is being tracked for this shift",
-            notificationColor: "#00B4D8",
-          },
-          pausesUpdatesAutomatically: false,
-          showsBackgroundLocationIndicator: true,
-        });
+        const taskAvailable = await TaskManager.isAvailableAsync();
+        if (!taskAvailable) {
+          console.warn(
+            "[Location] Background tasks unavailable in this build — using foreground tracking only",
+          );
+        } else if (Constants.isDevice === false) {
+          console.warn(
+            "[Location] Skipping background updates on simulator — foreground tracking only",
+          );
+        } else {
+          await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+            accuracy: Location.Accuracy.Balanced,
+            timeInterval: LOCATION_UPDATE_INTERVAL,
+            distanceInterval: LOCATION_DISTANCE_INTERVAL,
+            foregroundService: {
+              notificationTitle: "Shield - Tracking Active",
+              notificationBody: "Your location is being tracked for this shift",
+              notificationColor: "#00B4D8",
+            },
+            pausesUpdatesAutomatically: false,
+            showsBackgroundLocationIndicator: true,
+          });
+        }
       } catch (bgErr) {
-        console.warn("[Location] Background updates unavailable (native rebuild needed):", bgErr);
+        console.warn("[Location] Background updates unavailable:", bgErr);
       }
     }
 
@@ -200,9 +242,9 @@ export async function stopLocationTracking(): Promise<void> {
       locationSubscription = null;
     }
 
-    const isTaskRunning = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
+    const isTaskRunning = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
     if (isTaskRunning) {
-      await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
     }
   } catch (error) {
     console.error("[Location] Failed to stop tracking:", error);
@@ -216,8 +258,11 @@ export async function stopLocationTracking(): Promise<void> {
     locationState.autoCheckInDone = false;
     locationState.autoCheckOutDone = false;
     locationState.outsideCheckoutSinceMs = null;
+    locationState.activeGeofencePolygon = null;
     activeGeofences = [];
     geofenceInsideState = {};
+    activeCheckpoints = [];
+    visitedCheckpointIds = new Set();
   }
 }
 
@@ -226,6 +271,9 @@ export async function setActiveGeofences(geofences: Geofence[]): Promise<void> {
     ...g,
     radius: Number.isFinite(g.radius) ? Number(g.radius) : DEFAULT_GEOFENCE_RADIUS_METERS,
   }));
+  const polyFence = activeGeofences.find((g) => isValidPolygon(g.polygon));
+  locationState.activeGeofencePolygon =
+    (polyFence?.polygon as GeoJsonPolygon | null) ?? null;
   geofenceInsideState = {};
   for (const g of activeGeofences) {
     geofenceInsideState[g.id] = false;
@@ -240,11 +288,78 @@ export async function setActiveGeofences(geofences: Geofence[]): Promise<void> {
   }
 }
 
+/** Patrol checkpoints the guard should reach during the shift. */
+export async function setActiveCheckpoints(
+  checkpoints: PatrolCheckpoint[],
+): Promise<void> {
+  activeCheckpoints = checkpoints
+    .filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lng))
+    .map((c) => ({ ...c, radius_m: Number.isFinite(c.radius_m) ? c.radius_m : 30 }));
+  visitedCheckpointIds = new Set();
+  console.log(`[Checkpoints] ${activeCheckpoints.length} active`);
+  if (locationState.lastLocation) {
+    await checkCheckpoints(locationState.lastLocation);
+  }
+}
+
+async function checkCheckpoints(location: Location.LocationObject): Promise<void> {
+  if (activeCheckpoints.length === 0) return;
+  if (!supabase || !locationState.activeShiftId || !locationState.personnelId) return;
+  const { latitude, longitude } = location.coords;
+  for (const cp of activeCheckpoints) {
+    if (visitedCheckpointIds.has(cp.id)) continue;
+    const d = calculateDistance(latitude, longitude, cp.lat, cp.lng);
+    if (d > cp.radius_m) continue;
+    // Mark immediately to avoid duplicate inserts from rapid updates.
+    visitedCheckpointIds.add(cp.id);
+    const { error } = await supabase.from("checkpoint_visits").insert({
+      checkpoint_id: cp.id,
+      shift_id: locationState.activeShiftId,
+      personnel_id: locationState.personnelId,
+      lat: latitude,
+      lng: longitude,
+      visited_at: new Date().toISOString(),
+    } as any);
+    if (error && (error as any).code !== "23505") {
+      // 23505 = unique violation (already visited this shift) — fine.
+      console.warn("[Checkpoints] visit log skipped:", error.message);
+      // Keep it marked so we don't hammer the API; a later run re-syncs anyway.
+    } else {
+      console.log(`[Checkpoints] visit logged for ${cp.id} (${Math.round(d)}m)`);
+    }
+  }
+}
+
+/** Entry point for the background TaskManager task (see tasks/backgroundLocation.ts). */
+export async function processLocationUpdate(
+  location: Location.LocationObject,
+): Promise<void> {
+  await handleLocationUpdate(location);
+}
+
 async function handleLocationUpdate(location: Location.LocationObject): Promise<void> {
+  if (locationState.autoCheckOutDone) {
+    await stopLocationTracking();
+    return;
+  }
+
+  if (locationState.scheduledEndIso) {
+    const endMs = new Date(locationState.scheduledEndIso).getTime();
+    if (Number.isFinite(endMs) && Date.now() > endMs) {
+      if (locationState.autoCheckOut && !locationState.autoCheckOutDone) {
+        await autoCheckOut(location.coords.latitude, location.coords.longitude);
+      } else {
+        await stopLocationTracking();
+      }
+      return;
+    }
+  }
+
   locationState.lastLocation = location;
   try {
     await uploadLocation(location);
     await checkGeofences(location);
+    await checkCheckpoints(location);
     await maybeAutoCheckOutOnTime(location);
   } catch (error) {
     console.error("[Location] Error handling update:", error);
@@ -262,7 +377,7 @@ async function uploadLocation(location: Location.LocationObject): Promise<void> 
   if (!supabase || !locationState.activeShiftId || !locationState.personnelId) return;
 
   if (!isWithinTrackingUploadWindow()) {
-    // Suppress GPS uploads outside the 1-hour pre-shift window so the venue
+    // Suppress GPS uploads outside the 60-minute pre-shift window so the venue
     // can't see the guard until they're approaching the shift.
     return;
   }
@@ -281,11 +396,26 @@ async function uploadLocation(location: Location.LocationObject): Promise<void> 
   });
 
   if (error) {
-    const msg = String((error as any)?.message ?? error);
-    if (msg.includes("Could not find the table") || msg.includes("shift_gps_log")) {
-      console.error("[Location] Failed to upload to shift_gps_log. Apply migration 0050_shift_gps_log.sql");
+    const msg = String((error as { message?: string })?.message ?? error);
+    const code = String((error as { code?: string })?.code ?? "");
+    if (
+      msg.includes("Could not find the table") ||
+      code === "PGRST205" ||
+      code === "42P01"
+    ) {
+      console.error(
+        "[Location] shift_gps_log table missing — apply migration 0050_shift_gps_log.sql in Supabase",
+      );
+    } else if (
+      msg.includes("row-level security") ||
+      code === "42501"
+    ) {
+      console.error(
+        "[Location] GPS upload blocked by policy — shift must be assigned to you, in pending/accepted/checked_in, and within the tracking window (60 min before start through shift end).",
+        msg,
+      );
     } else {
-      console.error("[Location] Failed to upload:", error);
+      console.error("[Location] Failed to upload:", code || msg, error);
     }
   }
 }
@@ -296,8 +426,15 @@ async function checkGeofences(location: Location.LocationObject): Promise<void> 
   const nowMs = Date.now();
 
   for (const geofence of activeGeofences) {
-    const distanceMeters = calculateDistance(latitude, longitude, geofence.lat, geofence.lng);
-    const insideCheckin = distanceMeters <= (geofence.radius ?? DEFAULT_GEOFENCE_RADIUS_METERS);
+    // Prefer the drawn boundary: distance to the polygon edge (0 inside),
+    // expanded by a small GPS tolerance. Falls back to the pin + radius.
+    const hasPolygon = isValidPolygon(geofence.polygon);
+    const distanceMeters = hasPolygon
+      ? distanceToPolygonMeters(latitude, longitude, geofence.polygon)
+      : calculateDistance(latitude, longitude, geofence.lat, geofence.lng);
+    const insideCheckin = hasPolygon
+      ? distanceMeters <= GEOFENCE_GPS_TOLERANCE_METERS
+      : distanceMeters <= (geofence.radius ?? DEFAULT_GEOFENCE_RADIUS_METERS);
     const outsideCheckout = distanceMeters > AUTO_CHECKOUT_RADIUS_METERS;
     const wasInside = geofenceInsideState[geofence.id] === true;
 
@@ -424,6 +561,8 @@ async function callShiftCheckinApi(action: CheckinAction, lat: number, lng: numb
       action,
       latitude: lat,
       longitude: lng,
+      // Android exposes whether the fix came from a mock-location provider.
+      mocked: locationState.lastLocation?.mocked === true,
     }),
   });
 
@@ -462,6 +601,7 @@ async function autoCheckOut(lat: number, lng: number): Promise<void> {
   if (ok) {
     locationState.autoCheckOutDone = true;
     console.log("[Geofence] Auto check-out successful");
+    await stopLocationTracking();
   }
 }
 
@@ -499,34 +639,4 @@ export async function getCurrentLocation(): Promise<Location.LocationObject | nu
     console.error("[Location] Failed to get current location:", error);
     return null;
   }
-}
-
-if (!TaskManager.isTaskDefined(LOCATION_TASK_NAME)) {
-  TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
-    if (error) {
-      // iOS Core Location reports kCLErrorDomain Code=0 (kCLErrorLocationUnknown)
-      // when it hasn't gotten a fix yet. Apple's guidance is to ignore it — the
-      // location manager will keep trying. It's especially noisy in the iOS
-      // Simulator where no GPS is set. Don't surface as an error / LogBox overlay.
-      const msg = (error as { message?: string })?.message ?? "";
-      const code = (error as { code?: number })?.code;
-      const isTransientUnknown =
-        code === 0 || /kCLErrorDomain.*Code=0/i.test(msg);
-      if (isTransientUnknown) {
-        if (__DEV__) {
-          console.warn("[Background Location] Transient kCLErrorLocationUnknown — ignoring");
-        }
-      } else {
-        console.warn("[Background Location] Task error:", error);
-      }
-      return;
-    }
-    if (data) {
-      const { locations } = data as { locations: Location.LocationObject[] };
-      const location = locations[0];
-      if (location) {
-        await handleLocationUpdate(location);
-      }
-    }
-  });
 }

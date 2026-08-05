@@ -4,6 +4,7 @@ import { useState, useCallback, useMemo } from "react";
 import Map, { Marker, Source, Layer, Popup, NavigationControl } from "react-map-gl";
 import type { MapRef, ViewStateChangeEvent } from "react-map-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
+import { outerRing, type GeoJsonPolygon } from "@/lib/geo/polygon";
 
 // Dark theme map style - matches glassmorphism design
 const MAP_STYLE = "mapbox://styles/mapbox/dark-v11";
@@ -29,9 +30,18 @@ interface VenueGeofence {
   radius: number; // in meters
 }
 
+/** A venue/agency-drawn on-site boundary to render on the map. */
+interface GeofenceZone {
+  id: string;
+  name?: string;
+  polygon: GeoJsonPolygon;
+}
+
 interface StaffTrackingMapProps {
   staffLocations: StaffLocation[];
   venueGeofences?: VenueGeofence[];
+  /** Drawn polygon boundaries (preferred over circles when present). */
+  geofenceZones?: GeofenceZone[];
   trailPaths?: Array<{ id: string; coordinates: [number, number][] }>;
   selectedStaffId?: string | null;
   onStaffSelect?: (staffId: string | null) => void;
@@ -41,6 +51,7 @@ interface StaffTrackingMapProps {
 export function StaffTrackingMap({
   staffLocations,
   venueGeofences = [],
+  geofenceZones = [],
   trailPaths = [],
   selectedStaffId,
   onStaffSelect,
@@ -122,6 +133,28 @@ export function StaffTrackingMap({
     };
   }, [venueGeofences]);
 
+  // Drawn polygon boundaries (preferred when a venue/agency has drawn one).
+  const geofenceZoneData = useMemo(() => {
+    if (geofenceZones.length === 0) return null;
+    const features = geofenceZones
+      .map((zone) => {
+        const ring = outerRing(zone.polygon);
+        if (!ring) return null;
+        return {
+          type: "Feature" as const,
+          properties: { id: zone.id, name: zone.name ?? "" },
+          geometry: { type: "Polygon" as const, coordinates: [ring] },
+        };
+      })
+      .filter(Boolean) as Array<{
+      type: "Feature";
+      properties: { id: string; name: string };
+      geometry: { type: "Polygon"; coordinates: [number, number][][] };
+    }>;
+    if (features.length === 0) return null;
+    return { type: "FeatureCollection" as const, features };
+  }, [geofenceZones]);
+
   const handleMarkerClick = (staff: StaffLocation) => {
     setPopupInfo(staff);
     onStaffSelect?.(staff.id);
@@ -178,8 +211,31 @@ export function StaffTrackingMap({
       >
         <NavigationControl position="top-right" />
 
-        {/* Geofence circles */}
-        {geofenceData && (
+        {/* Drawn polygon boundaries (preferred) */}
+        {geofenceZoneData && (
+          <Source id="geofence-zones" type="geojson" data={geofenceZoneData}>
+            <Layer
+              id="geofence-zone-fill"
+              type="fill"
+              paint={{
+                "fill-color": "#10B981",
+                "fill-opacity": 0.12,
+              }}
+            />
+            <Layer
+              id="geofence-zone-line"
+              type="line"
+              paint={{
+                "line-color": "#10B981",
+                "line-width": 2,
+                "line-opacity": 0.7,
+              }}
+            />
+          </Source>
+        )}
+
+        {/* Geofence circles (fallback when no polygon drawn) */}
+        {!geofenceZoneData && geofenceData && (
           <Source id="geofences" type="geojson" data={geofenceData}>
             <Layer
               id="geofence-fill"

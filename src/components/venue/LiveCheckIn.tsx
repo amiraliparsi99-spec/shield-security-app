@@ -4,10 +4,18 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import dynamic from "next/dynamic";
 import { useSupabase } from "@/hooks/useSupabase";
-import { useVenueProfile } from "@/hooks";
+import { useVenueProfile, useAgencyProfile } from "@/hooks";
 import Link from "next/link";
 import { distanceMeters } from "@/lib/geo/distance";
+import {
+  isValidPolygon,
+  pointInPolygon,
+  type GeoJsonPolygon,
+} from "@/lib/geo/polygon";
 import { CoverActivityTimeline } from "@/components/venue/CoverActivityTimeline";
+import { exportShiftEvidencePDF } from "@/lib/reports";
+import { HelpHint } from "@/components/ui/HelpHint";
+import { isGpsPointLiveForShift, isShiftLiveTrackable } from "@/lib/shifts/gpsTracking";
 
 const StaffTrackingMap = dynamic(
   () => import("@/components/maps/StaffTrackingMap").then((m) => m.StaffTrackingMap),
@@ -77,6 +85,8 @@ type LiveBooking = {
   start_time: string;
   end_time: string;
   status: string;
+  /** Agency-scheduled roster bookings skip Stripe escrow — no confirm/pay UI. */
+  self_managed?: boolean | null;
   shifts: LiveShift[];
 };
 
@@ -167,9 +177,18 @@ function travelRiskBannerCopy(
   }
 }
 
-export function LiveCheckIn() {
+export function LiveCheckIn({ ownerType = "venue" }: { ownerType?: "venue" | "agency" }) {
+  const isAgency = ownerType === "agency";
+  const basePath = isAgency ? "/d/agency" : "/d/venue";
   const supabase = useSupabase();
-  const { data: venue } = useVenueProfile();
+  const { data: venueProfile } = useVenueProfile();
+  const { data: agencyProfile } = useAgencyProfile();
+  // The "owner" of this live view — a venue or an agency. Both expose `id` and
+  // `name`; the agency profile has no lat/lng/address, which is fine because the
+  // map centres on each booking's own site pin (siteCoords) instead.
+  const venue = (isAgency ? agencyProfile : venueProfile) as
+    | { id: string; name?: string | null; latitude?: number | null; longitude?: number | null; address_line1?: string; city?: string; postcode?: string }
+    | null;
   
   const [bookings, setBookings] = useState<LiveBooking[]>([]);
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
@@ -183,6 +202,10 @@ export function LiveCheckIn() {
   const [showMap, setShowMap] = useState(false);
   const [selectedMapStaff, setSelectedMapStaff] = useState<string | null>(null);
   const [gpsPoints, setGpsPoints] = useState<Map<string, GpsPoint>>(new Map());
+  const [breakShiftIds, setBreakShiftIds] = useState<Set<string>>(new Set());
+  const [sosAlerts, setSosAlerts] = useState<
+    { id: string; lat: number | null; lng: number | null; created_at: string; name: string }[]
+  >([]);
   const [gpsTrails, setGpsTrails] = useState<Map<string, GpsPoint[]>>(new Map());
   /**
    * Pre-shift travel risk per shift, populated by a tolerant query so a
@@ -191,6 +214,12 @@ export function LiveCheckIn() {
    */
   const [travelRisk, setTravelRisk] = useState<Map<string, TravelRiskRow>>(new Map());
   const [venueCoords, setVenueCoords] = useState<{ lat: number; lng: number } | null>(null);
+  // Booking ids flagged self_managed (agency-scheduled, no escrow). Resolved
+  // tolerantly so a not-yet-applied 0068 migration doesn't break the page.
+  const [selfManagedIds, setSelfManagedIds] = useState<Set<string>>(new Set());
+  // The selected booking's drawn on-site boundary (if any) + its check-in pin.
+  const [siteGeofence, setSiteGeofence] = useState<GeoJsonPolygon | null>(null);
+  const [siteCoords, setSiteCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [selectedEvidenceShiftId, setSelectedEvidenceShiftId] = useState<string | null>(null);
   const gpsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const todayDateRef = useRef<HTMLButtonElement | null>(null);
@@ -221,7 +250,7 @@ export function LiveCheckIn() {
     const rangeEnd = new Date(today);
     rangeEnd.setDate(rangeEnd.getDate() + 7);
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('bookings')
       .select(`
         id,
@@ -259,8 +288,34 @@ export function LiveCheckIn() {
             )
           )
         )
-      `)
-      .eq('venue_id', venue.id)
+      `);
+
+    if (isAgency) {
+      // An agency's live view covers bookings it created (agency_id) plus any
+      // booking it staffed (shifts.agency_id). Gather both id sets first.
+      const [created, staffed] = await Promise.all([
+        supabase.from('bookings').select('id').eq('agency_id', venue.id),
+        supabase.from('shifts').select('booking_id').eq('agency_id', venue.id),
+      ]);
+      const ids = Array.from(
+        new Set([
+          ...((created.data as { id: string }[] | null) ?? []).map((b) => b.id),
+          ...((staffed.data as { booking_id: string | null }[] | null) ?? [])
+            .map((s) => s.booking_id)
+            .filter((v): v is string => !!v),
+        ]),
+      );
+      if (ids.length === 0) {
+        setBookings([]);
+        setLoading(false);
+        return;
+      }
+      query = query.in('id', ids);
+    } else {
+      query = query.eq('venue_id', venue.id);
+    }
+
+    const { data, error } = await query
       .gte('event_date', toDateStr(rangeStart))
       .lte('event_date', toDateStr(rangeEnd))
       .in('status', ['confirmed', 'in_progress', 'pending'])
@@ -268,9 +323,28 @@ export function LiveCheckIn() {
 
     if (!error && data) {
       setBookings(data as unknown as LiveBooking[]);
+
+      // Tolerant lookup of the self_managed flag (migration 0068). If the
+      // column isn't present yet, treat everything as escrow-managed.
+      const ids = (data as unknown as LiveBooking[]).map((b) => b.id);
+      if (ids.length > 0) {
+        const sm = await supabase
+          .from("bookings")
+          .select("id, self_managed")
+          .in("id", ids);
+        if (!sm.error && sm.data) {
+          setSelfManagedIds(
+            new Set(
+              (sm.data as { id: string; self_managed?: boolean | null }[])
+                .filter((r) => r.self_managed)
+                .map((r) => r.id),
+            ),
+          );
+        }
+      }
     }
     setLoading(false);
-  }, [supabase, venue?.id]);
+  }, [supabase, venue?.id, isAgency]);
 
   // Initial fetch
   useEffect(() => {
@@ -305,7 +379,7 @@ export function LiveCheckIn() {
 
   // Resolve venue coordinates from the selected booking's venue
   useEffect(() => {
-    if (!selectedBooking || !venue?.id) return;
+    if (!selectedBooking || !venue?.id || isAgency) return;
     (async () => {
       const { data } = await supabase
         .from("venues")
@@ -318,12 +392,72 @@ export function LiveCheckIn() {
     })();
   }, [supabase, venue?.id, selectedBooking?.id]);
 
+  // Resolve the selected booking's check-in pin + drawn boundary. The boundary
+  // prefers the booking snapshot, then the linked saved site. Tolerant of the
+  // 0057 geofence columns being absent on older schemas.
+  useEffect(() => {
+    if (!selectedBooking?.id) {
+      setSiteGeofence(null);
+      setSiteCoords(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const base = await supabase
+        .from("bookings")
+        .select("venue_location_id, site_latitude, site_longitude")
+        .eq("id", selectedBooking.id)
+        .maybeSingle();
+      if (!cancelled && base.data) {
+        const la = Number((base.data as { site_latitude?: number | null }).site_latitude);
+        const lo = Number((base.data as { site_longitude?: number | null }).site_longitude);
+        if (Number.isFinite(la) && Number.isFinite(lo) && (la !== 0 || lo !== 0)) {
+          setSiteCoords({ lat: la, lng: lo });
+        }
+      }
+
+      let polygon: unknown = null;
+      const poly = await supabase
+        .from("bookings")
+        .select("site_geofence_polygon")
+        .eq("id", selectedBooking.id)
+        .maybeSingle();
+      if (!poly.error) {
+        polygon =
+          (poly.data as { site_geofence_polygon?: unknown } | null)
+            ?.site_geofence_polygon ?? null;
+      }
+      const locId = (base.data as { venue_location_id?: string | null } | null)
+        ?.venue_location_id;
+      if (polygon == null && locId) {
+        const loc = await supabase
+          .from("venue_locations")
+          .select("geofence_polygon")
+          .eq("id", locId)
+          .maybeSingle();
+        if (!loc.error) {
+          polygon =
+            (loc.data as { geofence_polygon?: unknown } | null)?.geofence_polygon ??
+            null;
+        }
+      }
+      if (!cancelled) {
+        setSiteGeofence(isValidPolygon(polygon) ? (polygon as GeoJsonPolygon) : null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, selectedBooking?.id]);
+
   // Fetch latest GPS point per active shift
   const fetchGpsPoints = useCallback(async () => {
     if (!selectedBooking) return;
-    const activeShiftIds = selectedBooking.shifts
-      .filter((s) => s.personnel_id && (s.status === "checked_in" || s.status === "accepted"))
-      .map((s) => s.id);
+    const nowMs = Date.now();
+    const trackableShifts = selectedBooking.shifts.filter((s) =>
+      isShiftLiveTrackable(s, nowMs),
+    );
+    const activeShiftIds = trackableShifts.map((s) => s.id);
     if (activeShiftIds.length === 0) {
       setGpsPoints(new Map());
       return;
@@ -338,11 +472,13 @@ export function LiveCheckIn() {
       console.log("[LiveCheckIn] GPS log query error (table may not exist yet):", error.message);
       return;
     }
+    const shiftById = new Map(trackableShifts.map((s) => [s.id, s]));
     const latest = new Map<string, GpsPoint>();
     for (const row of data ?? []) {
-      if (!latest.has(row.shift_id)) {
-        latest.set(row.shift_id, row);
-      }
+      if (latest.has(row.shift_id)) continue;
+      const shift = shiftById.get(row.shift_id);
+      if (!shift || !isGpsPointLiveForShift(shift, row.recorded_at, nowMs)) continue;
+      latest.set(row.shift_id, row);
     }
     setGpsPoints(latest);
   }, [supabase, selectedBooking]);
@@ -355,6 +491,71 @@ export function LiveCheckIn() {
       if (gpsIntervalRef.current) clearInterval(gpsIntervalRef.current);
     };
   }, [fetchGpsPoints]);
+
+  // Which guards are currently on a logged break (open shift_breaks row).
+  const fetchBreaks = useCallback(async () => {
+    if (!selectedBooking) {
+      setBreakShiftIds(new Set());
+      return;
+    }
+    const shiftIds = selectedBooking.shifts.map((s) => s.id).filter(Boolean);
+    if (shiftIds.length === 0) {
+      setBreakShiftIds(new Set());
+      return;
+    }
+    const { data, error } = await supabase
+      .from("shift_breaks" as any)
+      .select("shift_id")
+      .in("shift_id", shiftIds)
+      .is("ended_at", null) as { data: { shift_id: string }[] | null; error: any };
+    if (error) return; // table may not exist yet
+    setBreakShiftIds(new Set((data ?? []).map((r) => r.shift_id)));
+  }, [supabase, selectedBooking]);
+
+  useEffect(() => {
+    fetchBreaks();
+    const t = setInterval(fetchBreaks, 15_000);
+    return () => clearInterval(t);
+  }, [fetchBreaks]);
+
+  // Active SOS alerts for this venue (lone-worker safety).
+  const fetchSos = useCallback(async () => {
+    if (!venue?.id) return;
+    const { data, error } = await supabase
+      .from("sos_alerts" as any)
+      .select("id, lat, lng, created_at, personnel:personnel_id(display_name)")
+      .eq("venue_id", venue.id)
+      .eq("status", "active")
+      .order("created_at", { ascending: false }) as {
+        data: Array<{ id: string; lat: number | null; lng: number | null; created_at: string; personnel: { display_name: string | null } | null }> | null;
+        error: any;
+      };
+    if (error) return; // table may not exist yet
+    setSosAlerts(
+      (data ?? []).map((r) => ({
+        id: r.id,
+        lat: r.lat,
+        lng: r.lng,
+        created_at: r.created_at,
+        name: r.personnel?.display_name || "A guard",
+      })),
+    );
+  }, [supabase, venue?.id]);
+
+  useEffect(() => {
+    fetchSos();
+    const t = setInterval(fetchSos, 12_000);
+    return () => clearInterval(t);
+  }, [fetchSos]);
+
+  const resolveSos = async (id: string) => {
+    await fetch("/api/sos", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    fetchSos();
+  };
 
   // Realtime subscription for new GPS points
   useEffect(() => {
@@ -476,6 +677,14 @@ export function LiveCheckIn() {
     return `${(d / 1000).toFixed(1)}km from venue`;
   };
 
+  // Live inside/outside the drawn boundary, from the guard's latest GPS fix.
+  const getZoneStatus = (shiftId: string): "inside" | "outside" | null => {
+    if (!siteGeofence) return null;
+    const gps = gpsPoints.get(shiftId);
+    if (!gps) return null;
+    return pointInPolygon(gps.lat, gps.lng, siteGeofence) ? "inside" : "outside";
+  };
+
   const getLastSeenAgo = (shiftId: string): string | null => {
     const gps = gpsPoints.get(shiftId);
     if (!gps) return null;
@@ -489,7 +698,7 @@ export function LiveCheckIn() {
   // Build StaffTrackingMap props
   const staffMapLocations = selectedBooking
     ? selectedBooking.shifts
-        .filter((s) => s.personnel_id && s.status !== "declined" && s.status !== "cancelled")
+        .filter((s) => isShiftLiveTrackable(s))
         .map((s) => {
           const gps = gpsPoints.get(s.id);
           const staffName =
@@ -497,8 +706,8 @@ export function LiveCheckIn() {
             (s.personnel?.first_name
               ? `${s.personnel.first_name} ${s.personnel.last_name || ""}`.trim()
               : "Unknown");
-          const lat = gps?.lat ?? s.check_in_latitude ?? null;
-          const lng = gps?.lng ?? s.check_in_longitude ?? null;
+          const lat = gps?.lat ?? (s.status === "checked_in" ? s.check_in_latitude : null);
+          const lng = gps?.lng ?? (s.status === "checked_in" ? s.check_in_longitude : null);
           if (!lat || !lng) return null;
           const isOnShift = s.status === "checked_in";
           const isEnRoute = s.status === "accepted" && !!gps;
@@ -529,15 +738,24 @@ export function LiveCheckIn() {
       }>
     : [];
 
+  const geofenceCenter = siteCoords ?? venueCoords;
   const venueGeofences =
-    venueCoords && venue
-      ? [{ id: venue.id, name: venue.name ?? "Venue", lat: venueCoords.lat, lng: venueCoords.lng, radius: 200 }]
+    geofenceCenter && venue
+      ? [{ id: venue.id, name: venue.name ?? "Venue", lat: geofenceCenter.lat, lng: geofenceCenter.lng, radius: 200 }]
       : [];
+  // Drawn boundary for the selected booking (preferred over the circle).
+  const geofenceZones = siteGeofence
+    ? [{ id: selectedBooking?.id ?? "zone", name: venue?.name ?? "On-site zone", polygon: siteGeofence }]
+    : [];
+
+  // Centre used for distance/coverage when no polygon is drawn: prefer the
+  // booking's own check-in pin, fall back to the venue profile pin.
+  const onSiteCenter = siteCoords ?? venueCoords;
 
   const getShiftEvidence = (shift: LiveShift) => {
     const trail = gpsTrails.get(shift.id) ?? [];
     const totalPoints = trail.length;
-    if (!shift.actual_start || !shift.actual_end || !venueCoords) {
+    if (!shift.actual_start || !shift.actual_end || (!onSiteCenter && !siteGeofence)) {
       return {
         totalPoints,
         onSitePoints: 0,
@@ -551,8 +769,11 @@ export function LiveCheckIn() {
     const endMs = new Date(shift.actual_end).getTime();
     const durationMinutes = Math.max(0, Math.round((endMs - startMs) / 60000));
     const onSitePoints = trail.filter((p) => {
-      const d = distanceMeters(p.lat, p.lng, venueCoords.lat, venueCoords.lng);
-      return d <= 200;
+      // Inside the drawn boundary counts as on-site; otherwise within 200m of
+      // the check-in pin.
+      if (siteGeofence) return pointInPolygon(p.lat, p.lng, siteGeofence);
+      if (!onSiteCenter) return false;
+      return distanceMeters(p.lat, p.lng, onSiteCenter.lat, onSiteCenter.lng) <= 200;
     }).length;
     const coveragePct = totalPoints > 0 ? Math.round((onSitePoints / totalPoints) * 100) : 0;
     const onSiteMinutes = durationMinutes > 0 ? Math.round((coveragePct / 100) * durationMinutes) : 0;
@@ -565,6 +786,113 @@ export function LiveCheckIn() {
       durationMinutes,
       trail,
     };
+  };
+
+  const handleDownloadEvidence = async (shift: LiveShift) => {
+    if (!selectedBooking) return;
+    setActionLoading(shift.id);
+    try {
+      // Tolerant fetch of the geofence audit columns (migration 0058).
+      // Typed client doesn't know the new columns yet, so read loosely.
+      let audit: Record<string, unknown> | null = null;
+      const auditResp = await (supabase as any)
+        .from("shifts")
+        .select(
+          "check_in_geofence_mode, check_in_distance_m, check_out_geofence_mode, check_out_distance_m",
+        )
+        .eq("id", shift.id)
+        .maybeSingle();
+      if (!auditResp.error) audit = (auditResp.data as Record<string, unknown>) ?? null;
+
+      // Patrol checkpoint progress (tolerant if the table isn't present).
+      let checkpointsTotal = 0;
+      let checkpointsVisited = 0;
+      try {
+        const cps = await supabase
+          .from("booking_checkpoints")
+          .select("id")
+          .eq("booking_id", selectedBooking.id);
+        if (!cps.error && cps.data) {
+          checkpointsTotal = cps.data.length;
+          if (checkpointsTotal > 0) {
+            const visits = await supabase
+              .from("checkpoint_visits")
+              .select("checkpoint_id")
+              .eq("shift_id", shift.id);
+            if (!visits.error && visits.data) {
+              checkpointsVisited = new Set(
+                (visits.data as { checkpoint_id: string }[]).map((v) => v.checkpoint_id),
+              ).size;
+            }
+          }
+        }
+      } catch {
+        // checkpoints unavailable — omit from report
+      }
+
+      // Total logged break time (tolerant if the table isn't present).
+      let breakMinutes = 0;
+      try {
+        const br = await (supabase as any)
+          .from("shift_breaks")
+          .select("started_at, ended_at")
+          .eq("shift_id", shift.id);
+        if (!br.error && br.data) {
+          for (const b of br.data as { started_at: string; ended_at: string | null }[]) {
+            const start = Date.parse(b.started_at);
+            const end = b.ended_at ? Date.parse(b.ended_at) : Date.now();
+            if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+              breakMinutes += Math.round((end - start) / 60000);
+            }
+          }
+        }
+      } catch {
+        // breaks unavailable — omit
+      }
+
+      const evidence = getShiftEvidence(shift);
+      const staffName =
+        shift.personnel?.display_name ||
+        (shift.personnel?.first_name
+          ? `${shift.personnel.first_name} ${shift.personnel.last_name || ""}`.trim()
+          : "Guard");
+
+      exportShiftEvidencePDF(
+        {
+          shiftId: shift.id,
+          eventName: selectedBooking.event_name,
+          eventDate: selectedBooking.event_date,
+          guardName: staffName,
+          role: shift.role,
+          scheduledStart: shift.scheduled_start,
+          scheduledEnd: shift.scheduled_end,
+          actualStart: shift.actual_start,
+          actualEnd: shift.actual_end,
+          hoursWorked: shift.hours_worked ?? null,
+          totalPay: shift.total_pay ?? null,
+          checkInMode: (audit?.check_in_geofence_mode as string | null) ?? null,
+          checkInDistanceM: (audit?.check_in_distance_m as number | null) ?? null,
+          checkOutMode: (audit?.check_out_geofence_mode as string | null) ?? null,
+          checkOutDistanceM: (audit?.check_out_distance_m as number | null) ?? null,
+          gpsPoints: evidence.totalPoints,
+          onSitePoints: evidence.onSitePoints,
+          coveragePct: evidence.coveragePct,
+          onSiteMinutes: evidence.onSiteMinutes,
+          venueConfirmed: !!shift.venue_confirmed,
+          checkpointsTotal,
+          checkpointsVisited,
+          breakMinutes,
+        },
+        {
+          name: venue?.name ?? "Venue",
+          address: (venue as { address_line1?: string } | null)?.address_line1,
+          city: (venue as { city?: string } | null)?.city,
+          postcode: (venue as { postcode?: string } | null)?.postcode,
+        },
+      );
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   // Calculate stats for selected booking
@@ -696,13 +1024,13 @@ export function LiveCheckIn() {
 
   // Contact staff (open messages)
   const handleContactStaff = (personnelUserId: string) => {
-    window.location.href = `/d/venue/mission-control`;
+    window.location.href = `${basePath}/mission-control`;
   };
 
   // Find replacement
   const handleFindReplacement = (bookingId: string) => {
     // Navigate to find replacement flow
-    window.location.href = `/d/venue/bookings/${bookingId}?action=find-replacement`;
+    window.location.href = `${basePath}/bookings/${bookingId}?action=find-replacement`;
   };
 
   // Cancel shift by venue
@@ -884,7 +1212,7 @@ export function LiveCheckIn() {
           <h3 className="text-lg font-semibold text-white mb-2">No Active Events</h3>
           <p className="text-zinc-500 mb-6 text-sm max-w-sm mx-auto">You don&apos;t have any confirmed bookings for today. Book security to get started.</p>
           <Link
-            href="/d/venue/bookings/new"
+            href={`${basePath}/bookings/new`}
             className="inline-flex items-center gap-2 bg-purple-500 hover:bg-purple-600 text-white px-5 py-2.5 rounded-xl text-sm font-medium transition"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
@@ -896,9 +1224,14 @@ export function LiveCheckIn() {
   }
 
   const activeShifts = selectedBooking?.shifts.filter(s => s.personnel_id && s.status !== 'declined' && s.status !== 'cancelled') ?? [];
-  const unconfirmedCompleted = selectedBooking?.shifts.filter(
-    (s) => s.status === "checked_out" && !s.venue_confirmed && (!s.dispute_status || s.dispute_status === "none"),
-  ) ?? [];
+  // Self-managed agency bookings carry no Stripe escrow, so there's nothing to
+  // confirm/release — guards just check in and out.
+  const isSelfManaged = !!selectedBooking && selfManagedIds.has(selectedBooking.id);
+  const unconfirmedCompleted = isSelfManaged
+    ? []
+    : selectedBooking?.shifts.filter(
+        (s) => s.status === "checked_out" && !s.venue_confirmed && (!s.dispute_status || s.dispute_status === "none"),
+      ) ?? [];
 
   // Calendar: build 15-day window centred on today
   const calendarDays = (() => {
@@ -926,6 +1259,50 @@ export function LiveCheckIn() {
 
   return (
     <div className="space-y-5">
+      {/* ── SOS alerts (lone-worker safety) — always on top ── */}
+      {sosAlerts.length > 0 && (
+        <div className="space-y-2">
+          {sosAlerts.map((s) => (
+            <div
+              key={s.id}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-500/50 bg-red-600/15 p-4"
+            >
+              <div className="flex items-center gap-3">
+                <span className="relative flex h-3 w-3">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+                  <span className="relative inline-flex h-3 w-3 rounded-full bg-red-500" />
+                </span>
+                <div>
+                  <p className="text-sm font-bold text-red-200">🆘 SOS from {s.name}</p>
+                  <p className="text-xs text-red-300/90">
+                    Raised {new Date(s.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                    {s.lat != null && s.lng != null ? " · live location available below" : ""}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {s.lat != null && s.lng != null && (
+                  <a
+                    href={`https://www.google.com/maps?q=${s.lat},${s.lng}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-white/20"
+                  >
+                    Open location
+                  </a>
+                )}
+                <button
+                  onClick={() => resolveSos(s.id)}
+                  className="rounded-lg bg-red-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-red-600"
+                >
+                  Mark resolved
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* ── Header Row ── */}
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -1061,7 +1438,7 @@ export function LiveCheckIn() {
                   Refresh
                 </button>
                 <Link
-                  href={`/d/venue/mission-control?booking=${selectedBooking.id}`}
+                  href={`${basePath}/mission-control?booking=${selectedBooking.id}`}
                   className="text-xs px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-zinc-300 transition"
                 >
                   Mission Control
@@ -1155,15 +1532,20 @@ export function LiveCheckIn() {
                   <div className="px-4 py-3 text-center"><p className="text-xs text-zinc-500">On-site Time</p><p className="text-lg font-bold text-white mt-0.5">{evidence.onSiteMinutes}m</p></div>
                 </div>
                 {latest ? (
-                  <StaffTrackingMap className="h-[200px]" staffLocations={[{ id: shift.id, name: staffName, lat: latest.lat, lng: latest.lng, isOnShift: shift.status === "checked_in", isEnRoute: shift.status === "accepted", lastUpdated: latest.recorded_at }]} venueGeofences={venueGeofences} trailPaths={trailCoords.length >= 2 ? [{ id: shift.id, coordinates: trailCoords }] : []} />
+                  <StaffTrackingMap className="h-[200px]" staffLocations={[{ id: shift.id, name: staffName, lat: latest.lat, lng: latest.lng, isOnShift: shift.status === "checked_in", isEnRoute: shift.status === "accepted", lastUpdated: latest.recorded_at }]} venueGeofences={venueGeofences} geofenceZones={geofenceZones} trailPaths={trailCoords.length >= 2 ? [{ id: shift.id, coordinates: trailCoords }] : []} />
                 ) : (
                   <div className="h-[100px] flex items-center justify-center text-sm text-zinc-600">No GPS trail for this shift.</div>
                 )}
                 <div className="px-5 py-3 border-t border-white/[0.06] flex gap-2">
-                  <button onClick={() => handleConfirmShift(shift)} disabled={actionLoading === shift.id} className="flex-1 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-semibold py-2.5 rounded-xl transition">
-                    {actionLoading === shift.id ? "..." : "Confirm & Release Payment"}
-                  </button>
-                  <button onClick={() => handleOpenDispute(shift)} disabled={actionLoading === shift.id} className="bg-white/[0.06] hover:bg-white/[0.1] disabled:opacity-50 text-red-400 text-xs font-medium px-4 py-2.5 rounded-xl transition">Dispute</button>
+                  {!isSelfManaged && (
+                    <button onClick={() => handleConfirmShift(shift)} disabled={actionLoading === shift.id} className="flex-1 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-semibold py-2.5 rounded-xl transition">
+                      {actionLoading === shift.id ? "..." : "Confirm & Release Payment"}
+                    </button>
+                  )}
+                  <button onClick={() => handleDownloadEvidence(shift)} disabled={actionLoading === shift.id} className="bg-white/[0.06] hover:bg-white/[0.1] disabled:opacity-50 text-zinc-300 text-xs font-medium px-4 py-2.5 rounded-xl transition" title="Download attendance evidence PDF">Evidence PDF</button>
+                  {!isSelfManaged && (
+                    <button onClick={() => handleOpenDispute(shift)} disabled={actionLoading === shift.id} className="bg-white/[0.06] hover:bg-white/[0.1] disabled:opacity-50 text-red-400 text-xs font-medium px-4 py-2.5 rounded-xl transition">Dispute</button>
+                  )}
                 </div>
               </div>
             );
@@ -1189,7 +1571,7 @@ export function LiveCheckIn() {
                 {showMap && (
                   <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 320, opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.25 }} className="overflow-hidden">
                     {staffMapLocations.length > 0 ? (
-                      <StaffTrackingMap staffLocations={staffMapLocations} venueGeofences={venueGeofences} selectedStaffId={selectedMapStaff} onStaffSelect={setSelectedMapStaff} className="h-[320px]" />
+                      <StaffTrackingMap staffLocations={staffMapLocations} venueGeofences={venueGeofences} geofenceZones={geofenceZones} selectedStaffId={selectedMapStaff} onStaffSelect={setSelectedMapStaff} className="h-[320px]" />
                     ) : (
                       <div className="h-[320px] flex items-center justify-center bg-zinc-900/30">
                         <div className="text-center px-6">
@@ -1197,7 +1579,7 @@ export function LiveCheckIn() {
                             <svg className="w-6 h-6 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                           </div>
                           <p className="text-zinc-400 font-medium text-sm">No live GPS data yet</p>
-                          <p className="text-xs text-zinc-600 mt-1.5 max-w-[260px] mx-auto leading-relaxed">Guard positions appear up to 2 hours before their shift. You&apos;ll see them en route and on site in real time.</p>
+                          <p className="text-xs text-zinc-600 mt-1.5 max-w-[260px] mx-auto leading-relaxed">Guard positions appear from 1 hour before their shift (once the app has location permission). You&apos;ll see them en route and on site in real time — never before that.</p>
                         </div>
                       </div>
                     )}
@@ -1263,6 +1645,18 @@ export function LiveCheckIn() {
                           <span className="font-medium">
                             {isEnRoute ? "En Route" : hasLiveGps && displayStatus === "checked_in" ? "On Site" : hasLiveGps ? "GPS Active" : "GPS at check-in"}
                           </span>
+                          {(() => {
+                            if (breakShiftIds.has(shift.id)) {
+                              return <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium text-sky-400">On break</span>;
+                            }
+                            const zone = getZoneStatus(shift.id);
+                            if (!zone) return null;
+                            return zone === "inside" ? (
+                              <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">In zone</span>
+                            ) : (
+                              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-400">Outside zone</span>
+                            );
+                          })()}
                           {dist && <span className="text-zinc-600 ml-auto">{dist}</span>}
                           {lastSeen && !dist && <span className="text-zinc-600 ml-auto">{lastSeen}</span>}
                         </div>
@@ -1294,7 +1688,15 @@ export function LiveCheckIn() {
                           >
                             <span className="text-base leading-none">{banner.icon}</span>
                             <div className="flex-1">
-                              <div className="font-semibold">{banner.title}</div>
+                              <div className="font-semibold inline-flex items-center gap-1.5">
+                                {banner.title}
+                                <HelpHint label="What is travel risk?" side="bottom">
+                                  Before a shift starts, the app checks whether the guard is likely to make it
+                                  on time based on their live location and travel time. &ldquo;Travel risk&rdquo;
+                                  flags when they may be running late or haven&rsquo;t set off yet, so you get a
+                                  heads-up early and can line up cover if needed.
+                                </HelpHint>
+                              </div>
                               <div className="opacity-90">{banner.body}</div>
                             </div>
                           </div>
@@ -1343,7 +1745,7 @@ export function LiveCheckIn() {
                         <button onClick={() => handleMarkNoShow(shift.id)} disabled={actionLoading === shift.id} className="mt-2 w-full text-xs bg-red-500/10 text-red-400 hover:bg-red-500/20 disabled:opacity-50 px-3 py-2 rounded-lg transition font-medium">Mark as No-Show</button>
                       )}
 
-                      {shift.status === "checked_out" && !shift.venue_confirmed && !shift.dispute_status && (
+                      {!isSelfManaged && shift.status === "checked_out" && !shift.venue_confirmed && !shift.dispute_status && (
                         <div className="mt-3 pt-3 border-t border-white/[0.05]">
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-xs text-amber-400 font-medium">Payment Pending</span>

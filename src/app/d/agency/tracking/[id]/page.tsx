@@ -1,136 +1,135 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { createClient } from "@/lib/supabase/client";
-import type { StaffLocation, AgencyStaffWithPersonnel } from "@/types/database";
+import {
+  fetchPersonnelGpsHistory,
+  getAgencyIdForUser,
+  type GpsLogRow,
+} from "@/lib/agency/gpsTrackingQueries";
+import { GpsTimeline } from "@/components/agency/GpsTimeline";
 
-interface LocationHistoryItem extends StaffLocation {
-  booking_assignment?: {
-    id: string;
-    booking: {
-      venue: { name: string };
-      start: string;
-      end: string;
-    };
-  };
+const StaffTrackingMap = dynamic(
+  () => import("@/components/maps/StaffTrackingMap").then((mod) => mod.StaffTrackingMap),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-full min-h-[280px] items-center justify-center bg-zinc-900/50">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-shield-500 border-t-transparent" />
+      </div>
+    ),
+  },
+);
+
+type DateFilter = "today" | "week" | "month";
+
+function sinceIsoForFilter(filter: DateFilter): string {
+  const d = new Date();
+  if (filter === "today") d.setHours(0, 0, 0, 0);
+  else if (filter === "week") d.setDate(d.getDate() - 7);
+  else d.setDate(d.getDate() - 30);
+  return d.toISOString();
 }
 
-export default function StaffLocationHistoryPage() {
+export default function PersonnelGpsHistoryPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const router = useRouter();
-  const [staff, setStaff] = useState<AgencyStaffWithPersonnel | null>(null);
-  const [locations, setLocations] = useState<LocationHistoryItem[]>([]);
+  const personnelId = params.id as string;
+  const focusShiftId = searchParams.get("shift");
+
+  const [guardName, setGuardName] = useState("Guard");
+  const [logs, setLogs] = useState<GpsLogRow[]>([]);
+  const [dateFilter, setDateFilter] = useState<DateFilter>("week");
   const [isLoading, setIsLoading] = useState(true);
-  const [dateFilter, setDateFilter] = useState<"today" | "week" | "month">("today");
+  const [selectedShiftFilter, setSelectedShiftFilter] = useState<string | "all">(
+    focusShiftId ?? "all",
+  );
 
-  useEffect(() => {
-    if (params.id) {
-      loadData();
-    }
-  }, [params.id, dateFilter]);
-
-  const loadData = async () => {
+  const load = useCallback(async () => {
     setIsLoading(true);
     try {
       const supabase = createClient();
-      const staffId = params.id as string;
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
 
-      // Get staff details
-      const { data: staffData } = await supabase
-        .from("agency_staff")
-        .select(`
-          *,
-          personnel:personnel(*)
-        `)
-        .eq("id", staffId)
-        .single();
-
-      if (!staffData) {
+      const agencyId = await getAgencyIdForUser(supabase, user.id);
+      if (!agencyId) {
         router.push("/d/agency/tracking");
         return;
       }
 
-      setStaff(staffData);
+      const { data: personnel } = await supabase
+        .from("personnel")
+        .select("display_name")
+        .eq("id", personnelId)
+        .maybeSingle();
 
-      // Calculate date range
-      const now = new Date();
-      let startDate = new Date();
-      
-      switch (dateFilter) {
-        case "today":
-          startDate.setHours(0, 0, 0, 0);
-          break;
-        case "week":
-          startDate.setDate(startDate.getDate() - 7);
-          break;
-        case "month":
-          startDate.setDate(startDate.getDate() - 30);
-          break;
-      }
+      if (personnel?.display_name) setGuardName(personnel.display_name);
 
-      // Get location history
-      const { data: locationData } = await supabase
-        .from("staff_locations")
-        .select(`
-          *,
-          booking_assignment:booking_assignments(
-            id,
-            booking:bookings(
-              venue:venues(name),
-              start,
-              end
-            )
-          )
-        `)
-        .eq("agency_staff_id", staffId)
-        .gte("recorded_at", startDate.toISOString())
-        .order("recorded_at", { ascending: false })
-        .limit(500);
-
-      setLocations(locationData || []);
-    } catch (error) {
-      console.error("Error loading data:", error);
+      const { logs: historyLogs } = await fetchPersonnelGpsHistory(
+        supabase,
+        agencyId,
+        personnelId,
+        sinceIsoForFilter(dateFilter),
+      );
+      setLogs(historyLogs);
+    } catch (e) {
+      console.error("Personnel GPS history failed:", e);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [personnelId, dateFilter, router]);
 
-  const formatDateTime = (dateString: string) => {
-    const date = new Date(dateString);
-    return {
-      date: date.toLocaleDateString("en-GB", {
-        day: "numeric",
-        month: "short",
-      }),
-      time: date.toLocaleTimeString("en-GB", {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-    };
-  };
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  // Group locations by date
-  const groupedLocations = locations.reduce((groups, loc) => {
-    const date = new Date(loc.recorded_at).toLocaleDateString("en-GB", {
-      weekday: "long",
-      day: "numeric",
-      month: "long",
-    });
-    if (!groups[date]) {
-      groups[date] = [];
+  useEffect(() => {
+    if (focusShiftId) setSelectedShiftFilter(focusShiftId);
+  }, [focusShiftId]);
+
+  const shiftIds = useMemo(
+    () => Array.from(new Set(logs.map((l) => l.shift_id))),
+    [logs],
+  );
+
+  const filteredLogs = useMemo(() => {
+    if (selectedShiftFilter === "all") return logs;
+    return logs.filter((l) => l.shift_id === selectedShiftFilter);
+  }, [logs, selectedShiftFilter]);
+
+  const trailPaths = useMemo(() => {
+    const byShift = new Map<string, [number, number][]>();
+    for (const row of [...filteredLogs].reverse()) {
+      if (!byShift.has(row.shift_id)) byShift.set(row.shift_id, []);
+      byShift.get(row.shift_id)!.push([row.lng, row.lat]);
     }
-    groups[date].push(loc);
-    return groups;
-  }, {} as Record<string, LocationHistoryItem[]>);
+    return Array.from(byShift.entries()).map(([id, coordinates]) => ({
+      id,
+      coordinates,
+    }));
+  }, [filteredLogs]);
 
-  // Calculate statistics
-  const stats = {
-    totalPoints: locations.length,
-    uniqueDays: Object.keys(groupedLocations).length,
-    shiftsTracked: new Set(locations.filter(l => l.booking_assignment_id).map(l => l.booking_assignment_id)).size,
-  };
+  const latestPin = filteredLogs[0];
+
+  const mapStaff = latestPin
+    ? [
+        {
+          id: latestPin.shift_id,
+          name: guardName,
+          lat: latestPin.lat,
+          lng: latestPin.lng,
+          isOnShift: false,
+          lastUpdated: latestPin.recorded_at,
+        },
+      ]
+    : [];
 
   if (isLoading) {
     return (
@@ -140,200 +139,110 @@ export default function StaffLocationHistoryPage() {
     );
   }
 
-  if (!staff) {
-    return null;
-  }
-
-  const initials = staff.personnel.display_name
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-
   return (
     <div className="px-4 py-6 sm:px-6">
-      {/* Header */}
-      <div className="mb-8">
-        <Link
-          href="/d/agency/tracking"
-          className="mb-4 inline-flex items-center gap-2 text-sm text-zinc-400 transition hover:text-white"
-        >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          Back to Live Tracking
-        </Link>
-      </div>
+      <Link
+        href="/d/agency/tracking"
+        className="mb-4 inline-flex items-center gap-2 text-sm text-zinc-400 transition hover:text-white"
+      >
+        ← Back to GPS History
+      </Link>
 
       <div className="mx-auto max-w-4xl">
-        {/* Staff Header */}
         <div className="glass mb-6 rounded-2xl p-6">
-          <div className="flex items-center gap-4">
-            <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-gradient-to-br from-shield-500 to-shield-600 text-lg font-bold text-white">
-              {initials}
-            </div>
-            <div>
-              <h1 className="font-display text-2xl font-semibold text-white">
-                {staff.personnel.display_name}
-              </h1>
-              <p className="text-zinc-400">Location History</p>
-            </div>
-          </div>
+          <h1 className="font-display text-2xl font-semibold text-white">{guardName}</h1>
+          <p className="text-zinc-400">Location trail · {filteredLogs.length} points</p>
         </div>
 
-        {/* Date Filter */}
-        <div className="mb-6 flex gap-2">
-          {([
-            { key: "today", label: "Today" },
-            { key: "week", label: "Last 7 Days" },
-            { key: "month", label: "Last 30 Days" },
-          ] as const).map((filter) => (
+        <div className="mb-6 flex flex-wrap gap-2">
+          {(
+            [
+              ["today", "Today"],
+              ["week", "Last 7 days"],
+              ["month", "Last 30 days"],
+            ] as const
+          ).map(([key, label]) => (
             <button
-              key={filter.key}
-              onClick={() => setDateFilter(filter.key)}
+              key={key}
+              type="button"
+              onClick={() => setDateFilter(key)}
               className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-                dateFilter === filter.key
+                dateFilter === key
                   ? "bg-shield-500/20 text-shield-300"
                   : "text-zinc-400 hover:bg-white/5 hover:text-white"
               }`}
             >
-              {filter.label}
+              {label}
             </button>
           ))}
         </div>
 
-        {/* Stats */}
-        <div className="mb-6 grid gap-4 sm:grid-cols-3">
-          <div className="glass rounded-xl p-4">
-            <p className="text-2xl font-semibold text-white">{stats.totalPoints}</p>
-            <p className="text-sm text-zinc-400">Location Points</p>
+        {shiftIds.length > 1 && (
+          <div className="mb-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedShiftFilter("all")}
+              className={`rounded-full px-3 py-1 text-xs ${
+                selectedShiftFilter === "all"
+                  ? "bg-shield-500/25 text-shield-300"
+                  : "bg-white/5 text-zinc-400"
+              }`}
+            >
+              All shifts
+            </button>
+            {shiftIds.map((sid) => (
+              <button
+                key={sid}
+                type="button"
+                onClick={() => setSelectedShiftFilter(sid)}
+                className={`rounded-full px-3 py-1 text-xs font-mono ${
+                  selectedShiftFilter === sid
+                    ? "bg-shield-500/25 text-shield-300"
+                    : "bg-white/5 text-zinc-400"
+                }`}
+              >
+                {sid.slice(0, 8)}…
+              </button>
+            ))}
           </div>
-          <div className="glass rounded-xl p-4">
-            <p className="text-2xl font-semibold text-white">{stats.uniqueDays}</p>
-            <p className="text-sm text-zinc-400">Days Tracked</p>
-          </div>
-          <div className="glass rounded-xl p-4">
-            <p className="text-2xl font-semibold text-white">{stats.shiftsTracked}</p>
-            <p className="text-sm text-zinc-400">Shifts Tracked</p>
-          </div>
-        </div>
+        )}
 
-        {/* Map Placeholder */}
         <div className="glass mb-6 overflow-hidden rounded-2xl">
           <div className="border-b border-white/[0.06] p-4">
-            <h2 className="font-medium text-white">Route Map</h2>
+            <h2 className="font-medium text-white">Route map</h2>
           </div>
-          <div className="relative aspect-[16/9] bg-zinc-900/50">
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <svg className="h-12 w-12 text-zinc-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
-              </svg>
-              <p className="mt-4 text-sm text-zinc-500">
-                Route visualization coming soon
+          {filteredLogs.length === 0 ? (
+            <div className="flex min-h-[280px] flex-col items-center justify-center p-8 text-center">
+              <p className="text-sm text-zinc-500">No GPS data for this period</p>
+              <p className="mt-2 text-xs text-zinc-600 max-w-sm">
+                Points are recorded when the guard has location enabled during an active shift
+                window. Check Live Tracking while they are on shift.
               </p>
-              <p className="mt-1 text-xs text-zinc-600">
-                {locations.length} location points to display
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Location Timeline */}
-        <div className="glass overflow-hidden rounded-2xl">
-          <div className="border-b border-white/[0.06] p-4">
-            <h2 className="font-medium text-white">Location Timeline</h2>
-          </div>
-          
-          {locations.length === 0 ? (
-            <div className="p-8 text-center">
-              <svg className="mx-auto h-12 w-12 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-              </svg>
-              <p className="mt-4 text-sm text-zinc-500">
-                No location data for this period
-              </p>
+              <Link
+                href="/d/agency/live"
+                className="mt-4 text-sm text-shield-400 hover:text-shield-300"
+              >
+                Open live map →
+              </Link>
             </div>
           ) : (
-            <div className="divide-y divide-white/[0.06]">
-              {Object.entries(groupedLocations).map(([date, dayLocations]) => (
-                <div key={date}>
-                  <div className="sticky top-0 z-10 bg-zinc-900/80 px-4 py-2 backdrop-blur">
-                    <p className="text-sm font-medium text-zinc-400">{date}</p>
-                  </div>
-                  <div className="space-y-1 px-4 py-2">
-                    {dayLocations.slice(0, 20).map((loc, idx) => {
-                      const { time } = formatDateTime(loc.recorded_at);
-                      return (
-                        <div
-                          key={loc.id}
-                          className="flex items-center gap-3 rounded-lg p-2 transition hover:bg-white/[0.02]"
-                        >
-                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-shield-500/20 text-xs text-shield-400">
-                            {time}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm text-white">
-                              {loc.lat.toFixed(5)}, {loc.lng.toFixed(5)}
-                            </p>
-                            {loc.booking_assignment?.booking && (
-                              <p className="text-xs text-shield-400">
-                                @ {loc.booking_assignment.booking.venue?.name}
-                              </p>
-                            )}
-                          </div>
-                          {loc.accuracy && (
-                            <span className="shrink-0 text-xs text-zinc-500">
-                              ±{Math.round(loc.accuracy)}m
-                            </span>
-                          )}
-                        </div>
-                      );
-                    })}
-                    {dayLocations.length > 20 && (
-                      <p className="py-2 text-center text-xs text-zinc-500">
-                        +{dayLocations.length - 20} more points
-                      </p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <StaffTrackingMap
+              staffLocations={mapStaff}
+              trailPaths={trailPaths}
+              className="aspect-[16/9]"
+            />
           )}
         </div>
 
-        {/* Export Options */}
-        <div className="mt-6 flex justify-end gap-2">
-          <button
-            className="rounded-lg bg-white/5 px-4 py-2 text-sm text-zinc-300 transition hover:bg-white/10"
-            onClick={() => {
-              // Export as CSV
-              const csv = [
-                ["Timestamp", "Latitude", "Longitude", "Accuracy", "Shift"].join(","),
-                ...locations.map((l) =>
-                  [
-                    l.recorded_at,
-                    l.lat,
-                    l.lng,
-                    l.accuracy || "",
-                    l.booking_assignment?.booking?.venue?.name || "",
-                  ].join(",")
-                ),
-              ].join("\n");
-              
-              const blob = new Blob([csv], { type: "text/csv" });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = `location-history-${staff.personnel.display_name.replace(/\s+/g, "-")}-${dateFilter}.csv`;
-              a.click();
-            }}
-          >
-            <svg className="mr-2 inline-block h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-            </svg>
-            Export CSV
-          </button>
+        <div className="glass overflow-hidden rounded-2xl">
+          <div className="border-b border-white/[0.06] p-4">
+            <h2 className="font-medium text-white">Timeline</h2>
+          </div>
+          <GpsTimeline
+            logs={filteredLogs}
+            guardName={guardName}
+            dateFilter={dateFilter}
+          />
         </div>
       </div>
     </div>
