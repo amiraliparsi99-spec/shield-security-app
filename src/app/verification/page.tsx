@@ -123,24 +123,15 @@ export default async function VerificationPage() {
     let { data: agency } = await supabase
       .from("agencies")
       .select("id")
-      .eq("owner_id", user.id)
+      .eq("user_id", user.id)
       .maybeSingle();
 
     if (!agency) {
-      const { data: agencyByProfileId } = await supabase
-        .from("agencies")
-        .select("id")
-        .eq("owner_id", profileId)
-        .maybeSingle();
-      agency = agencyByProfileId;
-    }
-
-    if (!agency) {
       const slug = `agency-${user.id.substring(0, 8)}-${Date.now()}`;
-      let { data: newAgency, error: createError } = await supabase
+      const { data: newAgency, error: createError } = await supabase
         .from("agencies")
         .insert({
-          owner_id: profileId,
+          user_id: user.id,
           name: user.email?.split("@")[0] || "Security Agency",
           slug: slug,
           description: null,
@@ -151,29 +142,6 @@ export default async function VerificationPage() {
         })
         .select("id")
         .single();
-
-      if (createError) {
-        const slug2 = `agency-${user.id.substring(0, 8)}-${Date.now()}`;
-        const { data: newAgencyByUserId, error: createError2 } = await supabase
-          .from("agencies")
-          .insert({
-            owner_id: user.id,
-            name: user.email?.split("@")[0] || "Security Agency",
-            slug: slug2,
-            description: null,
-            city: null,
-            region: null,
-            country: "GB",
-            status: "looking",
-          })
-          .select("id")
-          .single();
-        
-        if (!createError2 && newAgencyByUserId) {
-          newAgency = newAgencyByUserId;
-          createError = null;
-        }
-      }
 
       if (!createError && newAgency) {
         agency = newAgency;

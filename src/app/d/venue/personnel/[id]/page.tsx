@@ -84,6 +84,8 @@ async function getVenuePersonnelWithReviews(
     updated_at: personnelData.updated_at,
     shield_score: personnelData.shield_score,
     total_shifts: personnelData.total_shifts,
+    intro_video_status: personnelData.intro_video_status ?? undefined,
+    intro_video_playback_id: personnelData.intro_video_playback_id ?? null,
   };
 
   return { personnel, avatarUrl, reviews };

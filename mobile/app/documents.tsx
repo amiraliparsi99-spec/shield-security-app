@@ -46,6 +46,60 @@ const DOCUMENT_TYPES = [
   { value: "other", label: "Other", icon: "📄" },
 ];
 
+/**
+ * Documents are grouped into plain-English categories so guards always know
+ * exactly what to upload and what's still missing.
+ */
+const DOC_CATEGORIES: {
+  id: string;
+  title: string;
+  hint: string;
+  icon: string;
+  types: string[];
+  /** Docs we actively prompt for if missing. Satisfied by ANY of `types`. */
+  recommended: { types: string[]; label: string; addType: string }[];
+}[] = [
+  {
+    id: "sia",
+    title: "SIA Licences",
+    hint: "Your licence to work. Venues check these before booking you.",
+    icon: "🛡️",
+    types: ["sia_license", "sia_door", "sia_cctv"],
+    recommended: [
+      { types: ["sia_license", "sia_door", "sia_cctv"], label: "SIA Licence", addType: "sia_license" },
+    ],
+  },
+  {
+    id: "training",
+    title: "First Aid & Training",
+    hint: "Certificates that win you better-paid shifts.",
+    icon: "🏥",
+    types: ["first_aid", "training_cert"],
+    recommended: [
+      { types: ["first_aid"], label: "First Aid certificate", addType: "first_aid" },
+    ],
+  },
+  {
+    id: "identity",
+    title: "ID & Vetting",
+    hint: "Proves who you are and your right to work.",
+    icon: "🪪",
+    types: ["passport", "driving_license", "dbs_check"],
+    recommended: [
+      { types: ["passport", "driving_license"], label: "Photo ID (passport or driving licence)", addType: "passport" },
+      { types: ["dbs_check"], label: "DBS Check", addType: "dbs_check" },
+    ],
+  },
+  {
+    id: "other",
+    title: "Other Documents",
+    hint: "Anything else worth showing venues.",
+    icon: "📄",
+    types: ["other"],
+    recommended: [],
+  },
+];
+
 export default function DocumentsScreen() {
   return (
     <GuestGate feature="documents" redirectAfter="/documents">
@@ -61,6 +115,7 @@ function DocumentsScreenContent() {
   const [refreshing, setRefreshing] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [modalCategory, setModalCategory] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [selectedType, setSelectedType] = useState("");
   const [title, setTitle] = useState("");
@@ -195,6 +250,15 @@ function DocumentsScreenContent() {
     setTitle("");
     setReferenceNumber("");
     setSelectedFile(null);
+    setModalCategory(null);
+  };
+
+  /** Open the upload sheet, optionally scoped to a category / preset type. */
+  const openUpload = (categoryId?: string, presetType?: string) => {
+    safeHaptic("light");
+    setModalCategory(categoryId ?? null);
+    if (presetType) setSelectedType(presetType);
+    setShowUploadModal(true);
   };
 
   const getTypeInfo = (type: string) => {
@@ -226,6 +290,60 @@ function DocumentsScreenContent() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  const hasDocOfTypes = (types: string[]) =>
+    documents.some((d) => types.includes(d.document_type));
+
+  // Essentials checklist progress across all categories.
+  const allRecommended = DOC_CATEGORIES.flatMap((c) => c.recommended);
+  const satisfiedCount = allRecommended.filter((r) => hasDocOfTypes(r.types)).length;
+
+  const renderDocCard = (doc: Document, index: number) => {
+    const typeInfo = getTypeInfo(doc.document_type);
+    const statusColors = getStatusColor(doc.verification_status);
+    const expired = isExpired(doc.expiry_date);
+
+    return (
+      <SlideInView key={doc.id} delay={index * 50}>
+        <View style={[styles.docCard, expired && styles.docCardExpired]}>
+          <View style={styles.docHeader}>
+            <Text style={styles.docIcon}>{typeInfo.icon}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.docTitle}>{doc.title}</Text>
+              <Text style={styles.docType}>{typeInfo.label}</Text>
+            </View>
+            <View style={[styles.statusBadge, { backgroundColor: statusColors.bg }]}>
+              <Text style={[styles.statusText, { color: statusColors.text }]}>
+                {expired ? "Expired" : doc.verification_status}
+              </Text>
+            </View>
+          </View>
+
+          {doc.reference_number && (
+            <Text style={styles.refNumber}>Ref: {doc.reference_number}</Text>
+          )}
+
+          <View style={styles.docMeta}>
+            {doc.expiry_date && (
+              <Text style={[styles.metaText, expired && { color: "#ef4444" }]}>
+                Expires: {new Date(doc.expiry_date).toLocaleDateString("en-GB")}
+              </Text>
+            )}
+            <Text style={styles.metaText}>{formatFileSize(doc.file_size)}</Text>
+          </View>
+
+          <View style={styles.docActions}>
+            <TouchableOpacity style={styles.viewBtn}>
+              <Text style={styles.viewBtnText}>View</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(doc)}>
+              <Text style={styles.deleteBtnText}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </SlideInView>
+    );
+  };
+
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Header */}
@@ -234,10 +352,7 @@ function DocumentsScreenContent() {
           <Text style={styles.backText}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.title}>Documents</Text>
-        <TouchableOpacity
-          style={styles.addBtn}
-          onPress={() => setShowUploadModal(true)}
-        >
+        <TouchableOpacity style={styles.addBtn} onPress={() => openUpload()}>
           <Text style={styles.addBtnText}>+ Add</Text>
         </TouchableOpacity>
       </View>
@@ -253,88 +368,101 @@ function DocumentsScreenContent() {
           />
         }
       >
-        {documents.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyIcon}>📁</Text>
-            <Text style={styles.emptyTitle}>No documents yet</Text>
-            <Text style={styles.emptyText}>
-              Upload your SIA license, certifications, and ID documents
+        {/* Essentials progress */}
+        <View style={styles.progressCard}>
+          <View style={styles.progressHeader}>
+            <Text style={styles.progressTitle}>Get verified</Text>
+            <Text style={styles.progressCount}>
+              {satisfiedCount}/{allRecommended.length} essentials
             </Text>
-            <TouchableOpacity
-              style={styles.uploadBtn}
-              onPress={() => setShowUploadModal(true)}
-            >
-              <Text style={styles.uploadBtnText}>Upload Document</Text>
-            </TouchableOpacity>
           </View>
-        ) : (
-          documents.map((doc, index) => {
-            const typeInfo = getTypeInfo(doc.document_type);
-            const statusColors = getStatusColor(doc.verification_status);
-            const expired = isExpired(doc.expiry_date);
+          <View style={styles.progressBarTrack}>
+            <View
+              style={[
+                styles.progressBarFill,
+                {
+                  width: `${Math.round(
+                    (satisfiedCount / Math.max(allRecommended.length, 1)) * 100
+                  )}%`,
+                },
+              ]}
+            />
+          </View>
+          <Text style={styles.progressHint}>
+            {satisfiedCount === allRecommended.length
+              ? "All essentials uploaded — venues can book you with confidence."
+              : "Upload the essentials below to unlock more (and better-paid) shifts."}
+          </Text>
+        </View>
 
+        {/* Categorised sections */}
+        {DOC_CATEGORIES.map((category) => {
+          const categoryDocs = documents.filter((d) =>
+            category.types.includes(d.document_type)
+          );
+          const missing = category.recommended.filter((r) => !hasDocOfTypes(r.types));
+          if (category.id === "other" && categoryDocs.length === 0) {
+            // Keep "Other" minimal — just a quiet add row.
             return (
-              <SlideInView key={doc.id} delay={index * 50}>
-                <View
-                  style={[
-                    styles.docCard,
-                    expired && styles.docCardExpired,
-                  ]}
+              <View key={category.id} style={styles.categorySection}>
+                <TouchableOpacity
+                  style={styles.otherAddRow}
+                  onPress={() => openUpload(category.id)}
+                  activeOpacity={0.7}
                 >
-                  <View style={styles.docHeader}>
-                    <Text style={styles.docIcon}>{typeInfo.icon}</Text>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.docTitle}>{doc.title}</Text>
-                      <Text style={styles.docType}>{typeInfo.label}</Text>
-                    </View>
-                    <View
-                      style={[
-                        styles.statusBadge,
-                        { backgroundColor: statusColors.bg },
-                      ]}
-                    >
-                      <Text style={[styles.statusText, { color: statusColors.text }]}>
-                        {expired ? "Expired" : doc.verification_status}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {doc.reference_number && (
-                    <Text style={styles.refNumber}>Ref: {doc.reference_number}</Text>
-                  )}
-
-                  <View style={styles.docMeta}>
-                    {doc.expiry_date && (
-                      <Text
-                        style={[
-                          styles.metaText,
-                          expired && { color: "#ef4444" },
-                        ]}
-                      >
-                        Expires: {new Date(doc.expiry_date).toLocaleDateString("en-GB")}
-                      </Text>
-                    )}
-                    <Text style={styles.metaText}>
-                      {formatFileSize(doc.file_size)}
-                    </Text>
-                  </View>
-
-                  <View style={styles.docActions}>
-                    <TouchableOpacity style={styles.viewBtn}>
-                      <Text style={styles.viewBtnText}>View</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.deleteBtn}
-                      onPress={() => handleDelete(doc)}
-                    >
-                      <Text style={styles.deleteBtnText}>Delete</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </SlideInView>
+                  <Text style={styles.otherAddText}>
+                    {category.icon} Add another document
+                  </Text>
+                  <Text style={styles.otherAddPlus}>+</Text>
+                </TouchableOpacity>
+              </View>
             );
-          })
-        )}
+          }
+
+          return (
+            <View key={category.id} style={styles.categorySection}>
+              <View style={styles.categoryHeader}>
+                <Text style={styles.categoryIcon}>{category.icon}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.categoryTitle}>{category.title}</Text>
+                  <Text style={styles.categoryHint}>{category.hint}</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.categoryAddBtn}
+                  onPress={() => openUpload(category.id)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={styles.categoryAddText}>+ Add</Text>
+                </TouchableOpacity>
+              </View>
+
+              {categoryDocs.map((doc, index) => renderDocCard(doc, index))}
+
+              {/* Prompts for missing essentials */}
+              {missing.map((r) => (
+                <TouchableOpacity
+                  key={r.label}
+                  style={styles.missingRow}
+                  onPress={() => openUpload(category.id, r.addType)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.missingCircle}>
+                    <Text style={styles.missingCircleText}>+</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.missingLabel}>Add your {r.label}</Text>
+                    <Text style={styles.missingSub}>Tap to upload</Text>
+                  </View>
+                  <Text style={styles.missingChevron}>›</Text>
+                </TouchableOpacity>
+              ))}
+
+              {categoryDocs.length === 0 && missing.length === 0 && (
+                <Text style={styles.categoryEmptyText}>Nothing uploaded yet.</Text>
+              )}
+            </View>
+          );
+        })}
 
         <View style={{ height: insets.bottom + 20 }} />
       </ScrollView>
@@ -352,7 +480,11 @@ function DocumentsScreenContent() {
               showsHorizontalScrollIndicator={false}
               style={styles.typeScroll}
             >
-              {DOCUMENT_TYPES.map((type) => (
+              {DOCUMENT_TYPES.filter((type) => {
+                if (!modalCategory) return true;
+                const cat = DOC_CATEGORIES.find((c) => c.id === modalCategory);
+                return cat ? cat.types.includes(type.value) : true;
+              }).map((type) => (
                 <TouchableOpacity
                   key={type.value}
                   style={[
@@ -522,6 +654,142 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.text,
     fontWeight: "600",
+  },
+  progressCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.lg,
+    marginBottom: spacing.xl,
+  },
+  progressHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: spacing.sm,
+  },
+  progressTitle: {
+    ...typography.title,
+    color: colors.text,
+    fontSize: 16,
+  },
+  progressCount: {
+    ...typography.caption,
+    color: colors.accent,
+    fontWeight: "700",
+  },
+  progressBarTrack: {
+    height: 8,
+    borderRadius: radius.full,
+    backgroundColor: colors.surfaceElevated,
+    overflow: "hidden",
+    marginBottom: spacing.sm,
+  },
+  progressBarFill: {
+    height: "100%",
+    borderRadius: radius.full,
+    backgroundColor: "#22c55e",
+  },
+  progressHint: {
+    ...typography.caption,
+    color: colors.textMuted,
+    lineHeight: 18,
+  },
+  categorySection: {
+    marginBottom: spacing.xl,
+  },
+  categoryHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  categoryIcon: {
+    fontSize: 22,
+  },
+  categoryTitle: {
+    ...typography.title,
+    color: colors.text,
+    fontSize: 16,
+  },
+  categoryHint: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 1,
+  },
+  categoryAddBtn: {
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.accent + "60",
+  },
+  categoryAddText: {
+    ...typography.caption,
+    color: colors.accent,
+    fontWeight: "600",
+  },
+  missingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    backgroundColor: "transparent",
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderStyle: "dashed",
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  missingCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  missingCircleText: {
+    fontSize: 18,
+    color: colors.accent,
+    fontWeight: "600",
+  },
+  missingLabel: {
+    ...typography.body,
+    color: colors.text,
+    fontWeight: "600",
+  },
+  missingSub: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  missingChevron: {
+    fontSize: 22,
+    color: colors.textMuted,
+  },
+  categoryEmptyText: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontStyle: "italic",
+  },
+  otherAddRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderStyle: "dashed",
+    padding: spacing.md,
+  },
+  otherAddText: {
+    ...typography.body,
+    color: colors.textMuted,
+  },
+  otherAddPlus: {
+    fontSize: 20,
+    color: colors.accent,
   },
   docCard: {
     backgroundColor: colors.surface,

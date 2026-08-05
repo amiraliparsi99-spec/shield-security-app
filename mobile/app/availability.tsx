@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   TextInput,
   Alert,
+  Switch,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router } from "expo-router";
@@ -99,6 +100,51 @@ function padTime(t: string): string {
   const s = (t || "09:00").slice(0, 5);
   return s.length === 5 ? s : "09:00";
 }
+
+/** Hours between start and end, handling past-midnight windows (e.g. 18:00–02:00). */
+function windowHours(start: string, end: string): number {
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
+  let hours = eh + em / 60 - (sh + sm / 60);
+  if (hours <= 0) hours += 24;
+  return hours;
+}
+
+/** One-tap schedule presets so guards don't have to set each day by hand. */
+const PRESETS: { id: string; label: string; icon: string; days: DayOfWeek[]; start: string; end: string }[] = [
+  {
+    id: "weekend",
+    label: "Weekend nights",
+    icon: "🌙",
+    days: ["friday", "saturday"],
+    start: "18:00",
+    end: "03:00",
+  },
+  {
+    id: "evenings",
+    label: "Evenings",
+    icon: "🌆",
+    days: ["monday", "tuesday", "wednesday", "thursday", "friday"],
+    start: "18:00",
+    end: "23:00",
+  },
+  {
+    id: "daytime",
+    label: "Weekday days",
+    icon: "☀️",
+    days: ["monday", "tuesday", "wednesday", "thursday", "friday"],
+    start: "09:00",
+    end: "17:00",
+  },
+  {
+    id: "all",
+    label: "Open to anything",
+    icon: "💪",
+    days: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
+    start: "09:00",
+    end: "23:00",
+  },
+];
 
 function rowsToWeekly(
   rows: { day_of_week: number; is_available: boolean; start_time: string | null; end_time: string | null }[]
@@ -236,6 +282,21 @@ function AvailabilityScreenContent() {
         [field]: value,
       },
     }));
+  };
+
+  const applyPreset = (preset: (typeof PRESETS)[number]) => {
+    setAvailability((prev) => {
+      const next: WeeklyAvailability = { ...prev };
+      for (const d of DAYS) {
+        const on = preset.days.includes(d.key);
+        next[d.key] = {
+          available: on,
+          startTime: on ? preset.start : prev[d.key].startTime,
+          endTime: on ? preset.end : prev[d.key].endTime,
+        };
+      }
+      return next;
+    });
     setSelectedDay(null);
   };
 
@@ -389,6 +450,10 @@ function AvailabilityScreenContent() {
   }
 
   const availableDaysCount = DAYS.filter((d) => availability[d.key].available).length;
+  const weeklyHours = DAYS.reduce((sum, d) => {
+    const slot = availability[d.key];
+    return slot.available ? sum + windowHours(slot.startTime, slot.endTime) : sum;
+  }, 0);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -409,53 +474,97 @@ function AvailabilityScreenContent() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {/* Summary hero */}
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryTitle}>Weekly schedule</Text>
-          <Text style={styles.summaryText}>
-            {availableDaysCount === 0
-              ? "No days set as available"
-              : `Available ${availableDaysCount} day${availableDaysCount !== 1 ? "s" : ""} per week`}
+          <Text style={styles.summaryTitle}>
+            {availableDaysCount === 0 ? "You're marked as unavailable" : "Your week at a glance"}
           </Text>
+          <View style={styles.summaryStats}>
+            <View style={styles.summaryStat}>
+              <Text style={styles.summaryStatValue}>{availableDaysCount}</Text>
+              <Text style={styles.summaryStatLabel}>
+                day{availableDaysCount !== 1 ? "s" : ""} available
+              </Text>
+            </View>
+            <View style={styles.summaryDivider} />
+            <View style={styles.summaryStat}>
+              <Text style={styles.summaryStatValue}>{Math.round(weeklyHours)}</Text>
+              <Text style={styles.summaryStatLabel}>hours per week</Text>
+            </View>
+          </View>
+          <View style={styles.summaryDots}>
+            {DAYS.map((d) => (
+              <View key={d.key} style={styles.summaryDayWrap}>
+                <View
+                  style={[
+                    styles.summaryDot,
+                    availability[d.key].available && styles.summaryDotOn,
+                  ]}
+                />
+                <Text style={styles.summaryDayLetter}>{d.label[0]}</Text>
+              </View>
+            ))}
+          </View>
         </View>
+
+        {/* Quick presets */}
+        <Text style={styles.presetLabel}>Quick set</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.presetScroll}
+          contentContainerStyle={{ paddingRight: spacing.lg }}
+        >
+          {PRESETS.map((preset) => (
+            <TouchableOpacity
+              key={preset.id}
+              style={styles.presetChip}
+              onPress={() => applyPreset(preset)}
+              activeOpacity={0.75}
+            >
+              <Text style={styles.presetIcon}>{preset.icon}</Text>
+              <Text style={styles.presetText}>{preset.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
 
         {DAYS.map((day) => {
           const dayData = availability[day.key];
           const isExpanded = selectedDay === day.key;
 
           return (
-            <View key={day.key} style={styles.dayCard}>
+            <View key={day.key} style={[styles.dayCard, dayData.available && styles.dayCardOn]}>
               <TouchableOpacity
                 style={styles.dayHeader}
-                onPress={() => toggleDay(day.key)}
+                onPress={() => {
+                  if (dayData.available) {
+                    setSelectedDay(isExpanded ? null : day.key);
+                  } else {
+                    toggleDay(day.key);
+                  }
+                }}
                 activeOpacity={0.7}
               >
                 <View style={styles.dayInfo}>
-                  <View
-                    style={[styles.dayIndicator, dayData.available && styles.dayIndicatorActive]}
-                  />
-                  <Text style={styles.dayLabel}>{day.label}</Text>
-                </View>
-                <View style={styles.dayActions}>
-                  {dayData.available && (
-                    <Text style={styles.dayTime}>
-                      {dayData.startTime} – {dayData.endTime}
-                    </Text>
-                  )}
-                  <Text style={styles.dayToggle}>{dayData.available ? "✓" : "○"}</Text>
-                </View>
-              </TouchableOpacity>
-
-              {dayData.available && (
-                <TouchableOpacity
-                  style={styles.editTimes}
-                  onPress={() => setSelectedDay(isExpanded ? null : day.key)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.editTimesText}>
-                    {isExpanded ? "Hide times" : "Edit times"}
+                  <Text style={[styles.dayLabel, !dayData.available && styles.dayLabelOff]}>
+                    {day.label}
                   </Text>
-                </TouchableOpacity>
-              )}
+                  {dayData.available ? (
+                    <Text style={styles.dayTime}>
+                      {dayData.startTime} – {dayData.endTime} · tap to change
+                    </Text>
+                  ) : (
+                    <Text style={styles.dayTimeOff}>Not available</Text>
+                  )}
+                </View>
+                <Switch
+                  value={dayData.available}
+                  onValueChange={() => toggleDay(day.key)}
+                  trackColor={{ false: colors.surfaceElevated, true: colors.accent }}
+                  thumbColor="#ffffff"
+                  ios_backgroundColor={colors.surfaceElevated}
+                />
+              </TouchableOpacity>
 
               {isExpanded && dayData.available && (
                 <View style={styles.timeSelector}>
@@ -706,11 +815,87 @@ const styles = StyleSheet.create({
   summaryTitle: {
     ...typography.titleCard,
     color: colors.accent,
+    textAlign: "center",
   },
-  summaryText: {
-    ...typography.body,
+  summaryStats: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xl,
+    marginTop: spacing.md,
+    marginBottom: spacing.md,
+  },
+  summaryStat: {
+    alignItems: "center",
+  },
+  summaryStatValue: {
+    fontSize: 32,
+    fontWeight: "800",
     color: colors.text,
-    marginTop: spacing.xs,
+  },
+  summaryStatLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  summaryDivider: {
+    width: 1,
+    height: 36,
+    backgroundColor: colors.accent + "40",
+  },
+  summaryDots: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: spacing.md,
+  },
+  summaryDayWrap: {
+    alignItems: "center",
+    gap: 4,
+  },
+  summaryDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.border,
+  },
+  summaryDotOn: {
+    backgroundColor: colors.success,
+  },
+  summaryDayLetter: {
+    ...typography.caption,
+    fontSize: 10,
+    color: colors.textMuted,
+  },
+  presetLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: spacing.sm,
+  },
+  presetScroll: {
+    marginBottom: spacing.lg,
+    flexGrow: 0,
+  },
+  presetChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.full,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginRight: spacing.sm,
+  },
+  presetIcon: {
+    fontSize: 14,
+  },
+  presetText: {
+    ...typography.caption,
+    color: colors.text,
+    fontWeight: "600",
   },
   sectionHeading: {
     ...typography.titleCard,
@@ -825,6 +1010,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     overflow: "hidden",
   },
+  dayCardOn: {
+    borderColor: colors.accent + "50",
+  },
   dayHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -832,48 +1020,26 @@ const styles = StyleSheet.create({
     padding: spacing.md,
   },
   dayInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  dayIndicator: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: colors.border,
-    marginRight: spacing.sm,
-  },
-  dayIndicatorActive: {
-    backgroundColor: colors.success,
+    flex: 1,
   },
   dayLabel: {
     ...typography.body,
     color: colors.text,
-    fontWeight: "500",
+    fontWeight: "600",
   },
-  dayActions: {
-    flexDirection: "row",
-    alignItems: "center",
+  dayLabelOff: {
+    color: colors.textMuted,
+    fontWeight: "500",
   },
   dayTime: {
     ...typography.caption,
-    color: colors.textMuted,
-    marginRight: spacing.sm,
-  },
-  dayToggle: {
-    ...typography.body,
     color: colors.accent,
-    fontSize: 18,
+    marginTop: 2,
   },
-  editTimes: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-  },
-  editTimesText: {
+  dayTimeOff: {
     ...typography.caption,
-    color: colors.accent,
-    textAlign: "center",
+    color: colors.textMuted,
+    marginTop: 2,
   },
   timeSelector: {
     padding: spacing.md,

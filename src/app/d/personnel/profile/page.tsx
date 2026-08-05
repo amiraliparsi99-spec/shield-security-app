@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useSupabase, useUser } from "@/hooks/useSupabase";
+import { ProfileAvatarUpload } from "@/components/personnel/ProfileAvatarUpload";
 
 export default function ProfilePage() {
   const supabase = useSupabase();
@@ -13,6 +14,7 @@ export default function ProfilePage() {
     displayName: "",
     email: "",
     phone: "",
+    avatarUrl: null as string | null,
     city: "Birmingham",
     postcode: "",
     bio: "",
@@ -84,6 +86,7 @@ export default function ProfilePage() {
         displayName: profileData?.display_name || "",
         email: profileData?.email || "",
         phone: profileData?.phone || "",
+        avatarUrl: profileData?.avatar_url || null,
         city: personnelData?.city || "Birmingham",
         postcode: personnelData?.postcode || "",
         bio: personnelData?.bio || "",
@@ -174,13 +177,18 @@ export default function ProfilePage() {
       </div>
 
       <div className="space-y-6">
-        {/* Profile Header */}
-        <div className="glass rounded-xl p-6 flex items-center gap-6">
-          <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-shield-500 to-emerald-500 flex items-center justify-center text-white text-3xl font-bold">
-            {profile.displayName.charAt(0)}
-          </div>
+        <div className="glass rounded-xl p-6 space-y-5">
+          {user && (
+            <ProfileAvatarUpload
+              userId={user.id}
+              profileId={user.id}
+              displayName={profile.displayName || "Your name"}
+              avatarUrl={profile.avatarUrl}
+              onChange={(url) => setProfile((prev) => ({ ...prev, avatarUrl: url }))}
+            />
+          )}
           <div>
-            <h2 className="text-xl font-bold text-white">{profile.displayName}</h2>
+            <h2 className="text-xl font-bold text-white">{profile.displayName || "Your name"}</h2>
             <p className="text-sm text-zinc-400">{profile.city} • {profile.experienceYears} years experience</p>
             <div className="flex items-center gap-2 mt-2">
               <span className="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded">✓ SIA Verified</span>

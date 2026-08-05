@@ -1,6 +1,6 @@
-import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { PersonnelProfile } from "@/components/personnel/PersonnelProfile";
+import { AddToPreferredButton } from "@/components/personnel/AddToPreferredButton";
 import type { Personnel, PersonnelReviewWithAuthor } from "@/types/database";
 import { AVAILABLE_PERSONNEL } from "@/lib/dashboard-mock";
 
@@ -82,6 +82,8 @@ async function getPersonnelWithReviews(
       updated_at: personnelData.updated_at,
       shield_score: personnelData.shield_score,
       total_shifts: personnelData.total_shifts,
+      intro_video_status: personnelData.intro_video_status ?? undefined,
+      intro_video_playback_id: personnelData.intro_video_playback_id ?? null,
     };
 
     return {
@@ -203,6 +205,8 @@ export default async function PersonnelProfilePage({
           personnel={data.personnel}
           avatarUrl={data.avatarUrl}
           reviews={data.reviews}
+          showMessageButton={false}
+          headerAction={<AddToPreferredButton personnelId={id} />}
         />
       </main>
     </div>

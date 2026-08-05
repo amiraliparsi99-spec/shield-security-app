@@ -16,6 +16,8 @@ import { supabase } from "../lib/supabase";
 import { getProfileIdAndRole } from "../lib/auth";
 import { safeHaptic } from "../lib/haptics";
 import { GuestGate } from "../components/auth/GuestGate";
+import { IntroVideoSection } from "../components/profile/IntroVideoSection";
+import { ProfileAvatarPicker } from "../components/profile/ProfileAvatarPicker";
 
 interface ProfileData {
   // Personnel fields
@@ -76,6 +78,8 @@ function ProfileEditScreenContent() {
   const [saving, setSaving] = useState(false);
   const [role, setRole] = useState<string>("");
   const [profileId, setProfileId] = useState<string | null>(null);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [entityId, setEntityId] = useState<string | null>(null);
   const [expandedSection, setExpandedSection] = useState<"personal" | "work" | "availability" | null>(
     "personal"
@@ -122,7 +126,15 @@ function ProfileEditScreenContent() {
       }
 
       setProfileId(pid);
+      setAuthUserId(user.id);
       setRole(userRole);
+
+      const { data: profileRow } = await supabase
+        .from("profiles")
+        .select("avatar_url")
+        .or(`id.eq.${pid},user_id.eq.${user.id}`)
+        .maybeSingle();
+      setAvatarUrl(profileRow?.avatar_url ?? null);
 
       if (!supabase) return;
       if (userRole === "personnel") {
@@ -301,6 +313,36 @@ function ProfileEditScreenContent() {
     setExpandedSection((prev) => (prev === id ? null : id));
   };
 
+  // Profile strength: which parts of the profile are filled in, plus the
+  // next best action to suggest. Keeps guards motivated to complete it.
+  const strengthChecks: { label: string; done: boolean }[] =
+    role === "personnel"
+      ? [
+          { label: "Add a profile photo", done: !!avatarUrl },
+          { label: "Add your name", done: profile.display_name.trim().length > 0 },
+          { label: "Add a phone number", done: profile.phone.trim().length > 0 },
+          { label: "Write a short bio", done: profile.bio.trim().length >= 20 },
+          { label: "Set your hourly rate", done: profile.hourly_rate.trim().length > 0 },
+          { label: "Add your SIA licence number", done: profile.sia_license_number.trim().length > 0 },
+          { label: "Pick at least 2 skills", done: profile.skills.length >= 2 },
+          {
+            label: "Set your weekly availability",
+            done: availabilitySummary.length > 0 && !availabilitySummary.startsWith("No weekly"),
+          },
+        ]
+      : [];
+  const strengthDone = strengthChecks.filter((c) => c.done).length;
+  const strengthPct =
+    strengthChecks.length > 0 ? Math.round((strengthDone / strengthChecks.length) * 100) : 0;
+  const nextAction = strengthChecks.find((c) => !c.done);
+  const initials = (profile.display_name || "?")
+    .split(/\s+/)
+    .map((w) => w[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+
   if (loading) {
     return (
       <View style={[styles.container, styles.centered, { paddingTop: insets.top }]}>
@@ -330,15 +372,84 @@ function ProfileEditScreenContent() {
         {/* Personnel Fields */}
         {role === "personnel" && (
           <>
+            {/* Profile header */}
+            <View style={styles.profileHero}>
+              {authUserId && profileId ? (
+                <ProfileAvatarPicker
+                  userId={authUserId}
+                  profileId={profileId}
+                  displayName={profile.display_name}
+                  avatarUrl={avatarUrl}
+                  onChange={setAvatarUrl}
+                />
+              ) : (
+                <View style={styles.avatarCircle}>
+                  <Text style={styles.avatarInitials}>{initials}</Text>
+                </View>
+              )}
+              <Text style={styles.heroName}>
+                {profile.display_name.trim() || "Your name"}
+              </Text>
+              <View style={styles.heroChips}>
+                {profile.hourly_rate ? (
+                  <View style={styles.heroChip}>
+                    <Text style={styles.heroChipText}>£{profile.hourly_rate}/hr</Text>
+                  </View>
+                ) : null}
+                {profile.skills.slice(0, 2).map((s) => (
+                  <View key={s} style={styles.heroChip}>
+                    <Text style={styles.heroChipText}>{s}</Text>
+                  </View>
+                ))}
+              </View>
+
+              <View style={styles.strengthWrap}>
+                <View style={styles.strengthHeader}>
+                  <Text style={styles.strengthLabel}>Profile strength</Text>
+                  <Text
+                    style={[
+                      styles.strengthPct,
+                      { color: strengthPct >= 80 ? "#34d399" : colors.accent },
+                    ]}
+                  >
+                    {strengthPct}%
+                  </Text>
+                </View>
+                <View style={styles.strengthTrack}>
+                  <View
+                    style={[
+                      styles.strengthFill,
+                      {
+                        width: `${strengthPct}%`,
+                        backgroundColor: strengthPct >= 80 ? "#34d399" : colors.accent,
+                      },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.strengthHint}>
+                  {nextAction
+                    ? `Next: ${nextAction.label.toLowerCase()}`
+                    : "Your profile looks great — venues love a complete profile."}
+                </Text>
+              </View>
+            </View>
+
+            <IntroVideoSection />
             <View style={styles.accordionCard}>
               <TouchableOpacity
                 style={styles.accordionHeader}
                 onPress={() => toggleSection("personal")}
                 activeOpacity={0.75}
               >
-                <Text style={styles.accordionTitle}>Personal info</Text>
+                <View style={styles.accordionTitleWrap}>
+                  <Text style={styles.accordionIcon}>👤</Text>
+                  <View>
+                    <Text style={styles.accordionTitle}>Personal info</Text>
+                    <Text style={styles.accordionSub}>Name, phone and bio</Text>
+                  </View>
+                </View>
                 <Text style={styles.accordionChevron}>
-                  {expandedSection === "personal" ? "▼" : "▶"}
+                  {expandedSection === "personal" ? "▴" : "▾"}
                 </Text>
               </TouchableOpacity>
               {expandedSection === "personal" && (
@@ -387,9 +498,15 @@ function ProfileEditScreenContent() {
                 onPress={() => toggleSection("work")}
                 activeOpacity={0.75}
               >
-                <Text style={styles.accordionTitle}>Work details</Text>
+                <View style={styles.accordionTitleWrap}>
+                  <Text style={styles.accordionIcon}>💼</Text>
+                  <View>
+                    <Text style={styles.accordionTitle}>Work details</Text>
+                    <Text style={styles.accordionSub}>Rate, SIA licence and skills</Text>
+                  </View>
+                </View>
                 <Text style={styles.accordionChevron}>
-                  {expandedSection === "work" ? "▼" : "▶"}
+                  {expandedSection === "work" ? "▴" : "▾"}
                 </Text>
               </TouchableOpacity>
               {expandedSection === "work" && (
@@ -461,9 +578,17 @@ function ProfileEditScreenContent() {
                 onPress={() => toggleSection("availability")}
                 activeOpacity={0.75}
               >
-                <Text style={styles.accordionTitle}>Availability</Text>
+                <View style={styles.accordionTitleWrap}>
+                  <Text style={styles.accordionIcon}>📅</Text>
+                  <View>
+                    <Text style={styles.accordionTitle}>Availability</Text>
+                    <Text style={styles.accordionSub} numberOfLines={1}>
+                      {availabilitySummary || "When you can work"}
+                    </Text>
+                  </View>
+                </View>
                 <Text style={styles.accordionChevron}>
-                  {expandedSection === "availability" ? "▼" : "▶"}
+                  {expandedSection === "availability" ? "▴" : "▾"}
                 </Text>
               </TouchableOpacity>
               {expandedSection === "availability" && (
@@ -697,6 +822,102 @@ const styles = StyleSheet.create({
   },
   section: {
     marginBottom: spacing.xl,
+  },
+  profileHero: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.xl,
+    marginBottom: spacing.md,
+  },
+  avatarCircle: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: spacing.md,
+  },
+  avatarInitials: {
+    fontSize: 30,
+    fontWeight: "800",
+    color: colors.text,
+  },
+  heroName: {
+    ...typography.title,
+    color: colors.text,
+    fontSize: 20,
+    marginBottom: spacing.sm,
+  },
+  heroChips: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: spacing.xs,
+    marginBottom: spacing.lg,
+  },
+  heroChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 4,
+    borderRadius: radius.full,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  heroChipText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+  },
+  strengthWrap: {
+    alignSelf: "stretch",
+  },
+  strengthHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: spacing.xs,
+  },
+  strengthLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  strengthPct: {
+    ...typography.caption,
+    fontWeight: "700",
+  },
+  strengthTrack: {
+    height: 8,
+    borderRadius: radius.full,
+    backgroundColor: colors.surfaceElevated,
+    overflow: "hidden",
+    marginBottom: spacing.xs,
+  },
+  strengthFill: {
+    height: "100%",
+    borderRadius: radius.full,
+  },
+  strengthHint: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  accordionTitleWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    flex: 1,
+  },
+  accordionIcon: {
+    fontSize: 20,
+  },
+  accordionSub: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 1,
+    maxWidth: 240,
   },
   accordionCard: {
     marginBottom: spacing.md,

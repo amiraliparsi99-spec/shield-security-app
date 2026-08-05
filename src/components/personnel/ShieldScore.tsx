@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
+import { HelpHint } from "@/components/ui/HelpHint";
 
 type Badge = {
   id: string;
@@ -191,7 +192,14 @@ export function ShieldScore() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h2 className="text-xl font-bold text-white">Shield Score</h2>
+        <h2 className="text-xl font-bold text-white inline-flex items-center gap-2">
+          Shield Score
+          <HelpHint label="What is your Shield Score?">
+            Your Shield Score is a 0&ndash;100 rating that sums up how reliable and well-reviewed you are.
+            It goes up when you show up on time, get good reviews, complete shifts, and keep your documents
+            verified. Venues see it when deciding who to book, so a higher score means more work.
+          </HelpHint>
+        </h2>
         <p className="text-sm text-zinc-400">Your reputation and achievements</p>
       </div>
 

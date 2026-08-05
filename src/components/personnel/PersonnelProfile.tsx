@@ -1,15 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useId } from "react";
+import { useId, type ReactNode } from "react";
 import type { Personnel, PersonnelReviewWithAuthor } from "@/types/database";
 import { formatLocation, formatExperience, formatRating } from "@/lib/format";
+import { IntroVideoPlayer } from "@/components/personnel/IntroVideoPlayer";
 
 interface PersonnelProfileProps {
   personnel: Personnel;
   avatarUrl?: string | null;
   reviews: PersonnelReviewWithAuthor[];
   showMessageButton?: boolean;
+  /** Optional action(s) rendered in the header (e.g. Add to Preferred Staff). */
+  headerAction?: ReactNode;
 }
 
 function Stars({ value, size = "md" }: { value: number; size?: "sm" | "md" }) {
@@ -55,7 +58,7 @@ function StatusBadge({ status }: { status: Personnel["status"] }) {
   );
 }
 
-export function PersonnelProfile({ personnel, avatarUrl, reviews, showMessageButton = true }: PersonnelProfileProps) {
+export function PersonnelProfile({ personnel, avatarUrl, reviews, showMessageButton = true, headerAction }: PersonnelProfileProps) {
   const avgRating = reviews.length
     ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length
     : null;
@@ -100,17 +103,33 @@ export function PersonnelProfile({ personnel, avatarUrl, reviews, showMessageBut
             <span>{formatExperience(personnel)}</span>
           </div>
 
-          {showMessageButton && personnel.user_id && (
-            <Link
-              href={"/chat/start?with=" + encodeURIComponent(personnel.user_id)}
-              className="mt-4 inline-flex items-center gap-2 rounded-xl bg-shield-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-shield-500/20 transition hover:bg-shield-600 active:scale-[0.98]"
-            >
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
-              Message
-            </Link>
-          )}
+          {headerAction
+            ? <div className="mt-4">{headerAction}</div>
+            : showMessageButton && personnel.user_id && (
+              <Link
+                href={"/chat/start?with=" + encodeURIComponent(personnel.user_id)}
+                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-shield-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-shield-500/20 transition hover:bg-shield-600 active:scale-[0.98]"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                Message
+              </Link>
+            )}
         </div>
       </div>
+
+      {/* Intro video (only shown once approved) */}
+      {personnel.intro_video_status === "approved" &&
+        personnel.intro_video_playback_id && (
+          <div className="mt-8">
+            <h2 className="mb-2 text-sm font-medium text-zinc-500">Intro video</h2>
+            <div className="w-[200px] max-w-full">
+              <IntroVideoPlayer
+                playbackId={personnel.intro_video_playback_id}
+                name={personnel.display_name}
+              />
+            </div>
+          </div>
+        )}
 
       {/* Certs, rate, bio */}
       <div className="mt-8 space-y-6">
