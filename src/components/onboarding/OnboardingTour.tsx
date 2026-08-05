@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface TourStep {
@@ -22,6 +22,8 @@ export function OnboardingTour({ steps, tourId, onComplete }: OnboardingTourProp
   const [currentStep, setCurrentStep] = useState(0);
   const [isVisible, setIsVisible] = useState(false);
   const [targetRect, setTargetRect] = useState<DOMRect | null>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
 
   // Check if tour was already completed
   useEffect(() => {
@@ -32,7 +34,8 @@ export function OnboardingTour({ steps, tourId, onComplete }: OnboardingTourProp
     }
   }, [tourId]);
 
-  // Find target element position
+  // Find target element position. Scroll it into view first so it's never
+  // clipped at a viewport edge, then measure it (and re-measure on resize).
   useEffect(() => {
     if (!isVisible || steps[currentStep].position === 'center') {
       setTargetRect(null);
@@ -40,10 +43,39 @@ export function OnboardingTour({ steps, tourId, onComplete }: OnboardingTourProp
     }
 
     const target = document.querySelector(steps[currentStep].target);
-    if (target) {
-      setTargetRect(target.getBoundingClientRect());
+    if (!target) {
+      setTargetRect(null);
+      return;
     }
+
+    target.scrollIntoView({ block: "nearest", inline: "nearest" });
+
+    const measure = () => setTargetRect(target.getBoundingClientRect());
+    // Measure after the scroll settles.
+    const raf = requestAnimationFrame(measure);
+
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
   }, [currentStep, isVisible, steps]);
+
+  // Once we know the target rect AND the tooltip's real size, compute a
+  // position that's always fully inside the viewport (flip + clamp).
+  useLayoutEffect(() => {
+    if (!isVisible) return;
+    if (!targetRect || steps[currentStep].position === 'center') {
+      setCoords(null);
+      return;
+    }
+    const el = tooltipRef.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    setCoords(getTooltipPosition(targetRect, steps[currentStep].position, width, height));
+  }, [targetRect, currentStep, isVisible, steps]);
 
   const handleNext = () => {
     if (currentStep < steps.length - 1) {
@@ -98,10 +130,11 @@ export function OnboardingTour({ steps, tourId, onComplete }: OnboardingTourProp
 
         {/* Tooltip */}
         <motion.div
+          ref={tooltipRef}
           className={`absolute ${isCentered ? 'top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2' : ''}`}
-          style={!isCentered && targetRect ? getTooltipPosition(targetRect, step.position) : undefined}
+          style={!isCentered ? { top: coords?.top ?? 0, left: coords?.left ?? 0 } : undefined}
           initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
+          animate={{ opacity: !isCentered && !coords ? 0 : 1, y: 0 }}
           key={currentStep}
         >
           <div className="w-80 bg-zinc-900 border border-zinc-700 rounded-2xl p-6 shadow-2xl">
@@ -157,42 +190,50 @@ export function OnboardingTour({ steps, tourId, onComplete }: OnboardingTourProp
 
 function getTooltipPosition(
   rect: DOMRect,
-  position: TourStep['position']
-): React.CSSProperties {
-  const padding = 16;
-  
+  position: TourStep['position'],
+  tipW: number,
+  tipH: number
+): { top: number; left: number } {
+  const gap = 16; // distance from the highlighted element
+  const margin = 12; // minimum distance from any viewport edge
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  let top: number;
+  let left: number;
+
   switch (position) {
     case 'top':
-      return {
-        bottom: window.innerHeight - rect.top + padding,
-        left: rect.left + rect.width / 2,
-        transform: 'translateX(-50%)',
-      };
     case 'bottom':
-      return {
-        top: rect.bottom + padding,
-        left: rect.left + rect.width / 2,
-        transform: 'translateX(-50%)',
-      };
+      top = position === 'top' ? rect.top - tipH - gap : rect.bottom + gap;
+      // Flip vertically if it would overflow the chosen edge.
+      if (position === 'bottom' && top + tipH > vh - margin) {
+        top = rect.top - tipH - gap;
+      } else if (position === 'top' && top < margin) {
+        top = rect.bottom + gap;
+      }
+      left = rect.left + rect.width / 2 - tipW / 2;
+      break;
     case 'left':
-      return {
-        top: rect.top + rect.height / 2,
-        right: window.innerWidth - rect.left + padding,
-        transform: 'translateY(-50%)',
-      };
     case 'right':
-      return {
-        top: rect.top + rect.height / 2,
-        left: rect.right + padding,
-        transform: 'translateY(-50%)',
-      };
+      left = position === 'left' ? rect.left - tipW - gap : rect.right + gap;
+      if (position === 'right' && left + tipW > vw - margin) {
+        left = rect.left - tipW - gap;
+      } else if (position === 'left' && left < margin) {
+        left = rect.right + gap;
+      }
+      top = rect.top + rect.height / 2 - tipH / 2;
+      break;
     default:
-      return {
-        top: rect.bottom + padding,
-        left: rect.left + rect.width / 2,
-        transform: 'translateX(-50%)',
-      };
+      top = rect.bottom + gap;
+      left = rect.left + rect.width / 2 - tipW / 2;
   }
+
+  // Final clamp so the whole tooltip always stays on-screen.
+  left = Math.max(margin, Math.min(left, vw - tipW - margin));
+  top = Math.max(margin, Math.min(top, vh - tipH - margin));
+
+  return { top, left };
 }
 
 // Pre-built tours for different user types
@@ -268,12 +309,6 @@ export const AGENCY_TOUR: TourStep[] = [
     position: 'bottom',
     title: 'Staff Management',
     description: 'Add and manage your security personnel. Track their availability and performance.',
-  },
-  {
-    target: '[data-tour="bookings"]',
-    position: 'bottom',
-    title: 'Client Bookings',
-    description: 'View and respond to booking requests from venues. Assign your best staff.',
   },
   {
     target: '[data-tour="analytics"]',

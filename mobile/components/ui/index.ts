@@ -21,3 +21,4 @@ export { AnimatedCard } from "./AnimatedCard";
 export { AnimatedBackground } from "./AnimatedBackground";
 export { GlowingButton } from "./GlowingButton";
 export { LiveIndicator } from "./LiveIndicator";
+export { HelpHint } from "./HelpHint";

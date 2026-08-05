@@ -28,6 +28,8 @@ import { useCall } from "../../contexts/CallContext";
 import { useTabBar } from "../../contexts/TabBarContext";
 import { useUnreadMessages } from "../../contexts/UnreadMessagesContext";
 import { IncidentRequestCard } from "../../components/messages/IncidentRequestCard";
+import { LocationMessageCard, hasLocationCoords } from "../../components/messages/LocationMessageCard";
+import { getCurrentLocation } from "../../services/location";
 import { GuestGate } from "../../components/auth/GuestGate";
 
 // ——— Types ———
@@ -557,17 +559,45 @@ function MessagesTabContent() {
       position: "📍 In position",
       break: "☕ Taking a break",
       leaving: "👋 Shift complete, leaving",
+      location: "📍 My Location",
     };
 
     safeHaptic("medium");
     setSending(true);
 
+    let messageType: "checkin" | "location" = "checkin";
+    let metadata: Record<string, unknown> = { status, timestamp: new Date().toISOString() };
+    let content = statusMessages[status] || status;
+
+    if (status === "location") {
+      const loc = await getCurrentLocation();
+      if (!loc) {
+        Alert.alert("Location unavailable", "Enable location services to share your position.");
+        setSending(false);
+        return;
+      }
+      messageType = "location";
+      metadata = {
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+        label: "My Location",
+        timestamp: new Date().toISOString(),
+      };
+    } else if (status === "position" || status === "on_site") {
+      const loc = await getCurrentLocation();
+      if (loc) {
+        metadata.latitude = loc.coords.latitude;
+        metadata.longitude = loc.coords.longitude;
+        metadata.label = status === "position" ? "Live position" : statusMessages[status];
+      }
+    }
+
     await supabase.from("group_chat_messages").insert({
       group_chat_id: activeChat.id,
       sender_id: userId,
-      content: statusMessages[status] || status,
-      message_type: "checkin",
-      metadata: { status, timestamp: new Date().toISOString() },
+      content,
+      message_type: messageType,
+      metadata,
     });
 
     await supabase
@@ -927,9 +957,13 @@ function MessagesTabContent() {
             const isDelivered = !!msg.delivered_at;
             const isReadByAll = otherMembers.length > 0 && readByOthers.length >= otherMembers.length;
             const isReadBySome = readByOthers.length > 0;
+            const showLocationCard =
+              (msg.message_type === "location" || msg.message_type === "checkin") &&
+              hasLocationCoords(msg.metadata);
+            const hideTextContent = showLocationCard;
 
             return (
-              <View style={[styles.msgRow, isOwn && styles.msgRowOwn]}>
+              <View style={[styles.msgRow, isOwn && styles.msgRowOwn, showLocationCard && styles.msgRowLocation]}>
                 {!isOwn && (
                   <View style={[
                     styles.msgAvatar,
@@ -945,10 +979,11 @@ function MessagesTabContent() {
                 )}
                 <View
                   style={[
-                    styles.msgBubble,
-                    isOwn ? styles.msgBubbleOwn : styles.msgBubbleOther,
-                    isCheckin && styles.msgBubbleCheckin,
-                    !isOwn && isFromVenueOrAgency && styles.msgBubbleVenue,
+                    showLocationCard ? styles.locationMsgWrap : styles.msgBubble,
+                    !showLocationCard && isOwn && styles.msgBubbleOwn,
+                    !showLocationCard && !isOwn && styles.msgBubbleOther,
+                    !showLocationCard && isCheckin && styles.msgBubbleCheckin,
+                    !showLocationCard && !isOwn && isFromVenueOrAgency && styles.msgBubbleVenue,
                   ]}
                 >
                   {!isOwn && (
@@ -968,7 +1003,16 @@ function MessagesTabContent() {
                       )}
                     </View>
                   )}
-                  <Text style={[styles.msgContent, isOwn && styles.msgContentOwn]}>{msg.content}</Text>
+                  {showLocationCard && (
+                    <LocationMessageCard
+                      metadata={msg.metadata}
+                      fallbackLabel={msg.message_type === "checkin" ? "Live position" : "Shared location"}
+                      isOwn={isOwn}
+                    />
+                  )}
+                  {!hideTextContent && (
+                    <Text style={[styles.msgContent, isOwn && styles.msgContentOwn]}>{msg.content}</Text>
+                  )}
                   <View style={styles.msgMeta}>
                     <Text style={[styles.msgTime, isOwn && styles.msgTimeOwn]}>
                       {formatTime(msg.created_at)}
@@ -1007,6 +1051,7 @@ function MessagesTabContent() {
                 { id: "position", icon: "📍", label: "In position" },
                 { id: "break", icon: "☕", label: "On break" },
                 { id: "leaving", icon: "👋", label: "Leaving" },
+                { id: "location", icon: "🗺️", label: "Share location" },
               ].map((action) => (
                 <TouchableOpacity
                   key={action.id}
@@ -1812,6 +1857,12 @@ const styles = StyleSheet.create({
   msgRowOwn: {
     alignSelf: "flex-end",
     flexDirection: "row-reverse",
+  },
+  msgRowLocation: {
+    maxWidth: "88%",
+  },
+  locationMsgWrap: {
+    gap: 4,
   },
   msgAvatar: {
     width: 32,

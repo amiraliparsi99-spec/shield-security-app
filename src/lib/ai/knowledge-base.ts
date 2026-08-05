@@ -1597,63 +1597,226 @@ Security staff have NO power to search anyone without consent. Searches are a co
   // SECTION 10: SHIELD PLATFORM SPECIFIC
   // ========================================
 
+  // --- VENUE: How to book security ---
   {
-    title: "Using Shield Platform Effectively",
-    content: `**For Security Personnel:**
+    title: "How to Book Security on Shield (Venue)",
+    content: `Booking security on Shield takes a few minutes. Here's exactly how:
 
-**Profile Optimization:**
-- Professional photo (uniform or smart casual)
-- Complete all sections
-- List all qualifications and licenses
-- Set accurate availability
-- Update regularly
+1. **Open the booking form.** Click the purple **"Book Security"** button at the bottom of the left sidebar, or use **Book Security** in Quick Actions on your Overview page.
+2. **Step 1 – Event Details.** Enter the event name, the date, the start and end time, and choose where it's happening (your saved venue address or a new location).
+3. **Step 2 – Staff Requirements.** Add the role(s) you need (e.g. Door Supervisor, Security Guard), how many guards for each role, and the hourly rate you'll pay.
+4. **Step 3 – Select Staff.** Either let any available, verified guard accept the job, or hand-pick specific staff / your Preferred Staff.
+5. **Step 4 – Review.** Check the summary — dates, roles, guards, and total cost.
+6. **Step 5 – Payment.** Pay securely with card. **As soon as payment goes through, your job goes live** and matching guards are notified.
 
-**Getting More Bookings:**
-- Accept shifts quickly (first responders win)
-- Build positive reviews
-- Mark yourself available for urgent shifts
-- Expand your travel radius
-- Accept various venue types
+After that, your booking appears under **Bookings** (in the "Bookings & Events" menu), where you can track who has accepted and confirmed.
 
-**Communication:**
-- Respond to messages promptly
-- Confirm shifts when accepted
-- Report any issues immediately
-- Use professional language
-
-**For Venues:**
-
-**Posting Shifts:**
-- Provide clear description
-- Include all requirements
-- Set fair rates
-- Give adequate notice
-- Specify dress code
-
-**Managing Staff:**
-- Rate staff after shifts
-- Provide feedback
-- Build favorites list
-- Use repeat booking features
-
-**For Agencies:**
-
-**Staff Management:**
-- Verify all licenses on platform
-- Keep availability updated
-- Use bulk scheduling
-- Track performance metrics
-- Communicate through platform
-
-**Growing Your Business:**
-- Complete agency profile
-- Respond to venue requests quickly
-- Build reputation through reviews
-- Use analytics to optimize`,
+**Tip:** The Next button stays disabled until each step is complete, and it tells you exactly what's missing (e.g. "Pick a date"). To reuse a setup for recurring events, save it as an **Event Template**.`,
     category: "platform",
-    subcategory: "usage",
+    subcategory: "booking_venue",
     source: "shield",
-    keywords: ["Shield", "platform", "app", "profile", "booking", "how to use"],
+    keywords: ["book security", "make a booking", "create a booking", "new booking", "post a shift", "hire security", "hire staff", "get security", "need guards", "booking", "how to book"],
+    applicable_roles: ["venue"],
+    priority: 10
+  },
+
+  // --- VENUE: How to find and hire staff ---
+  {
+    title: "How to Find and Hire Staff (Venue)",
+    content: `There are a few ways to get staff onto your bookings on Shield:
+
+**Find individual guards:**
+- Open **Find Staff** (under the "Staff & Agencies" menu in the left sidebar).
+- Browse or search verified security professionals, view their profiles, ratings and Shield Score.
+- Add the good ones to your **Preferred Staff** list so they're easy to book again.
+
+**Invite staff to a job:**
+- When creating a booking, on the **Select Staff** step you can invite specific guards directly instead of opening it to everyone.
+
+**Use an agency:**
+- Open **Find Agencies** to browse security agencies, or **Agency Requests** to receive offers from agencies who want to cover your shifts.
+- Build ongoing relationships under **Partnerships**.
+
+**Already have favourites?** Your **Preferred Staff** and **Staff Ratings** pages help you rebook the people who did a great job.`,
+    category: "platform",
+    subcategory: "find_staff_venue",
+    source: "shield",
+    keywords: ["find staff", "find security", "hire staff", "hire guards", "browse staff", "preferred staff", "invite staff", "search staff", "get staff", "find guards", "find agencies"],
+    applicable_roles: ["venue"],
+    priority: 9
+  },
+
+  // --- VENUE: Live tracking & check-ins ---
+  {
+    title: "Tracking Staff Live and Check-ins (Venue)",
+    content: `Once a shift is running, Shield shows you what's happening in real time:
+
+- **Live Check-In** (under "Live Operations") shows which guards have arrived and checked in, where they are on the map, and any travel-risk warnings if someone may be running late.
+- **Needs Attention** collects anything that needs you — late arrivals, no-shows, and **SOS alerts** from staff. SOS alerts appear with a red badge so you can't miss them.
+- **Mission Control** is a team chat for the shift, so you and your guards can coordinate in one place.
+- **Incidents** is where reports filed during shifts are stored.
+
+Guards check in from the **Shield mobile app** when they arrive on site. If you've drawn a check-in area for the venue, they must be inside it to check in.`,
+    category: "platform",
+    subcategory: "live_tracking_venue",
+    source: "shield",
+    keywords: ["live check-in", "track staff", "tracking", "who checked in", "live map", "needs attention", "mission control", "monitor guards", "are they on site"],
+    applicable_roles: ["venue"],
+    priority: 8
+  },
+
+  // --- VENUE: Check-in areas / geofence ---
+  {
+    title: "Setting a Check-in Area (Geofence) for a Venue",
+    content: `A **check-in area** (sometimes called a geofence) is the boundary on the map where a guard counts as "on site". When it's set, a guard can only check in once they're physically inside it — which stops people checking in from home or down the road.
+
+**How to set one:**
+- While creating a booking, expand the optional **"Draw the area on a map"** step and draw the boundary around the site. You can also **Skip for now**.
+- To save areas for venues you use often, go to **Settings → Check-in areas** and draw the boundary there.
+
+**If you don't draw one,** Shield falls back to checking guards in at the venue's address instead. Drawing an area is recommended for large or multi-entrance sites.`,
+    category: "platform",
+    subcategory: "geofence_venue",
+    source: "shield",
+    keywords: ["check-in area", "geofence", "boundary", "on-site area", "draw area", "check in radius", "site boundary", "where can they check in"],
+    applicable_roles: ["venue"],
+    priority: 7
+  },
+
+  // --- VENUE: Payments & spend ---
+  {
+    title: "Payments and Spend (Venue)",
+    content: `**Paying for a booking:** You pay by card on the final **Payment** step when you create a booking. Your job only goes live once payment succeeds — this is what reserves the staff. Funds are released to guards after the shift is completed.
+
+**Tracking what you spend:** Open the **Spend Dashboard** under the "Analytics & Finance" menu to see your security spend over time, broken down by booking.
+
+**Receipts and history:** Each booking under the **Bookings** page keeps a record of what was paid.`,
+    category: "platform",
+    subcategory: "payments_venue",
+    source: "shield",
+    keywords: ["pay", "payment", "billing", "spend", "how much", "invoice", "receipt", "card", "cost of booking"],
+    applicable_roles: ["venue"],
+    priority: 7
+  },
+
+  // --- PERSONNEL: Find and accept shifts ---
+  {
+    title: "How to Find and Accept Shifts (Security Personnel)",
+    content: `Finding work on Shield is quick:
+
+1. Open **Find Shifts** (the search icon in the left sidebar, or the green "Find Shifts" button at the bottom).
+2. Browse available shifts near you. Filter by date, pay rate, location and role.
+3. Tap a shift to see the full details — venue, times, pay, dress code and location.
+4. **Accept** (or apply for) the shift. First responders often win, so be quick.
+
+**Direct invites:** If a venue or agency invites you to a specific shift, it shows up under **Invitations**.
+
+**After accepting:** Your confirmed shifts appear under **My Shifts** (your calendar). On the day, you'll check in from the Shield mobile app when you arrive.
+
+**Get more offers:** Keep your **Availability** up to date, complete your profile, upload your documents to get verified, and build a high **Shield Score** by being reliable.`,
+    category: "platform",
+    subcategory: "find_shifts_personnel",
+    source: "shield",
+    keywords: ["find shifts", "find work", "get shifts", "accept shift", "apply for shift", "more shifts", "find jobs", "available shifts", "invitations", "how to get work"],
+    applicable_roles: ["personnel"],
+    priority: 10
+  },
+
+  // --- PERSONNEL: Check in and out (mobile) ---
+  {
+    title: "How to Check In and Out of a Shift (Mobile App)",
+    content: `Check-in happens in the **Shield mobile app**, not the website:
+
+1. Open the Shield app and tap your shift for the day (under My Shifts / the home screen).
+2. When you **arrive on site**, tap the big **Check In** button once. Shield uses your phone's location just to confirm you're actually at the venue.
+3. At the end, tap **Check Out** to end the shift. It checks your location one last time to confirm you finished on site.
+
+**If check-in won't work:**
+- *"You're not close enough yet"* — you're outside the venue's check-in area. Move closer to the site.
+- *"A little early"* — the check-in window hasn't opened yet; wait until closer to the start time.
+- *"Location looks fake"* — turn off any fake-GPS/location-spoofing apps and use your real location.
+
+**Emergency?** While checked in, use the red **SOS** button to instantly alert the venue (and your agency). Only use it for genuine emergencies.`,
+    category: "platform",
+    subcategory: "checkin_personnel",
+    source: "shield",
+    keywords: ["check in", "check out", "checkin", "checkout", "clock in", "clock out", "start shift", "end shift", "can't check in", "gps", "sos", "on site"],
+    applicable_roles: ["personnel"],
+    priority: 9
+  },
+
+  // --- PERSONNEL: Availability ---
+  {
+    title: "How to Set Your Availability (Personnel)",
+    content: `Your availability tells venues and agencies when you're free to work, so they can book you.
+
+1. Open the **Availability** page from the left sidebar.
+2. Set your weekly pattern (the days/times you can usually work).
+3. Block out specific dates you're unavailable (holidays, other commitments).
+4. Save — keep it up to date so you only get offers you can actually take.
+
+Accurate availability + a complete profile means more relevant shift offers coming to you.`,
+    category: "platform",
+    subcategory: "availability_personnel",
+    source: "shield",
+    keywords: ["availability", "set availability", "when i can work", "free to work", "schedule", "block dates", "calendar availability"],
+    applicable_roles: ["personnel"],
+    priority: 8
+  },
+
+  // --- PERSONNEL: Getting paid ---
+  {
+    title: "How to Get Paid and Track Earnings (Personnel)",
+    content: `**Set up payouts:** Open the **Payments** page and connect your bank details so Shield can pay you. You need this set up before you can receive money for shifts.
+
+**How payment works:** When you complete a shift, payment is released for the hours you worked. It then transfers to the bank account you connected.
+
+**Track what you've earned:** The **Earnings** page shows your completed shifts, total earnings and payment history in one place — useful for budgeting and tax records.
+
+If a payment looks wrong, check the shift was marked complete (checked out) and that your bank details on the Payments page are correct.`,
+    category: "platform",
+    subcategory: "earnings_personnel",
+    source: "shield",
+    keywords: ["get paid", "payment", "payout", "earnings", "wages", "bank details", "when do i get paid", "money", "salary"],
+    applicable_roles: ["personnel"],
+    priority: 8
+  },
+
+  // --- PERSONNEL: Documents & verification ---
+  {
+    title: "How to Get Verified - Documents and Shield Score",
+    content: `Getting verified unlocks more (and better-paid) shifts.
+
+**Upload your documents:**
+1. Open the **Documents** page from the left sidebar.
+2. Upload your **SIA licence** and **ID**, plus any extra certifications (First Aid, etc.).
+3. Once reviewed, your profile shows as verified, and venues are far more likely to book you.
+
+**Your Shield Score** is a reliability rating (0–100). It goes up when you're verified, keep your details current, turn up on time, check in/out properly and get good reviews. A higher score means you appear higher to venues and win more work. See it on the **Shield Score** page.
+
+**Intro video:** Some roles let you add a short intro video to stand out — look for that option on your profile.`,
+    category: "platform",
+    subcategory: "verification_personnel",
+    source: "shield",
+    keywords: ["documents", "upload", "sia licence", "sia license", "verify", "verification", "verified", "shield score", "id", "certifications", "get verified"],
+    applicable_roles: ["personnel"],
+    priority: 8
+  },
+
+  // --- GENERAL: Getting started / what is Shield ---
+  {
+    title: "Getting Started on Shield",
+    content: `Shield is the platform that connects venues with verified security staff (directly or through agencies).
+
+**If you're a VENUE:** Your job is to post bookings and watch them get filled. Start by clicking **Book Security** to create your first booking, then use **Live Check-In** and **Needs Attention** on the day to keep an eye on things.
+
+**If you're SECURITY PERSONNEL:** Your job is to win and complete shifts. Start with **Find Shifts** to pick up work, set your **Availability**, upload your documents on the **Documents** page to get verified, and check in from the mobile app on the day.
+
+**Need a refresher?** You can replay the guided tour any time from **Settings → Help & Guided Tour**, and tap the green shield button (bottom-right) to ask this assistant anything.`,
+    category: "platform",
+    subcategory: "getting_started",
+    source: "shield",
+    keywords: ["getting started", "what is shield", "how does shield work", "new", "begin", "first time", "help", "what can i do", "overview"],
     applicable_roles: ["venue", "agency", "personnel"],
     priority: 7
   },
@@ -1673,52 +1836,92 @@ export const KNOWLEDGE_CATEGORIES = [
   { id: 'platform', name: 'Shield Platform', icon: '🛡️' },
 ];
 
+// Common filler words we don't want to treat as meaningful query terms.
+const STOPWORDS = new Set([
+  "the", "and", "for", "are", "you", "your", "with", "how", "what", "where",
+  "when", "can", "could", "would", "should", "this", "that", "these", "those",
+  "from", "have", "has", "had", "but", "not", "all", "any", "some", "out",
+  "get", "got", "use", "using", "need", "want", "about", "into", "onto",
+  "please", "help", "tell", "show", "give", "make", "does", "did", "will",
+]);
+
+/**
+ * Detects whether the user is asking how to *use the Shield app* (navigation,
+ * how-to, "where do I…") rather than asking for general security-industry
+ * advice. We use this to bias retrieval toward the platform how-to docs.
+ */
+function isAppHowToQuery(queryLower: string): boolean {
+  const howTo =
+    /(how (do|can|to)|where (do|can|is|are)|how does .*(work|happen)|set up|setup|navigate|find the|get started|log ?in|sign ?in)/.test(
+      queryLower
+    );
+  const appActions =
+    /(book(ing)? (a |security)|book security|post (a )?shift|create (a )?booking|find (security|staff|guard|work|shift|job|agenc)|hire (security|staff|guard)|preferred staff|check ?in|check ?out|set( my)? availability|get paid|payout|earnings|upload|verif|document|geofence|check-?in area|shield score|sos|mission control|live check|needs attention)/.test(
+      queryLower
+    );
+  return howTo || appActions;
+}
+
 // Function to get relevant knowledge for a query
 export function getRelevantKnowledge(
-  query: string, 
+  query: string,
   userRole: string,
   limit: number = 5
 ): KnowledgeDocument[] {
   const queryLower = query.toLowerCase();
-  
-  // Score each document based on keyword matches
-  const scored = SECURITY_KNOWLEDGE_BASE.map(doc => {
+  const queryWords = queryLower
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 2 && !STOPWORDS.has(w));
+  const appIntent = isAppHowToQuery(queryLower);
+
+  // Score each document based on keyword/title/content overlap.
+  const scored = SECURITY_KNOWLEDGE_BASE.map((doc) => {
     let score = 0;
-    
-    // Check title match (high weight)
-    if (doc.title.toLowerCase().includes(queryLower)) score += 15;
-    
-    // Check keyword matches (medium weight)
-    doc.keywords.forEach(keyword => {
-      if (queryLower.includes(keyword.toLowerCase())) score += 8;
-      // Partial keyword match
-      if (keyword.toLowerCase().split(' ').some(w => queryLower.includes(w))) score += 3;
+    const titleLower = doc.title.toLowerCase();
+    const contentLower = doc.content.toLowerCase();
+
+    // Whole-phrase title hit (rare but very strong).
+    if (queryLower.length > 4 && titleLower.includes(queryLower)) score += 25;
+
+    // Title word overlap — a strong relevance signal.
+    queryWords.forEach((w) => {
+      if (titleLower.includes(w)) score += 6;
     });
-    
-    // Check content match
-    const queryWords = queryLower.split(' ').filter(w => w.length > 3);
-    queryWords.forEach(word => {
-      if (doc.content.toLowerCase().includes(word)) score += 2;
+
+    // Keyword matches — the primary relevance signal.
+    doc.keywords.forEach((keyword) => {
+      const k = keyword.toLowerCase();
+      if (queryLower.includes(k)) {
+        // Longer, more specific keyword phrases are worth more.
+        score += k.includes(" ") ? 14 : 9;
+      } else if (k.split(" ").some((w) => w.length > 3 && queryLower.includes(w))) {
+        score += 3;
+      }
     });
-    
-    // Boost by priority
-    score += doc.priority;
-    
-    // Boost if applicable to user role
-    if (doc.applicable_roles.includes(userRole as any)) score += 5;
-    
-    // Extra boost if category matches query intent
-    if (queryLower.includes(doc.category)) score += 5;
-    
+
+    // Content word overlap — weak signal, just a tiebreaker.
+    queryWords.forEach((w) => {
+      if (contentLower.includes(w)) score += 1;
+    });
+
+    // When the user is asking how to use the app, strongly prefer the
+    // Shield platform how-to docs over general industry essays.
+    if (doc.category === "platform" && appIntent) score += 16;
+
+    // Light role relevance and priority — tiebreakers only, not dominators.
+    if (doc.applicable_roles.includes(userRole as KnowledgeDocument["applicable_roles"][number]))
+      score += 3;
+    score += doc.priority * 0.3;
+
     return { doc, score };
   });
-  
-  // Sort by score and return top results
+
+  // Require a real match (keyword/title overlap), not just priority/role.
   return scored
-    .filter(s => s.score > 8)
+    .filter((s) => s.score >= 12)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
-    .map(s => s.doc);
+    .map((s) => s.doc);
 }
 
 // Get all documents for a specific role

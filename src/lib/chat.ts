@@ -22,11 +22,11 @@ export async function resolveUserDisplay(userId: string): Promise<ResolveUser | 
     return { displayName: data?.display_name ?? "Security", role };
   }
   if (role === "agency") {
-    const { data } = await supabase.from("agencies").select("name").eq("owner_id", userId).limit(1).maybeSingle();
+    const { data } = await supabase.from("agencies").select("name").eq("user_id", userId).limit(1).maybeSingle();
     return { displayName: data?.name ?? "Agency", role };
   }
   if (role === "venue") {
-    const { data } = await supabase.from("venues").select("name").eq("owner_id", userId).limit(1).maybeSingle();
+    const { data } = await supabase.from("venues").select("name").eq("user_id", userId).limit(1).maybeSingle();
     return { displayName: data?.name ?? "Venue", role };
   }
 

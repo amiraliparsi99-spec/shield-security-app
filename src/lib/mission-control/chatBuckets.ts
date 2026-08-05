@@ -12,7 +12,6 @@ export type ShiftMissionSummary = {
   booking_id: string;
   status: string;
   personnel_id: string | null;
-  cancelled_at?: string | null;
 };
 
 const ACTIVE_SHIFT = new Set(["pending", "accepted", "checked_in"]);
@@ -25,7 +24,7 @@ export async function fetchShiftSummariesForBookings(
   if (bookingIds.length === 0) return {};
   const { data, error } = await supabase
     .from("shifts")
-    .select("id, booking_id, status, personnel_id, cancelled_at")
+    .select("id, booking_id, status, personnel_id")
     .in("booking_id", bookingIds);
   if (error || !data) {
     console.error("[mission-control] fetch shifts for bookings:", error?.message);

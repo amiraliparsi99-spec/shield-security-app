@@ -196,14 +196,14 @@ export function useConversations() {
           const { data: v } = await supabase
             .from("venues")
             .select("name")
-            .eq("owner_id", otherUserId)
+            .eq("user_id", otherUserId)
             .maybeSingle();
           displayName = v?.name || "Venue";
         } else if (role === "agency") {
           const { data: a } = await supabase
             .from("agencies")
             .select("name")
-            .eq("owner_id", otherUserId)
+            .eq("user_id", otherUserId)
             .maybeSingle();
           displayName = a?.name || "Agency";
         }

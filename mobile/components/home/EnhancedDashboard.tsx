@@ -290,6 +290,8 @@ interface TodayShiftProps {
   role: string;
   hourlyRate: number;
   isActive?: boolean;
+  briefPreview?: string | null;
+  locationLine?: string | null;
   onPress: () => void;
   onCheckIn?: () => void;
 }
@@ -303,6 +305,8 @@ export function EnhancedTodayShift({
   role,
   hourlyRate,
   isActive,
+  briefPreview,
+  locationLine,
   onPress,
   onCheckIn,
 }: TodayShiftProps) {
@@ -350,6 +354,16 @@ export function EnhancedTodayShift({
               </View>
               <Text style={styles.todayShiftVenue}>{venueName}</Text>
               <Text style={styles.todayShiftEvent}>{eventName}</Text>
+              {briefPreview ? (
+                <Text style={styles.todayShiftBrief} numberOfLines={2}>
+                  📋 {briefPreview}
+                </Text>
+              ) : null}
+              {locationLine ? (
+                <Text style={styles.todayShiftLocation} numberOfLines={2}>
+                  📍 {locationLine}
+                </Text>
+              ) : null}
             </View>
           </View>
 
@@ -640,6 +654,19 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textSecondary,
     marginTop: 2,
+  },
+  todayShiftBrief: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.sm,
+    lineHeight: 18,
+  },
+  todayShiftLocation: {
+    ...typography.caption,
+    color: colors.accent,
+    marginTop: spacing.xs,
+    lineHeight: 18,
+    fontWeight: "600",
   },
   todayShiftDetails: {
     flexDirection: "row",

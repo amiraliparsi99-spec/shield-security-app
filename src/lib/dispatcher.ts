@@ -105,7 +105,7 @@ export async function checkGuardStatus(
     // Fetch shift + related booking + venue info
     const { data: shift, error: shiftErr } = await supabase
       .from("shifts")
-      .select("*, bookings(id, event_name, venue_id, venues(id, name, owner_id, latitude, longitude))")
+      .select("*, bookings(id, event_name, venue_id, venues(id, name, user_id, latitude, longitude))")
       .eq("id", shiftId)
       .single();
 
@@ -220,7 +220,7 @@ export async function findReplacement(
   // 1. Get shift + venue location
   const { data: shift, error: shiftErr } = await supabase
     .from("shifts")
-    .select("*, bookings(id, event_name, venue_id, venues(id, name, owner_id, latitude, longitude))")
+    .select("*, bookings(id, event_name, venue_id, venues(id, name, user_id, latitude, longitude))")
     .eq("id", shiftId)
     .single();
 
@@ -307,7 +307,7 @@ export async function findReplacement(
     console.log(`[DISPATCHER] No standby candidates found near ${venueName} for shift ${shiftId}.`);
 
     // Notify venue manager that no replacements were found
-    const venueOwnerId = venue?.owner_id;
+    const venueOwnerId = venue?.user_id;
     if (venueOwnerId) {
       await dispatchPush(
         venueOwnerId,
@@ -409,7 +409,7 @@ export async function assignReplacement(
     // 1. Fetch the current shift state
     const { data: shift, error: shiftErr } = await supabase
       .from("shifts")
-      .select("*, bookings(id, event_name, venue_id, venues(id, name, owner_id))")
+      .select("*, bookings(id, event_name, venue_id, venues(id, name, user_id))")
       .eq("id", shiftId)
       .single();
 
@@ -430,7 +430,7 @@ export async function assignReplacement(
     const originalGuardId = shift.personnel_id;
     const venue = (shift as any).bookings?.venues;
     const venueName = venue?.name ?? "the venue";
-    const venueOwnerId = venue?.owner_id;
+    const venueOwnerId = venue?.user_id;
 
     // 2. Atomic update — only succeeds if dispatcher_status hasn't changed
     //    This prevents the race condition where two guards tap "Accept" at once.

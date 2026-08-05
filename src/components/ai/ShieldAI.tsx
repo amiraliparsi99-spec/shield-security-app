@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface Message {
@@ -16,18 +17,91 @@ interface QuickAction {
   icon: string;
 }
 
-const quickActions: QuickAction[] = [
-  { label: "Find staff", prompt: "Help me find security staff for my venue", icon: "🔍" },
-  { label: "Check earnings", prompt: "Show me my earnings summary", icon: "💰" },
-  { label: "Optimize profile", prompt: "How can I improve my profile to get more bookings?", icon: "✨" },
-  { label: "Help with booking", prompt: "I need help creating a booking", icon: "📅" },
-];
+const quickActionsByRole: Record<string, QuickAction[]> = {
+  venue: [
+    { label: "Make a booking", prompt: "How do I make a booking?", icon: "📅" },
+    { label: "Find staff", prompt: "How do I find and hire staff?", icon: "🔍" },
+    { label: "Track check-ins", prompt: "How do I track who has checked in?", icon: "📍" },
+    { label: "Staff needed?", prompt: "How many security staff do I need for 500 guests?", icon: "👥" },
+  ],
+  personnel: [
+    { label: "Find shifts", prompt: "How do I find and accept shifts?", icon: "🔍" },
+    { label: "Check in", prompt: "How do I check in to a shift?", icon: "📍" },
+    { label: "Get paid", prompt: "How do I get paid and see my earnings?", icon: "💰" },
+    { label: "Get verified", prompt: "How do I get verified and upload my documents?", icon: "✅" },
+  ],
+  agency: [
+    { label: "Find work", prompt: "How do I find work for my staff?", icon: "🔍" },
+    { label: "Manage team", prompt: "How do I manage my team on Shield?", icon: "👥" },
+    { label: "Win contracts", prompt: "How can I win more security contracts?", icon: "📈" },
+    { label: "Compliance", prompt: "What insurance does my agency need?", icon: "📜" },
+  ],
+};
 
 interface ShieldAIProps {
   isOpen: boolean;
   onClose: () => void;
   userRole?: "venue" | "personnel" | "agency";
   userName?: string;
+}
+
+/** Render inline **bold** segments as real bold text (no visible asterisks). */
+function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) => {
+    if (/^\*\*[^*]+\*\*$/.test(part)) {
+      return (
+        <strong key={`${keyPrefix}-b-${i}`} className="font-semibold text-white">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    return <span key={`${keyPrefix}-t-${i}`}>{part}</span>;
+  });
+}
+
+/**
+ * Lightweight Markdown renderer for assistant messages. Handles the small
+ * subset the model actually uses (headings, bold, bullet and numbered lists)
+ * so users see clean, bold, professional text instead of raw ** and # symbols.
+ */
+function FormattedMessage({ content }: { content: string }) {
+  const blocks = content.split("\n").map((raw, idx) => {
+    const line = raw.trimEnd();
+    if (!line.trim()) return <div key={idx} className="h-1.5" />;
+
+    const heading = line.match(/^#{1,6}\s+(.*)$/);
+    if (heading) {
+      return (
+        <p key={idx} className="mt-2 mb-0.5 text-[15px] font-bold text-white">
+          {renderInline(heading[1], `h${idx}`)}
+        </p>
+      );
+    }
+
+    const bullet = line.match(/^[-•]\s+(.*)$/);
+    if (bullet) {
+      return (
+        <div key={idx} className="flex gap-2">
+          <span className="select-none text-zinc-500">•</span>
+          <span className="flex-1">{renderInline(bullet[1], `u${idx}`)}</span>
+        </div>
+      );
+    }
+
+    const numbered = line.match(/^(\d+)\.\s+(.*)$/);
+    if (numbered) {
+      return (
+        <div key={idx} className="flex gap-2">
+          <span className="select-none font-semibold text-zinc-300">{numbered[1]}.</span>
+          <span className="flex-1">{renderInline(numbered[2], `n${idx}`)}</span>
+        </div>
+      );
+    }
+
+    return <p key={idx}>{renderInline(line, `p${idx}`)}</p>;
+  });
+
+  return <div className="space-y-0.5 text-sm leading-relaxed">{blocks}</div>;
 }
 
 export function ShieldAI({ isOpen, onClose, userRole, userName }: ShieldAIProps) {
@@ -65,9 +139,9 @@ export function ShieldAI({ isOpen, onClose, userRole, userName }: ShieldAIProps)
   const getGreeting = () => {
     const name = userName ? `, ${userName}` : "";
     const roleGreetings: Record<string, string> = {
-      venue: `Hi${name}! 👋 I'm Shield AI, your security staffing assistant.\n\nI can help you:\n• Find and book security staff\n• Predict staffing needs for events\n• Answer questions about the platform\n\nWhat can I help you with today?`,
-      personnel: `Hi${name}! 👋 I'm Shield AI, your career assistant.\n\nI can help you:\n• Find the best-paying shifts in your area\n• Track your earnings and taxes\n• Optimize your profile for more bookings\n\nWhat would you like to know?`,
-      agency: `Hi${name}! 👋 I'm Shield AI, your agency assistant.\n\nI can help you:\n• Manage staff scheduling\n• Forecast demand and revenue\n• Find backup staff with Instant Fill\n• Track compliance and documents\n\nHow can I assist you today?`,
+      venue: `Hi${name}! 👋 I'm Vera, your security assistant.\n\nI can help you:\n• Find and book security staff\n• Predict staffing needs for events\n• Answer questions about the platform\n\nWhat can I help you with today?`,
+      personnel: `Hi${name}! 👋 I'm Vera, your security assistant.\n\nI can help you:\n• Find the best-paying shifts in your area\n• Track your earnings and payments\n• Optimize your profile for more bookings\n\nWhat would you like to know?`,
+      agency: `Hi${name}! 👋 I'm Vera, your security assistant.\n\nI can help you:\n• Manage staff scheduling\n• Forecast demand and revenue\n• Find backup staff with Instant Fill\n• Track compliance and documents\n\nHow can I assist you today?`,
     };
     return roleGreetings[userRole || "venue"] || roleGreetings.venue;
   };
@@ -167,14 +241,20 @@ export function ShieldAI({ isOpen, onClose, userRole, userName }: ShieldAIProps)
             {/* Header */}
             <div className="flex items-center justify-between border-b border-white/10 bg-zinc-950 px-4 py-3">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600">
-                  <span className="text-xl">🛡️</span>
+                <div className="h-10 w-10 overflow-hidden rounded-xl ring-1 ring-emerald-500/40">
+                  <Image
+                    src="/vera-avatar.png"
+                    alt="Vera"
+                    width={40}
+                    height={40}
+                    className="h-full w-full object-cover"
+                  />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-white">Shield AI</h3>
+                  <h3 className="font-semibold text-white">Vera</h3>
                   <p className="text-xs text-emerald-400 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                    Security Operations Assistant • RAG Enabled
+                    Your security assistant
                   </p>
                 </div>
               </div>
@@ -213,7 +293,11 @@ export function ShieldAI({ isOpen, onClose, userRole, userName }: ShieldAIProps)
                         : "bg-zinc-900 text-zinc-100 border border-white/10"
                     }`}
                   >
-                    <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
+                    {message.role === "assistant" ? (
+                      <FormattedMessage content={message.content} />
+                    ) : (
+                      <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
+                    )}
                     <p className={`mt-1 text-xs ${
                       message.role === "user" ? "text-white/60" : "text-zinc-500"
                     }`}>
@@ -246,7 +330,7 @@ export function ShieldAI({ isOpen, onClose, userRole, userName }: ShieldAIProps)
               <div className="border-t border-white/10 bg-zinc-950 px-4 py-3">
                 <p className="mb-2 text-xs font-medium text-zinc-500">Popular questions</p>
                 <div className="flex flex-wrap gap-2">
-                  {quickActions.map((action) => (
+                  {(quickActionsByRole[userRole || "venue"] || quickActionsByRole.venue).map((action) => (
                     <button
                       key={action.label}
                       onClick={() => handleQuickAction(action)}
@@ -299,17 +383,26 @@ export function ShieldAIButton({ onClick }: { onClick: () => void }) {
   return (
     <motion.button
       onClick={onClick}
-      className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-r from-emerald-600 to-emerald-500 text-white shadow-lg shadow-emerald-500/30 transition hover:shadow-xl hover:shadow-emerald-500/40"
+      aria-label="Open Vera, your security assistant"
+      className="fixed bottom-24 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg shadow-emerald-500/30 transition hover:shadow-xl hover:shadow-emerald-500/40 lg:bottom-6 lg:right-6"
       whileHover={{ scale: 1.05 }}
       whileTap={{ scale: 0.95 }}
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 1 }}
     >
-      <span className="text-2xl">🛡️</span>
-      
-      {/* Pulse effect */}
+      {/* Pulse effect (sits behind the avatar so it isn't clipped) */}
       <span className="absolute inset-0 rounded-full bg-emerald-500 animate-ping opacity-20" />
+
+      <span className="relative block h-full w-full overflow-hidden rounded-full ring-2 ring-emerald-500/50">
+        <Image
+          src="/vera-avatar.png"
+          alt="Vera"
+          width={56}
+          height={56}
+          className="h-full w-full object-cover"
+        />
+      </span>
     </motion.button>
   );
 }

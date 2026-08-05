@@ -13,6 +13,31 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+// Default to Claude Sonnet 4.6 (best balance of quality + speed). Set
+// ANTHROPIC_MODEL=claude-haiku-4-5 for a cheaper/faster option.
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
+
+/**
+ * Convert our internal message list into the shape Anthropic's Messages API
+ * expects: only user/assistant roles, and the first message MUST be a user
+ * message (so we drop any leading assistant greeting).
+ */
+function toAnthropicMessages(
+  messages: Array<{ role: string; content: string }>
+): Array<{ role: "user" | "assistant"; content: string }> {
+  const mapped = messages
+    .filter((m) => m.role !== "system" && m.content?.trim())
+    .map((m) => ({
+      role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
+      content: m.content,
+    }));
+  // Drop leading assistant messages — the conversation must start with user.
+  while (mapped.length && mapped[0].role === "assistant") {
+    mapped.shift();
+  }
+  return mapped;
+}
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
@@ -106,12 +131,53 @@ export async function POST(request: NextRequest) {
       })),
     ];
 
-    let aiResponse: string;
+    let aiResponse: string = "";
     let tokensUsed = 0;
     let modelUsed = "fallback";
 
-    // Call AI API
-    if (OPENAI_API_KEY) {
+    // === Primary provider: Anthropic Claude ===
+    if (ANTHROPIC_API_KEY) {
+      try {
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: ANTHROPIC_MODEL,
+            max_tokens: 1500,
+            temperature: 0.5,
+            system: systemMessage,
+            messages: toAnthropicMessages(messages.slice(-10)),
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const text = Array.isArray(data.content)
+            ? data.content
+                .filter((b: { type?: string }) => b.type === "text")
+                .map((b: { text?: string }) => b.text || "")
+                .join("\n")
+                .trim()
+            : "";
+          aiResponse = text || generateFallbackResponse(userMessage, userContext, relevantKnowledge);
+          tokensUsed =
+            (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0);
+          modelUsed = ANTHROPIC_MODEL;
+        } else {
+          const errBody = await response.text();
+          console.error(`Anthropic API error (${response.status}): ${errBody}`);
+          aiResponse = generateFallbackResponse(userMessage, userContext, relevantKnowledge);
+        }
+      } catch (e) {
+        console.error("Anthropic request failed:", e);
+        aiResponse = generateFallbackResponse(userMessage, userContext, relevantKnowledge);
+      }
+    } else if (OPENAI_API_KEY) {
+      // === Secondary fallback provider: OpenAI ===
       try {
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
           method: "POST",
@@ -139,6 +205,7 @@ export async function POST(request: NextRequest) {
         aiResponse = generateFallbackResponse(userMessage, userContext, relevantKnowledge);
       }
     } else {
+      // === No provider configured: knowledge-base fallback ===
       aiResponse = generateFallbackResponse(userMessage, userContext, relevantKnowledge);
     }
 
@@ -258,20 +325,38 @@ Would you like me to calculate staffing for a specific event?`;
 Need specific license guidance?`;
   }
 
-  return `**Shield AI** 🛡️
+  const roleTips: Record<string, string> = {
+    venue: `**Using Shield:**
+- "How do I make a booking?"
+- "How do I find and hire staff?"
+- "How do I track who's checked in?"
 
-I'm your security operations assistant. I can help with:
-
-📋 **Operations** - Staffing, scheduling, incident management
-📜 **Compliance** - SIA licensing, legal requirements
-💼 **Business** - Pricing, staff management, best practices
-
-${context.role === "venue" ? `\n📊 **Your venue** has ${context.totalBookings || 0} bookings` : ""}
-
-**Try asking:**
+**Security advice:**
 - "How many security do I need for 500 guests?"
-- "What are SIA license requirements?"
-- "How do I handle aggressive customers?"
+- "What are my premises licence requirements?"`,
+    personnel: `**Using Shield:**
+- "How do I find and accept shifts?"
+- "How do I check in to a shift?"
+- "How do I get paid and see my earnings?"
+- "How do I get verified?"
+
+**Career advice:**
+- "How do I renew my SIA licence?"
+- "How do I get more shifts?"`,
+    agency: `**Using Shield:**
+- "How do I find work for my staff?"
+- "How do I manage my team?"
+
+**Business advice:**
+- "How do I win more contracts?"
+- "What insurance does my agency need?"`,
+  };
+
+  return `**Hi, I'm Vera** 🛡️
+
+I can help you **use the Shield app** and answer **security industry** questions.
+
+${roleTips[context.role] || roleTips.venue}
 
 What would you like to know?`;
 }

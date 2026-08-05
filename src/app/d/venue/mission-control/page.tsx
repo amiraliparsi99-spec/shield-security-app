@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSupabase } from "@/hooks/useSupabase";
 import Link from "next/link";
+import { HelpHint } from "@/components/ui/HelpHint";
 import {
   getMissionControlChats,
   getGroupChat,
@@ -17,6 +18,7 @@ import {
   type GroupChatMember,
   type GroupChatMessage,
 } from "@/lib/db/mission-control";
+import { LocationMessageCard } from "@/components/mission-control/LocationMessageCard";
 import {
   fetchBookingStatusesForIds,
   fetchShiftSummariesForBookings,
@@ -224,36 +226,52 @@ export default function MissionControlPage() {
     if (!activeChat) return;
 
     setSending(true);
+    const getCoords = (): Promise<{ latitude: number; longitude: number } | null> =>
+      new Promise((resolve) => {
+        if (!navigator.geolocation) {
+          resolve(null);
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(
+          (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+          () => resolve(null),
+          { enableHighAccuracy: true, timeout: 10_000, maximumAge: 0 },
+        );
+      });
+
     switch (action) {
       case "arriving":
         await sendCheckInMessage(supabase, activeChat.id, "arriving");
         break;
-      case "on_site":
-        await sendCheckInMessage(supabase, activeChat.id, "on_site");
+      case "on_site": {
+        const coords = await getCoords();
+        await sendCheckInMessage(supabase, activeChat.id, "on_site", undefined, coords ?? undefined);
         break;
-      case "position":
-        await sendCheckInMessage(supabase, activeChat.id, "position");
+      }
+      case "position": {
+        const coords = await getCoords();
+        await sendCheckInMessage(supabase, activeChat.id, "position", undefined, coords ?? undefined);
         break;
+      }
       case "break":
         await sendCheckInMessage(supabase, activeChat.id, "break");
         break;
       case "leaving":
         await sendCheckInMessage(supabase, activeChat.id, "leaving");
         break;
-      case "location":
-        // Get current location and send
-        if (navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(async (pos) => {
-            await sendLocationPin(
-              supabase,
-              activeChat.id,
-              "My Location",
-              pos.coords.latitude,
-              pos.coords.longitude
-            );
-          });
+      case "location": {
+        const coords = await getCoords();
+        if (coords) {
+          await sendLocationPin(
+            supabase,
+            activeChat.id,
+            "My Location",
+            coords.latitude,
+            coords.longitude,
+          );
         }
         break;
+      }
     }
     setShowQuickActions(false);
     setSending(false);
@@ -458,6 +476,11 @@ export default function MissionControlPage() {
         <div className="p-4 border-b border-white/10">
           <h1 className="text-xl font-bold text-white flex items-center gap-2">
             🎯 Mission Control
+            <HelpHint label="What is Mission Control?" side="bottom">
+              Mission Control is the group chat for each booking. When a booking is confirmed with staff,
+              a dedicated chat is created so the venue and all assigned guards can talk in one place &mdash;
+              share updates, see check-ins, and make calls without swapping phone numbers.
+            </HelpHint>
           </h1>
           <p className="text-sm text-zinc-400">Team communication for events</p>
         </div>
@@ -681,19 +704,14 @@ export default function MissionControlPage() {
                   </div>
                 )}
                 
-                {msg.message_type === "location" && msg.metadata?.latitude && (
-                  <div className="mb-2 p-2 rounded-lg bg-black/30">
-                    <a
-                      href={`https://www.google.com/maps?q=${msg.metadata.latitude},${msg.metadata.longitude}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-400 hover:underline text-sm flex items-center gap-1"
-                    >
-                      📍 Open in Maps
-                    </a>
-                  </div>
+                {msg.message_type === "location" && (
+                  <LocationMessageCard metadata={msg.metadata} fallbackLabel="Shared location" />
                 )}
-                
+
+                {msg.message_type === "checkin" && (
+                  <LocationMessageCard metadata={msg.metadata} fallbackLabel="Live position" />
+                )}
+
                 {msg.message_type === "checkin" && (
                   <span className="mr-2">
                     {msg.metadata?.status === "arriving" && "🚗"}

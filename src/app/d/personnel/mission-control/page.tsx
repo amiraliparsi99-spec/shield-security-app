@@ -9,6 +9,7 @@ import {
   getGroupChat,
   getGroupChatMessages,
   sendGroupMessage,
+  sendLocationPin,
   sendCheckInMessage,
   markMessagesAsRead,
   subscribeToGroupChat,
@@ -16,6 +17,7 @@ import {
   type GroupChatMember,
   type GroupChatMessage,
 } from "@/lib/db/mission-control";
+import { LocationMessageCard } from "@/components/mission-control/LocationMessageCard";
 import {
   fetchBookingStatusesForIds,
   fetchShiftSummariesForBookings,
@@ -290,14 +292,55 @@ export default function PersonnelMissionControlPage() {
   const handleQuickAction = async (action: string) => {
     if (!activeChat) return;
     setSending(true);
-    const actions: Record<string, () => Promise<any>> = {
-      arriving: () => sendCheckInMessage(supabase, activeChat.id, "arriving"),
-      on_site: () => sendCheckInMessage(supabase, activeChat.id, "on_site"),
-      position: () => sendCheckInMessage(supabase, activeChat.id, "position"),
-      break: () => sendCheckInMessage(supabase, activeChat.id, "break"),
-      leaving: () => sendCheckInMessage(supabase, activeChat.id, "leaving"),
-    };
-    if (actions[action]) await actions[action]();
+
+    const getCoords = (): Promise<{ latitude: number; longitude: number } | null> =>
+      new Promise((resolve) => {
+        if (!navigator.geolocation) {
+          resolve(null);
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(
+          (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+          () => resolve(null),
+          { enableHighAccuracy: true, timeout: 10_000, maximumAge: 0 },
+        );
+      });
+
+    switch (action) {
+      case "arriving":
+        await sendCheckInMessage(supabase, activeChat.id, "arriving");
+        break;
+      case "on_site": {
+        const coords = await getCoords();
+        await sendCheckInMessage(supabase, activeChat.id, "on_site", undefined, coords ?? undefined);
+        break;
+      }
+      case "position": {
+        const coords = await getCoords();
+        await sendCheckInMessage(supabase, activeChat.id, "position", undefined, coords ?? undefined);
+        break;
+      }
+      case "break":
+        await sendCheckInMessage(supabase, activeChat.id, "break");
+        break;
+      case "leaving":
+        await sendCheckInMessage(supabase, activeChat.id, "leaving");
+        break;
+      case "location": {
+        const coords = await getCoords();
+        if (coords) {
+          await sendLocationPin(
+            supabase,
+            activeChat.id,
+            "My Location",
+            coords.latitude,
+            coords.longitude,
+          );
+        }
+        break;
+      }
+    }
+
     setShowQuickActions(false);
     setSending(false);
   };
@@ -740,6 +783,12 @@ export default function PersonnelMissionControlPage() {
                       )}
                     </div>
                   )}
+                  {msg.message_type === "location" && (
+                    <LocationMessageCard metadata={msg.metadata} fallbackLabel="Shared location" />
+                  )}
+                  {msg.message_type === "checkin" && (
+                    <LocationMessageCard metadata={msg.metadata} fallbackLabel="Live position" />
+                  )}
                   <p className="text-sm">{msg.content}</p>
 
                   {/* Action buttons on shift reminder messages */}
@@ -789,6 +838,7 @@ export default function PersonnelMissionControlPage() {
                     { id: "position", icon: "📍", label: "In position" },
                     { id: "break", icon: "☕", label: "On break" },
                     { id: "leaving", icon: "👋", label: "Leaving" },
+                    { id: "location", icon: "🗺️", label: "Share location" },
                   ].map((action) => (
                     <button
                       key={action.id}

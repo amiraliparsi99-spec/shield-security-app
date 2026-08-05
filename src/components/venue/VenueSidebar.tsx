@@ -10,6 +10,7 @@ interface NavItem {
   label: string;
   icon: React.ReactNode;
   badge?: string;
+  tour?: string;
 }
 
 interface NavGroup {
@@ -109,6 +110,11 @@ const icons = {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
     </svg>
   ),
+  phone: (
+    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+    </svg>
+  ),
 };
 
 // Standalone items (not in groups)
@@ -127,7 +133,9 @@ const navGroups: NavGroup[] = [
     icon: icons.calendar,
     defaultOpen: true,
     items: [
-      { href: "/d/venue/bookings", label: "Bookings", icon: icons.calendar },
+      { href: "/d/venue/bookings", label: "Bookings", icon: icons.calendar, tour: "bookings" },
+      { href: "/d/venue/templates", label: "Event Templates", icon: icons.template, tour: "templates" },
+      { href: "/d/venue/requests", label: "Agency Requests", icon: icons.briefcase },
     ],
   },
   {
@@ -135,18 +143,32 @@ const navGroups: NavGroup[] = [
     icon: icons.radar,
     defaultOpen: true,
     items: [
+      { href: "/d/venue/attention", label: "Needs Attention", icon: icons.warning },
       { href: "/d/venue/live", label: "Live Check-In", icon: icons.eye, badge: "Live" },
       { href: "/d/venue/mission-control", label: "Mission Control", icon: icons.chat, badge: "Team" },
       { href: "/d/venue/incidents", label: "Incidents", icon: icons.warning },
+      { href: "/d/venue/silent-support", label: "Silent Support", icon: icons.eye },
     ],
   },
   {
-    label: "Staff Management",
+    label: "Staff & Agencies",
     icon: icons.users,
     defaultOpen: false,
     items: [
+      { href: "/d/venue/find-staff", label: "Find Staff", icon: icons.users },
       { href: "/d/venue/preferred-staff", label: "Preferred Staff", icon: icons.star },
       { href: "/d/venue/ratings", label: "Staff Ratings", icon: icons.check },
+      { href: "/d/venue/agencies", label: "Find Agencies", icon: icons.building },
+      { href: "/d/venue/partnerships", label: "Partnerships", icon: icons.heart },
+    ],
+  },
+  {
+    label: "Communications",
+    icon: icons.chat,
+    defaultOpen: false,
+    items: [
+      { href: "/d/venue/messages", label: "Messages", icon: icons.chat },
+      { href: "/d/venue/calls", label: "Calls", icon: icons.phone },
     ],
   },
   {
@@ -239,6 +261,7 @@ function NavGroupSection({
                 <li key={item.href}>
                   <Link
                     href={item.href}
+                    data-tour={item.tour}
                     className={`relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
                       active
                         ? "text-white"
@@ -395,6 +418,7 @@ export function VenueSidebar({ venueName, isVerified }: VenueSidebarProps) {
       <div className="border-t border-white/[0.06] p-3 space-y-2">
         <Link
           href="/d/venue/bookings/new"
+          data-tour="book-security"
           className="flex w-full items-center justify-center gap-2 rounded-xl bg-purple-500 px-4 py-2.5 text-sm font-medium text-white shadow-glow-sm transition hover:bg-purple-400"
         >
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
